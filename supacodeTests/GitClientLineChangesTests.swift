@@ -301,6 +301,36 @@ struct GitClientLineChangesTests {
     #expect(count == 2)
   }
 
+  /// A capture-sized untracked file must not be read at all. The badge counts
+  /// lines you are adding, and nobody typed 2 MiB of `sample(1)` output.
+  @Test func countLinesInFilesSkipsFilesAtOrAboveTheByteLimit() throws {
+    let fileManager = FileManager.default
+    let tempRoot = fileManager.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? fileManager.removeItem(at: tempRoot) }
+    try fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+    try "a\nb\n".write(to: tempRoot.appending(path: "small.txt"), atomically: true, encoding: .utf8)
+    // Text, not binary: the NUL probe would pass it and count every newline.
+    let oversized = Data(repeating: 0x0A, count: GitClient.untrackedLineCountByteLimit)
+    try oversized.write(to: tempRoot.appending(path: "sample.txt"))
+
+    let count = GitClient.countLinesInFiles(["small.txt", "sample.txt"], relativeTo: tempRoot)
+    #expect(count == 2, "Only the small file should contribute")
+  }
+
+  /// The boundary is the whole point of the guard, so pin the side that must
+  /// still count. One byte under the limit is an ordinary file.
+  @Test func countLinesInFilesStillCountsJustUnderTheByteLimit() throws {
+    let fileManager = FileManager.default
+    let tempRoot = fileManager.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? fileManager.removeItem(at: tempRoot) }
+    try fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+    let justUnder = Data(repeating: 0x0A, count: GitClient.untrackedLineCountByteLimit - 1)
+    try justUnder.write(to: tempRoot.appending(path: "big.txt"))
+
+    let count = GitClient.countLinesInFiles(["big.txt"], relativeTo: tempRoot)
+    #expect(count == GitClient.untrackedLineCountByteLimit - 1)
+  }
+
   @Test func countLinesInFilesSkipsMissingFiles() throws {
     let fileManager = FileManager.default
     let tempRoot = fileManager.temporaryDirectory.appending(path: UUID().uuidString)

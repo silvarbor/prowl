@@ -471,7 +471,29 @@ struct GitClient {
     data[offset..<(offset + 4)].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
   }
 
+  /// Untracked files at or above this size contribute nothing to the diff badge.
+  ///
+  /// The badge counts the lines you are adding, and a file this large is not
+  /// something anyone typed. Profiling captures are the case that prompted it:
+  /// a single `sample(1)` output runs to tens of megabytes, and every byte of it
+  /// was being read on each refresh to produce a number no one wants. Source
+  /// files sit orders of magnitude below the threshold, so nothing a reader would
+  /// call a change is affected.
+  ///
+  /// Chosen over a `.gitignore` pattern deliberately. A pattern has to name the
+  /// file, so it fixes one repository for one spelling and misses the next
+  /// capture that lands under a different name.
+  nonisolated static let untrackedLineCountByteLimit = 2 * 1_024 * 1_024
+
   nonisolated private static func countLines(in fileURL: URL) -> Int? {
+    // Checked before opening the file, so an oversized one costs a stat rather
+    // than a full read. `nil` already means "not worth counting" here; binary
+    // files reach the same answer through the NUL probe below.
+    if let fileSize = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+      fileSize >= untrackedLineCountByteLimit
+    {
+      return nil
+    }
     guard let handle = try? FileHandle(forReadingFrom: fileURL) else { return nil }
     defer { try? handle.close() }
 
