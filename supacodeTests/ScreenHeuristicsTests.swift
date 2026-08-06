@@ -403,6 +403,111 @@ struct ScreenHeuristicsTests {
     )
   }
 
+  @Test func claudeElapsedStatusLineAcceptsMultiWordLabelsAndCompoundElapsed() {
+    // Captured from Claude Code 2.1.220. The status label is free text and is
+    // often a phrase, and the elapsed segment gains a token per unit once the
+    // turn passes a minute — a single-word / single-token matcher reported all
+    // of these as idle while the turn was still running.
+    let liveRows = [
+      "● Running gates and merge lifecycle… (45s · ↓ 13.2k tokens)",
+      "● Actioning… (28m 34s · ↓ 47.7k tokens)",
+      "● Actioning… (1h 4m 2s · ↓ 47.7k tokens)",
+      "● Running gates and merge lifecycle… (2m 28s · ↓ 13.2k tokens)",
+    ]
+    for statusRow in liveRows {
+      #expect(
+        DetectedAgent.claude.detectState(
+          in: """
+            \(statusRow)
+            ─────────
+            ❯
+            ─────────
+            """
+        ) == .working
+      )
+    }
+
+    // A multi-word label must not weaken the elapsed requirement.
+    #expect(
+      DetectedAgent.claude.detectState(
+        in: """
+          ● Running gates and merge lifecycle… (1st attempt)
+          ─────────
+          ❯
+          ─────────
+          """
+      ) == .idle
+    )
+  }
+
+  @Test func claudeDetectsLiveBackgroundAgentRowsBelowPrompt() {
+    // Captured from Claude Code 2.1.220 with background agents running while the
+    // main turn had already ended. The switcher block lists only LIVE agents and
+    // disappears entirely once none remain, so a row's presence is the signal.
+    #expect(
+      DetectedAgent.claude.detectState(
+        in: """
+          ✻ Waiting for 1 background agent to finish
+          ─────────
+          ❯
+          ─────────
+            [Opus 5 (1M context)] | ############--------  60% | $86.94
+            🟢
+            ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+
+            ⏺ main
+            ◯ spec-tree:test-evidence-aud…  Re-audit evidence   4m 29s · ↓ 178.9k tokens
+          """
+      ) == .working
+    )
+
+    // Several agents in parallel is the same shape, one row each.
+    #expect(
+      DetectedAgent.claude.detectState(
+        in: """
+          Task complete.
+          ─────────
+          ❯
+          ─────────
+            ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+
+            ⏺ main
+            ◯ general-purpose  Probe A short    3s · ↑ 17.5k tokens
+            ◯ Explore          Probe C long    11s · ↓ 14.5k tokens
+            ◯ Explore          Probe B medium   8s · ↓ 8.3k tokens
+          """
+      ) == .working
+    )
+
+    // Once every background agent finishes, the block is gone and the pane is idle.
+    #expect(
+      DetectedAgent.claude.detectState(
+        in: """
+          Task complete.
+          ─────────
+          ❯
+          ─────────
+            [Opus 5 (1M context)] | --------------------  0% | $98.35
+            🟢
+            ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+          """
+      ) == .idle
+    )
+
+    // An agent row quoted above the prompt is transcript text, not live state.
+    #expect(
+      DetectedAgent.claude.detectState(
+        in: """
+          ⏺ It showed ◯ Explore  Probe C long   11s · ↓ 14.5k tokens before it wrapped up.
+          ─────────
+          ❯
+          ─────────
+            ? for shortcuts
+          """
+      ) == .idle
+    )
+  }
+
   @Test func claudeDetectsRunningWorkflowFooterBelowPrompt() {
     // A running background workflow: the turn has ended (no spinner / "esc to
     // interrupt" above the prompt), but Claude keeps a status line BELOW the

@@ -337,15 +337,23 @@ nonisolated private func contentBelowPromptBox(_ content: String) -> String {
   return lines[startIndex...].joined(separator: "\n")
 }
 
-// While a background workflow runs, Claude's turn has ended (so the spinner and
-// "esc to interrupt" hint above the prompt are gone) but it keeps a persistent
-// status line BELOW the input box, e.g.
-//   "◯ my-workflow  <desc>  3/5 agents done · 7m 29s · ↓ 288.5k tokens"
-// The "<done>/<total> agents done" segment is Claude's stable statusText
-// template, so "agents done" is a distinctive marker. Anchored to the
-// below-prompt footer so it can't be tripped by conversation text.
+// While background agents run, Claude's own turn has often already ended (so the
+// spinner above the prompt is gone) but it keeps an agent switcher block BELOW
+// the input box: a "⏺ main" row for the current session plus one "◯" row per
+// LIVE background agent, e.g.
+//   "◯ Explore  Probe C long                          1m 6s · ↓ 28.6k tokens"
+//   "◯ scout-prowl-idle  Map idle detection   3/5 agents done · 7m 29s · ↓ 288.5k tokens"
+// A finished agent drops out of the list and the whole block disappears once
+// none are left, so the presence of an agent row is itself the liveness signal.
+// The earlier "agents done" marker only appears in the workflow variant of the
+// row and missed every plain background agent. Anchored to the below-prompt
+// footer so conversation text quoting a row cannot trip it.
 nonisolated private func hasClaudeBackgroundWork(_ content: String) -> Bool {
-  contentBelowPromptBox(content).lowercased().contains("agents done")
+  contentBelowPromptBox(content).split(separator: "\n").contains { line in
+    let trimmed = line.trimmingCharacters(in: .whitespaces)
+    guard trimmed.first == "◯" else { return false }
+    return trimmed.contains(" · ") && trimmed.contains(where: \.isLetter)
+  }
 }
 
 nonisolated private func claudeCurrentInteractionRegion(_ content: String) -> String {
@@ -576,6 +584,13 @@ nonisolated private func hasSpinnerActivity(_ content: String) -> Bool {
   }
 }
 
+// Claude's live status row is "● <label>… (<elapsed> · <detail>)". The label is
+// free text and is not always a single word — "Running gates and merge
+// lifecycle…" is as common as "Forging…" — so only the trailing ellipsis is
+// structural. The elapsed segment grows with the turn and becomes several
+// tokens once it passes a minute: "45s", "28m 34s", "1h 4m 2s". Both parts stay
+// strict about completeness so transcript prose such as "(1st attempt)" or
+// "(10seconds)" still cannot pass as a live status row.
 nonisolated private func hasClaudeElapsedStatusLine(_ content: String) -> Bool {
   content.split(separator: "\n").contains { line in
     let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -584,20 +599,32 @@ nonisolated private func hasClaudeElapsedStatusLine(_ content: String) -> Bool {
     guard let open = body.firstIndex(of: "(") else { return false }
 
     let label = body[..<open].trimmingCharacters(in: .whitespaces)
-    guard label.hasSuffix("…"), label.split(whereSeparator: { $0.isWhitespace }).count == 1 else {
-      return false
-    }
+    guard label.hasSuffix("…") else { return false }
 
-    let elapsed = body[body.index(after: open)...]
-    let digits = elapsed.prefix(while: \.isNumber)
-    guard !digits.isEmpty else { return false }
-    let afterDigits = elapsed.dropFirst(digits.count)
-    guard let unit = afterDigits.first, unit == "s" || unit == "m" || unit == "h" else {
-      return false
-    }
-    let trailing = afterDigits.dropFirst()
-    return trailing.hasPrefix(")") || trailing.hasPrefix(" · ")
+    return hasCompleteElapsedSegment(body[body.index(after: open)...])
   }
+}
+
+// One or more "<digits><unit>" tokens separated by single spaces, terminated by
+// the closing paren or by the " · " that separates elapsed from the rest of the
+// row. A partial token ("10seconds", "1st") fails the terminator check.
+nonisolated private func hasCompleteElapsedSegment(_ elapsed: Substring) -> Bool {
+  var remainder = elapsed
+  var tokenCount = 0
+
+  while true {
+    let digits = remainder.prefix(while: \.isNumber)
+    guard !digits.isEmpty else { break }
+    let afterDigits = remainder.dropFirst(digits.count)
+    guard let unit = afterDigits.first, unit == "s" || unit == "m" || unit == "h" else { break }
+    tokenCount += 1
+    remainder = afterDigits.dropFirst()
+    guard remainder.hasPrefix(" "), remainder.dropFirst().first?.isNumber == true else { break }
+    remainder = remainder.dropFirst()
+  }
+
+  guard tokenCount > 0 else { return false }
+  return remainder.hasPrefix(")") || remainder.hasPrefix(" · ")
 }
 
 nonisolated private func hasCursorSpinner(_ content: String) -> Bool {
