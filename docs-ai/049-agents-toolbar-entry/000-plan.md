@@ -5,7 +5,7 @@
 | **Status** | PR1 implemented on `feature/hand-off` (awaiting review); PR2 pending |
 | **Anchor date** | 2026-07-20 |
 | **Primary PRs** | #603 |
-| **Related** | [047 cross-agent-handoff](../047-cross-agent-handoff/000-plan.md), [047.003 plan calibration](../047-cross-agent-handoff/003-plan-calibration.md), [048 agent-runtime-adapters](../048-agent-runtime-adapters/000-plan.md), [031 command-palette-architecture](../031-command-palette-architecture/000-plan.md) |
+| **Related** | [047 cross-agent-handoff](../047-cross-agent-handoff/000-plan.md), [047.003 plan calibration](../047-cross-agent-handoff/003-plan-calibration.md), [048 agent-runtime-adapters](../048-agent-runtime-adapters/000-plan.md), [031 command-palette-architecture](../031-command-palette-architecture/000-plan.md), [058 unified-toolbar-layout](../058-unified-toolbar-layout/000-plan.md) |
 
 ## Background
 
@@ -172,3 +172,4 @@ plumbing from 047.003; no new pipeline work is expected.
   execution state with the HUD as a projection — shipped in PR1, so a future
   wave starts with zero rework if real usage surfaces the pain.
 - Updated 2026-07-20: cancel/Skip now make reducer acceptance the boundary for transcribing a preparation reply, and Skip gains a keyboard path — see [002-briefing-cancellation.md](002-briefing-cancellation.md).
+- Updated 2026-08-07: the redundant branch title was removed; Agents + Quick Launch now leads, followed by a separately surfaced Bell, across Normal, Shelf, and Canvas — see [058-unified-toolbar-layout](../058-unified-toolbar-layout/000-plan.md).

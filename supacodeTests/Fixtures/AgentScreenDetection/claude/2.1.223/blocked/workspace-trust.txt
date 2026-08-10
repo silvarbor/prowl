@@ -1,0 +1,21 @@
+<SHELL_STARTUP>
+➜  claude-main git:(master) stty size > '/tmp/prowl-fixture-workspace-live-00000/claude-main/.terminal-size'
+➜  claude-main git:(master) ✗ claude --permission-mode manual
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Accessing workspace:
+
+ /private/tmp/prowl-fixture-workspace-live-00000/claude-main
+
+ Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known
+ open source project, or work from your team). If not, take a moment to review what's in this folder
+ first.
+
+ Claude Code'll be able to read, edit, and execute files here.
+
+ Security guide
+
+ ❯ 1. Yes, I trust this folder
+   2. No, exit
+
+ Enter to confirm · Esc to cancel

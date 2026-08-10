@@ -147,6 +147,48 @@ struct AppFeatureHandoffTests {
     }
   }
 
+  @Test(.dependencies) func openHandoffHudUsesCanvasFocusedWorktree() async throws {
+    let repositoryRoot = URL(fileURLWithPath: "/tmp/canvas-handoff-repo")
+    let worktreeRoot = URL(fileURLWithPath: "/tmp/canvas-handoff-worktree")
+    var repositories = makeGitWorktreeState(repositoryRoot: repositoryRoot, worktreeRoot: worktreeRoot)
+    let worktreeID = worktreeRoot.standardizedFileURL.path(percentEncoded: false)
+    repositories.selection = .canvas
+    let capturedWorktreeID = LockIsolated<Worktree.ID?>(nil)
+    let paneID = uuid(9).uuidString
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositories,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.canvasFocusedWorktreeID = { worktreeID }
+      $0.terminalClient.handoffSourceContext = { id in
+        capturedWorktreeID.setValue(id)
+        return HandoffSourceContext(
+          sessionContext: HandoffStore.SessionContext(
+            agent: "codex",
+            paneID: paneID,
+            paneTitle: "codex",
+            source: "terminal-scrollback",
+            confidence: "fallback",
+            excerptText: nil
+          ),
+          observation: nil
+        )
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.openHandoffHud) {
+      let hud = try #require($0.handoffHud)
+      #expect(hud.worktree.id == worktreeID)
+      #expect(hud.source.agentToken == "codex")
+    }
+    #expect(capturedWorktreeID.value == worktreeID)
+  }
+
   @Test(.dependencies) func openHandoffHudWarnsWithoutDetectedAgent() async throws {
     let root = try makeTempRoot()
     defer { remove(root) }

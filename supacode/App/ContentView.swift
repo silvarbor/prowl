@@ -92,6 +92,19 @@ struct ContentView: View {
       promptStore in
       WorkspaceCreationPromptView(store: promptStore)
     }
+    .sheet(item: renameBranchPromptRequest) { request in
+      RenameBranchPromptView(
+        currentName: request.currentName,
+        onCancel: {
+          repositoriesStore.send(.consumePendingRenameBranchRequest(request.id))
+        },
+        onSubmit: { newName in
+          repositoriesStore.send(.requestRenameBranch(request.worktreeID, newName))
+          repositoriesStore.send(.consumePendingRenameBranchRequest(request.id))
+        }
+      )
+      .id(request.id)
+    }
     .sheet(isPresented: deleteWorktreeConfirmationPresented) {
       if let confirmation = repositoriesStore.deleteWorktreeConfirmation {
         DeleteWorktreeConfirmationView(
@@ -141,6 +154,7 @@ struct ContentView: View {
     .focusedSceneAction(\.toggleLeftSidebarAction, enabled: true) {
       toggleLeftSidebar()
     }
+    .focusedSceneValue(\.renameBranchAction, renameBranchAction)
     .focusedSceneValue(\.revealInSidebarAction, revealInSidebarAction.asFocusedAction())
     .overlay {
       CommandPaletteOverlayView(
@@ -163,6 +177,30 @@ struct ContentView: View {
       }
     }
     .background(WindowTabbingDisabler())
+  }
+
+  private var renameBranchPromptRequest: Binding<PendingRenameBranchRequest?> {
+    Binding(
+      get: { repositoriesStore.pendingRenameBranchRequest },
+      set: { newRequest in
+        guard newRequest == nil, let request = repositoriesStore.pendingRenameBranchRequest else { return }
+        repositoriesStore.send(.consumePendingRenameBranchRequest(request.id))
+      }
+    )
+  }
+
+  private var renameBranchAction: FocusedAction<Void>? {
+    guard
+      let worktreeID = renameBranchCommandTargetID(
+        appState: store.state,
+        canvasFocusedWorktreeID: terminalManager.canvasFocusedWorktreeID
+      )
+    else {
+      return nil
+    }
+    return FocusedAction(isEnabled: true, token: worktreeID) {
+      repositoriesStore.send(.requestRenameBranchPrompt(worktreeID))
+    }
   }
 
   private var mainSplitView: some View {

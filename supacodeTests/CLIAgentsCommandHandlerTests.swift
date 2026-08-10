@@ -33,6 +33,7 @@ struct CLIAgentsCommandHandlerTests {
     // the sidebar does not re-render. CLI snapshots must use the live terminal
     // raw state instead of that UI-deduplicated value.
     #expect(agent.rawState == "working")
+    #expect(agent.detectionReason == "omp.askPrompt")
     #expect(agent.lastChangedAt == "2026-09-21T14:00:00Z")
     #expect(agent.project.name == "Prowl")
     #expect(agent.project.branch == "feature/agents")
@@ -56,12 +57,14 @@ struct CLIAgentsCommandHandlerTests {
 
     let idleAgent = payload.agents[1]
     #expect(idleAgent.status == .idle)
+    #expect(idleAgent.detectionReason == nil)
     #expect(idleAgent.project.name == "Tab Repo")
     #expect(idleAgent.project.branch == "main")
     #expect(idleAgent.pane.focused == false)
     let rawPayload = try #require(response.data?.bytes)
     let rawPayloadString = try #require(String(bytes: rawPayload, encoding: .utf8))
     #expect(!rawPayloadString.contains("\"handle\""))
+    #expect(rawPayloadString.contains("\"detection_reason\":\"omp.askPrompt\""))
   }
 
   @Test func includesPaneHandlesOnlyInTextPayload() async throws {
@@ -183,7 +186,12 @@ struct CLIAgentsCommandHandlerTests {
           tabID: tabID,
           tabWorktree: tabWorktree
         ),
-        rawStatesBySurfaceID: [tabPaneID: .working]
+        screenDetectionsBySurfaceID: [
+          tabPaneID: AgentScreenDetection(
+            state: .working,
+            reason: .matched(AgentScreenRuleID("omp.askPrompt"))
+          )
+        ]
       )
     )
   }

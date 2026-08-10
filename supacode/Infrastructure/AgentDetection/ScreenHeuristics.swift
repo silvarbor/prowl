@@ -1,46 +1,56 @@
 import Foundation
 
-nonisolated private let agentDetectionRecentLineLimit = 24
+nonisolated let agentDetectionRecentLineLimit = 24
 
 extension DetectedAgent {
   nonisolated func detectState(in screen: String) -> AgentRawState {
-    let screen = recentLines(screen, limit: agentDetectionRecentLineLimit)
+    detectScreen(in: screen).state
+  }
+
+  nonisolated func detectScreen(in screen: String) -> AgentScreenDetection {
+    let text = agentDetectionRecentText(screen)
+    let state: AgentRawState
     switch self {
     case .pi:
-      return detectPi(screen)
+      state = detectPi(text)
     case .omp:
-      return detectOMP(screen)
+      state = detectOMP(text)
     case .claude:
-      return detectClaude(screen)
+      return ClaudeScreenProfile.detect(in: AgentScreenSnapshot(canonicalText: text))
     case .codex:
-      return detectCodex(screen)
+      return CodexScreenProfile.detect(in: AgentScreenSnapshot(canonicalText: text))
     case .gemini:
-      return detectGemini(screen)
+      state = detectGemini(text)
     case .cursor:
-      return detectCursor(screen)
+      state = detectCursor(text)
     case .cline:
-      return detectCline(screen)
+      state = detectCline(text)
     case .opencode:
-      return detectOpenCode(screen)
+      state = detectOpenCode(text)
     case .copilot:
-      return detectCopilot(screen)
+      state = detectCopilot(text)
     case .kimi:
-      return detectKimi(screen)
+      state = detectKimi(text)
     case .droid:
-      return detectDroid(screen)
+      state = detectDroid(text)
     case .amp:
-      return detectAmp(screen)
+      state = detectAmp(text)
     case .qoder:
-      return detectQoder(screen)
+      state = detectQoder(text)
     case .qwen:
-      return detectQwen(screen)
+      state = detectQwen(text)
     case .grok:
-      return detectGrok(screen)
+      state = detectGrok(text)
     }
+    return AgentScreenDetection(state: state, reason: .legacyDetector)
   }
 }
 
-nonisolated private func recentLines(_ content: String, limit: Int) -> String {
+nonisolated func agentDetectionRecentText(_ content: String) -> String {
+  agentDetectionRecentLines(content, limit: agentDetectionRecentLineLimit)
+}
+
+nonisolated func agentDetectionRecentLines(_ content: String, limit: Int) -> String {
   let lines = content.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
   var remainingNonBlankLines = limit
   var startIndex = lines.startIndex
@@ -119,35 +129,6 @@ nonisolated private func hasOMPBrailleSpinner(_ line: String) -> Bool {
   return (0x2800...0x28FF).contains(Int(first.value))
     && rest.hasPrefix(" ")
     && rest.contains(where: \.isLetter)
-}
-
-nonisolated private func detectClaude(_ content: String) -> AgentRawState {
-  if hasClaudeViewerChrome(content) {
-    return .unknown
-  }
-  let currentInteraction = claudeCurrentInteractionRegion(content)
-  if hasClaudeBlockedPrompt(content: currentInteraction, lower: currentInteraction.lowercased()) {
-    return .blocked
-  }
-
-  let liveStatus = recentLines(contentAbovePromptBox(content), limit: 3)
-  if hasSpinnerActivity(liveStatus) || hasClaudeElapsedStatusLine(liveStatus) {
-    return .working
-  }
-  if hasClaudeBackgroundWork(content) {
-    return .working
-  }
-  return .idle
-}
-
-nonisolated private func detectCodex(_ content: String) -> AgentRawState {
-  if hasCodexBlockedPrompt(content) {
-    return .blocked
-  }
-  if hasCodexWorkingFooter(content) {
-    return .working
-  }
-  return .idle
 }
 
 nonisolated private func detectGemini(_ content: String) -> AgentRawState {
@@ -291,144 +272,7 @@ nonisolated private func detectAmp(_ content: String) -> AgentRawState {
   return .idle
 }
 
-// Transcript (ctrl+r/ctrl+o) and history-search views cover the live status
-// area, so a frame showing their chrome carries no task-state signal — the
-// caller maps `.unknown` to "keep the previous state". The hint strings are
-// only trusted on the bottom chrome lines: matching them anywhere on screen
-// misreads conversation text that merely quotes them (e.g. a discussion
-// about these very heuristics).
-nonisolated private func hasClaudeViewerChrome(_ content: String) -> Bool {
-  let bottomLines = content.split(separator: "\n", omittingEmptySubsequences: false)
-    .map { $0.trimmingCharacters(in: .whitespaces) }
-    .filter { !$0.isEmpty }
-    .suffix(3)
-  return bottomLines.contains { line in
-    line.contains("⌕ Search…") || line.lowercased().contains("ctrl+r to toggle")
-  }
-}
-
-nonisolated private func contentAbovePromptBox(_ content: String) -> String {
-  let lines = content.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-  guard let promptIndex = lines.lastIndex(where: { $0.contains("❯") }) else {
-    return content
-  }
-  let borderIndex = lines[..<promptIndex].lastIndex(where: isBoxBorderLine)
-  let endIndex = borderIndex ?? promptIndex
-  return lines[..<endIndex].joined(separator: "\n")
-}
-
-nonisolated private func isBoxBorderLine(_ line: String) -> Bool {
-  let trimmed = line.trimmingCharacters(in: .whitespaces)
-  guard trimmed.count >= 3 else { return false }
-  return trimmed.allSatisfy { $0 == "─" || $0 == "-" }
-}
-
-// Everything rendered AFTER the input prompt line — i.e. the footer area where
-// Claude shows its persistent background-work / workflow status. Mirrors
-// `contentAbovePromptBox` so the background-work check can stay anchored to the
-// footer and never trip on transcript text that merely mentions the marker.
-nonisolated private func contentBelowPromptBox(_ content: String) -> String {
-  let lines = content.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-  guard let promptIndex = lines.lastIndex(where: { $0.contains("❯") }) else {
-    return ""
-  }
-  let startIndex = lines.index(after: promptIndex)
-  guard startIndex < lines.endIndex else { return "" }
-  return lines[startIndex...].joined(separator: "\n")
-}
-
-// While a background workflow runs, Claude's turn has ended (so the spinner and
-// "esc to interrupt" hint above the prompt are gone) but it keeps a persistent
-// status line BELOW the input box, e.g.
-//   "◯ my-workflow  <desc>  3/5 agents done · 7m 29s · ↓ 288.5k tokens"
-// The "<done>/<total> agents done" segment is Claude's stable statusText
-// template, so "agents done" is a distinctive marker. Anchored to the
-// below-prompt footer so it can't be tripped by conversation text.
-nonisolated private func hasClaudeBackgroundWork(_ content: String) -> Bool {
-  contentBelowPromptBox(content).lowercased().contains("agents done")
-}
-
-nonisolated private func claudeCurrentInteractionRegion(_ content: String) -> String {
-  let lines = content.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-  guard let promptIndex = lines.lastIndex(where: { $0.contains("❯") }) else {
-    return lines.suffix(18).joined(separator: "\n")
-  }
-  guard isClaudeNumberedSelectionLine(lines[promptIndex]) else {
-    return ""
-  }
-
-  let lowerBound = max(lines.startIndex, promptIndex - 10)
-  return lines[lowerBound..<lines.endIndex].joined(separator: "\n")
-}
-
-nonisolated private func isClaudeNumberedSelectionLine(_ line: String) -> Bool {
-  let trimmed = line.trimmingCharacters(in: .whitespaces)
-  guard trimmed.first == "❯" else { return false }
-  let option = trimmed.dropFirst().trimmingCharacters(in: .whitespaces)
-  return isNumberedChoice(option)
-}
-
-nonisolated private func isCodexPromptLine(_ line: String) -> Bool {
-  let trimmed = line.trimmingCharacters(in: .whitespaces)
-  guard trimmed.first == "›" else { return false }
-  let remainder = trimmed.dropFirst()
-  return remainder.isEmpty || remainder.first?.isWhitespace == true
-}
-
-nonisolated private func hasCodexBlockedPrompt(_ content: String) -> Bool {
-  hasCodexConfirmationFooter(content) || hasCodexConfirmationChoices(content)
-}
-
-nonisolated private func hasCodexConfirmationFooter(_ content: String) -> Bool {
-  let lines = content.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-  guard let promptIndex = lines.lastIndex(where: isCodexPromptLine) else {
-    return false
-  }
-  let selectedChoice = normalizedCodexChoice(lines[promptIndex])
-  guard isNumberedChoice(selectedChoice) else { return false }
-
-  let footerStart = lines.index(after: promptIndex)
-  guard footerStart < lines.endIndex else { return false }
-  let footerLower = recentLines(lines[footerStart...].joined(separator: "\n"), limit: 3).lowercased()
-  return footerLower.contains("press enter to confirm or esc to cancel")
-    || footerLower.contains("enter to submit answer")
-    || footerLower.contains("allow command?")
-    || footerLower.contains("[y/n]")
-    || footerLower.contains("yes (y)")
-}
-
-nonisolated private func hasCodexConfirmationChoices(_ content: String) -> Bool {
-  let lines = content.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-  guard let promptIndex = lines.lastIndex(where: isCodexPromptLine) else {
-    return false
-  }
-  let selectedChoice = normalizedCodexChoice(lines[promptIndex])
-  guard isNumberedChoice(selectedChoice) else { return false }
-
-  let lowerBound = max(lines.startIndex, promptIndex - 6)
-  let interactionLines = lines[lowerBound..<lines.endIndex]
-  let lower = interactionLines.joined(separator: "\n").lowercased()
-  guard lower.contains("do you want") || lower.contains("would you like") else {
-    return false
-  }
-
-  let options = interactionLines.map(normalizedCodexChoice)
-  let hasYes = options.contains { option in
-    option == "yes" || option.hasPrefix("1. yes") || option.hasPrefix("2. yes")
-  }
-  let hasNo = options.contains { option in
-    option == "no" || option.hasPrefix("2. no") || option.hasPrefix("3. no")
-  }
-  return hasYes && hasNo
-}
-
-nonisolated private func normalizedCodexChoice(_ line: String) -> String {
-  let trimmed = line.trimmingCharacters(in: .whitespaces).lowercased()
-  let withoutSelection = trimmed.hasPrefix("›") ? trimmed.dropFirst() : trimmed[...]
-  return withoutSelection.trimmingCharacters(in: .whitespaces)
-}
-
-nonisolated private func isNumberedChoice(_ option: String) -> Bool {
+nonisolated func isNumberedChoice(_ option: String) -> Bool {
   guard let firstToken = option.split(whereSeparator: { $0.isWhitespace }).first,
     firstToken.last == "."
   else {
@@ -436,44 +280,6 @@ nonisolated private func isNumberedChoice(_ option: String) -> Bool {
   }
   let number = firstToken.dropLast()
   return !number.isEmpty && number.allSatisfy(\.isNumber)
-}
-
-nonisolated private func hasClaudeBlockedPrompt(content: String, lower: String) -> Bool {
-  if lower.contains("do you want to proceed?")
-    || lower.contains("would you like to proceed?")
-    || lower.contains("waiting for permission")
-    || lower.contains("do you want to allow this connection?")
-    || lower.contains("tab to amend")
-    || lower.contains("ctrl+e to explain")
-    || lower.contains("chat about this")
-    || lower.contains("review your answers")
-    || lower.contains("skip interview and plan immediately")
-  {
-    return true
-  }
-  return hasConfirmationPrompt(lower)
-    || (hasClaudeSelectionPrompt(content) && hasClaudeYesNoChoice(content))
-}
-
-nonisolated private func hasClaudeSelectionPrompt(_ content: String) -> Bool {
-  content.split(separator: "\n").contains { isClaudeNumberedSelectionLine(String($0)) }
-}
-
-nonisolated private func hasClaudeYesNoChoice(_ content: String) -> Bool {
-  content.split(separator: "\n").contains { line in
-    let line = line.trimmingCharacters(in: .whitespaces)
-    let option =
-      line.hasPrefix("❯")
-      ? String(line.dropFirst()).trimmingCharacters(in: .whitespaces)
-      : line
-    let trimmed = option.lowercased()
-    return trimmed == "yes"
-      || trimmed == "no"
-      || trimmed.hasPrefix("1. yes")
-      || trimmed.hasPrefix("2. no")
-      || trimmed.hasPrefix("yes, and ")
-      || trimmed.hasPrefix("no, and tell claude")
-  }
 }
 
 nonisolated private func hasCursorPermissionPrompt(content: String, lower: String) -> Bool {
@@ -531,7 +337,7 @@ nonisolated private func hasKimiToolSpinner(content: String, lower: String) -> B
   }
 }
 
-nonisolated private func hasConfirmationPrompt(_ lower: String) -> Bool {
+nonisolated func hasConfirmationPrompt(_ lower: String) -> Bool {
   guard
     let range = lower.range(of: "do you want") ?? lower.range(of: "would you like")
   else {
@@ -547,19 +353,7 @@ nonisolated private func hasInterruptPattern(_ lower: String) -> Bool {
     || (lower.contains("esc") && lower.contains("interrupt"))
 }
 
-nonisolated private func hasCodexWorkingFooter(_ content: String) -> Bool {
-  recentLines(content, limit: 3).split(separator: "\n").contains { line in
-    let trimmed = line.trimmingCharacters(in: .whitespaces)
-    guard trimmed.first == "•" || trimmed.first == "◦" else { return false }
-    let body = trimmed.dropFirst()
-    guard body.hasPrefix(" Working (") else { return false }
-    guard let hint = body.range(of: "esc to interrupt)") else { return false }
-    let trailing = body[hint.upperBound...]
-    return trailing.isEmpty || trailing.hasPrefix(" · ")
-  }
-}
-
-nonisolated private func hasSpinnerActivity(_ content: String) -> Bool {
+nonisolated func hasSpinnerActivity(_ content: String) -> Bool {
   let spinnerScalars: Set<UnicodeScalar> = [
     "·", "✱", "✲", "✳", "✴", "✵", "✶", "✷", "✸", "✹", "✺", "✻", "✼", "✽", "✾", "✿",
     "❀", "❁", "❂", "❃", "❇", "❈", "❉", "❊", "❋", "✢", "✣", "✤", "✥", "✦", "✧", "✨",
@@ -573,30 +367,6 @@ nonisolated private func hasSpinnerActivity(_ content: String) -> Bool {
       && rest.hasPrefix(" ")
       && rest.contains("…")
       && rest.contains(where: \.isLetter)
-  }
-}
-
-nonisolated private func hasClaudeElapsedStatusLine(_ content: String) -> Bool {
-  content.split(separator: "\n").contains { line in
-    let trimmed = line.trimmingCharacters(in: .whitespaces)
-    guard trimmed.first == "●" else { return false }
-    let body = trimmed.dropFirst().trimmingCharacters(in: .whitespaces)
-    guard let open = body.firstIndex(of: "(") else { return false }
-
-    let label = body[..<open].trimmingCharacters(in: .whitespaces)
-    guard label.hasSuffix("…"), label.split(whereSeparator: { $0.isWhitespace }).count == 1 else {
-      return false
-    }
-
-    let elapsed = body[body.index(after: open)...]
-    let digits = elapsed.prefix(while: \.isNumber)
-    guard !digits.isEmpty else { return false }
-    let afterDigits = elapsed.dropFirst(digits.count)
-    guard let unit = afterDigits.first, unit == "s" || unit == "m" || unit == "h" else {
-      return false
-    }
-    let trailing = afterDigits.dropFirst()
-    return trailing.hasPrefix(")") || trailing.hasPrefix(" · ")
   }
 }
 

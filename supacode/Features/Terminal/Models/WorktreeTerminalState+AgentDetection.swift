@@ -85,6 +85,7 @@ extension WorktreeTerminalState {
             identified: identified,
             retainedAgent: nil,
             raw: nil,
+            reason: nil,
             stabilized: nil
           )
         )
@@ -102,7 +103,8 @@ extension WorktreeTerminalState {
     // identical text is the bulk of steady-state detection cost. Time-based
     // stabilization below still runs every tick, so working→idle decay is
     // unaffected.
-    let raw = cachedRawState(forSurfaceID: surfaceID, agent: agent, text: activeText)
+    let detection = cachedScreenDetection(forSurfaceID: surfaceID, agent: agent, text: activeText)
+    let raw = detection.state
     guard surfaces[surfaceID] != nil else { return false }
 
     var lastWorkingAt = lastWorkingAtBySurface[surfaceID]
@@ -115,18 +117,11 @@ extension WorktreeTerminalState {
     )
     lastWorkingAtBySurface[surfaceID] = lastWorkingAt
 
-    let isForeground = isSelected() && isFocusedSurface(surfaceID)
-    let becameIdleFromActive =
-      (previous.state == .working || previous.state == .blocked)
-      && stabilized == .idle
-    let seen: Bool
-    if isForeground || stabilized == .blocked {
-      seen = true
-    } else if becameIdleFromActive {
-      seen = false
-    } else {
-      seen = previous.seen
-    }
+    let seen = Self.resolvedSeen(
+      previous: previous,
+      stabilized: stabilized,
+      isForeground: isSelected() && isFocusedSurface(surfaceID)
+    )
     let iconLookupToken = identified?.iconLookupToken ?? previous.iconLookupToken ?? agent.iconLookupToken
     let workingDirectory = activeAgentWorkingDirectory(surfaceID: surfaceID)
     let (session, sessionMissStreak) = await resolveRetainedSession(
@@ -170,6 +165,7 @@ extension WorktreeTerminalState {
           identified: identified,
           retainedAgent: agent,
           raw: raw,
+          reason: detection.reason,
           stabilized: stabilized
         )
       )
@@ -181,34 +177,56 @@ extension WorktreeTerminalState {
     return true
   }
 
-  /// Resolves the raw agent state for `text`, reusing `cache` when it already
-  /// holds a scan for the same `agent` and identical `text`. Returns the raw
-  /// state and the scan to store back for the next call.
+  /// Resolves the screen detection for `text`, reusing `cache` when it already
+  /// holds a scan for the same `agent` and identical `text`. Returns the full
+  /// detection and the scan to store back for the next call.
   ///
-  /// `detectState` is a `nonisolated` pure function of the screen, so reusing
+  /// `detectScreen` is a `nonisolated` pure function of the screen, so reusing
   /// its result for identical input is exactly equivalent to recomputing it.
   /// It runs inline (no `Task.detached`): the detached hop bought only allocator
   /// churn — over a long session each tick left a task stack + closure capture
   /// that never reached ARC, adding up to hundreds of MB of unreferenced
   /// allocations.
-  nonisolated static func resolveRawState(
+  nonisolated static func resolveScreenDetection(
     agent: DetectedAgent,
     text: String,
     cache: AgentScreenScan?
-  ) -> (raw: AgentRawState, scan: AgentScreenScan) {
+  ) -> (detection: AgentScreenDetection, scan: AgentScreenScan) {
     if let cache, cache.agent == agent, cache.text == text {
-      return (cache.raw, cache)
+      return (cache.detection, cache)
     }
-    let raw = agent.detectState(in: text)
-    return (raw, AgentScreenScan(agent: agent, text: text, raw: raw))
+    let detection = agent.detectScreen(in: text)
+    return (detection, AgentScreenScan(agent: agent, text: text, detection: detection))
   }
 
-  /// Instance wrapper over `resolveRawState` that reads and writes the per-surface
-  /// memo, keeping `detectAgentState` to a single line at the call site.
-  private func cachedRawState(forSurfaceID surfaceID: UUID, agent: DetectedAgent, text: String) -> AgentRawState {
-    let (raw, scan) = Self.resolveRawState(agent: agent, text: text, cache: lastAgentScreenScanBySurface[surfaceID])
+  /// Instance wrapper over `resolveScreenDetection` that reads and writes the
+  /// per-surface memo, keeping `detectAgentState` concise at the call site.
+  private func cachedScreenDetection(
+    forSurfaceID surfaceID: UUID,
+    agent: DetectedAgent,
+    text: String
+  ) -> AgentScreenDetection {
+    let (detection, scan) = Self.resolveScreenDetection(
+      agent: agent,
+      text: text,
+      cache: lastAgentScreenScanBySurface[surfaceID]
+    )
     lastAgentScreenScanBySurface[surfaceID] = scan
-    return raw
+    return detection
+  }
+
+  private static func resolvedSeen(
+    previous: PaneAgentState,
+    stabilized: AgentRawState,
+    isForeground: Bool
+  ) -> Bool {
+    if isForeground || stabilized == .blocked {
+      return true
+    }
+    if (previous.state == .working || previous.state == .blocked) && stabilized == .idle {
+      return false
+    }
+    return previous.seen
   }
 
   private func resolvedLaunchObservation(
@@ -264,6 +282,7 @@ extension WorktreeTerminalState {
     guard surfaceAgentStates[surfaceID]?.detectedAgent != nil else { return }
     surfaceAgentStates[surfaceID] = PaneAgentState(lastChangedAt: Date())
     lastWorkingAtBySurface.removeValue(forKey: surfaceID)
+    lastAgentScreenScanBySurface.removeValue(forKey: surfaceID)
     lastEmittedAgentEntriesBySurface.removeValue(forKey: surfaceID)
     // The launch identity lives exactly as long as the launched agent
     // (docs-ai 053/006): once the pane is a bare shell again, a manually
@@ -471,27 +490,9 @@ extension WorktreeTerminalState {
     }
   }
 
-  func agentDetectionDiagnosticMessage(_ diagnostic: AgentDetectionDiagnostic) -> String {
-    let processSummary =
-      diagnostic.job?.processes
-      .map { "\($0.pid):\($0.argv0 ?? $0.name)" }
-      .joined(separator: ",") ?? "none"
-    return [
-      "tab=\(diagnostic.tabId.rawValue.uuidString.prefix(8))",
-      "childPID=\(diagnostic.childPID.map(String.init) ?? "nil")",
-      "ptyPGID=\(diagnostic.processGroupID.map(String.init) ?? "nil")",
-      "fgPGID=\(diagnostic.job.map { String($0.processGroupID) } ?? "nil")",
-      "processes=\(processSummary)",
-      "identified=\(diagnostic.identified.map { "\($0.agent.rawValue)(\($0.name))" } ?? "nil")",
-      "retained=\(diagnostic.retainedAgent?.rawValue ?? "nil")",
-      "raw=\(diagnostic.raw?.rawValue ?? "nil")",
-      "state=\(diagnostic.stabilized?.rawValue ?? "nil")",
-    ].joined(separator: " ")
-  }
-
   func logAgentDetectionDiagnostic(surfaceID: UUID, diagnostic: AgentDetectionDiagnostic) {
     #if DEBUG
-      let message = agentDetectionDiagnosticMessage(diagnostic)
+      let message = diagnostic.summary
       guard lastAgentDetectionDiagnosticsBySurface[surfaceID] != message else { return }
       lastAgentDetectionDiagnosticsBySurface[surfaceID] = message
       terminalStateLogger.debug(

@@ -16,6 +16,7 @@ public struct AgentsCommandAgent: Codable, Equatable {
   public let name: String
   public let status: AgentsCommandStatus
   public let rawState: String
+  public let detectionReason: String?
   public let lastChangedAt: String
   public let project: AgentsCommandProject
   public let worktree: AgentsCommandWorktree
@@ -29,6 +30,7 @@ public struct AgentsCommandAgent: Codable, Equatable {
     case name
     case status
     case rawState = "raw_state"
+    case detectionReason = "detection_reason"
     case lastChangedAt = "last_changed_at"
     case project
     case worktree
@@ -43,6 +45,7 @@ public struct AgentsCommandAgent: Codable, Equatable {
     name: String,
     status: AgentsCommandStatus,
     rawState: String,
+    detectionReason: String? = nil,
     lastChangedAt: String,
     project: AgentsCommandProject,
     worktree: AgentsCommandWorktree,
@@ -55,6 +58,7 @@ public struct AgentsCommandAgent: Codable, Equatable {
     self.name = name
     self.status = status
     self.rawState = rawState
+    self.detectionReason = detectionReason
     self.lastChangedAt = lastChangedAt
     self.project = project
     self.worktree = worktree

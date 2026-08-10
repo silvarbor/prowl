@@ -1,0 +1,41 @@
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+❯ Run the shell command `touch permission-probe.txt` now. Do not explain.
+
+  Ran 1 shell command
+
+⏺ <MODEL_OUTPUT>
+
+✻ Baked for 10s
+
+❯ Run the shell command `sleep 8`, then reply exactly DONE.
+
+  Ran 1 shell command
+
+⏺ DONE
+
+✻ Brewed for 19s
+
+❯ Launch exactly one general-purpose subagent. Have it run sleep 8 and then return DONE. Wait for it
+  before responding.
+
+⏺ Agent(Run sleep 8, return DONE)
+  ⎿  Backgrounded agent (↓ to manage · ctrl+o to expand)
+
+
+
+
+✢ Slithering… (16s · ↓ <TOKENS>)
+  ⎿  Tip: Use ctrl+v to paste images from your clipboard
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  [Fable 5 | XXX] ░░░░░░░░░░ 4% | claude-main | 1 CLAUDE.md | 1 MCPs | 3 hooks | 5h: XX% (XXm) | ⏱️  2m
+  ◐ Agent | ✓ Bash ×2
+  ⏸ manual mode on · 1 shell · ← for agents
+                                                                                                      /rc
+
+  ⏺ main
+  ◯ general-purpose  Run sleep 8, return DONE                                         11s · ↓ <TOKENS>

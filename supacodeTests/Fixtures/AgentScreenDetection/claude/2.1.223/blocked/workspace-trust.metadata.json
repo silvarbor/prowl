@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-06T16:27:15Z",
+  "cli_version": "2.1.223",
+  "capture_source": "prowl-read-detection",
+  "terminal": {
+    "columns": 106,
+    "rows": 52
+  },
+  "redactions": [
+    "temporary capture root replaced with a synthetic equal-width path",
+    "shell login record replaced with <SHELL_STARTUP>"
+  ],
+  "issue": null
+}

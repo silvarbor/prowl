@@ -122,6 +122,10 @@ Each agent contains:
   `pi`; Oh My Pi uses `omp`, with `oh-my-pi` preserved as a display alias.
 - `status`, `raw_state`: detected agent state. `status` is one of `blocked`,
   `working`, `done`, `idle`; `raw_state` is the lower-level detector state.
+- `detection_reason`: optional stable screen-classifier explanation. A profile rule
+  emits its rule ID, an ordinary profile miss emits `fallback.noRuleMatched`, and an
+  unmigrated classifier emits `legacy.detector`. The field is omitted when no current
+  screen result is available and never includes screen text.
 - `last_changed_at`: ISO-8601 timestamp for the most recent state change.
 - `project`: display-oriented `name`, `branch`, `path` resolved from the
   agent's working directory.
@@ -153,6 +157,11 @@ It prints a pane handle such as `p7` for each agent; use it as
 Read a pane's content.
 
 - `--last <n>` — last N lines (scrollback + screen); omit for a full snapshot.
+- `--source <viewport|detection>` — `viewport` preserves the normal read behavior
+  (default); `detection` reads the exact active-screen buffer used by agent-state
+  detection, which can differ from the viewport when a pane is scrolled. If the
+  running app is too old to honor `detection`, the CLI fails with `READ_FAILED`
+  instead of returning viewport text; update or restart Prowl and retry.
 - `--wait-stable` — re-read until the screen stops changing (best for live TUIs).
 - `--stable-interval <50–5000ms>` (default 200), `--stable-period <100–60000ms>`
   (default 800), `--wait-timeout <1–300s>` (default 10) — tune the stable wait.
@@ -160,11 +169,28 @@ Read a pane's content.
 ```bash
 prowl read --pane "$pane" --last 200 --wait-stable --json
 ```
-Response includes `mode` (snapshot|last), `source` (screen|scrollback|mixed),
-`truncated`, `line_count`, `text`, and (when waiting) `stabilized`, `waited_ms`,
-`samples`. **`truncated: false` with fewer lines than `--last` just means the pane
-has less history — don't retry.** `truncated: true` flags a possibly-incomplete
-read.
+Response includes `mode` (snapshot|last), `source`
+(screen|scrollback|mixed|detection), `truncated`, `line_count`, `text`, and (when
+waiting) `stabilized`, `waited_ms`, `samples`. **`truncated: false` with fewer
+lines than `--last` just means the pane has less history — don't retry.**
+`truncated: true` flags a possibly-incomplete read.
+
+For detector regression captures, omit `--last`, require the returned source, and
+extract the JSON string without adding a newline:
+
+```bash
+# Run from the Prowl source checkout so the private staging path is ignored.
+repo_root="$(git rev-parse --show-toplevel)"
+test -f "$repo_root/supacode.xcodeproj/project.pbxproj"
+staging="$repo_root/.local/agent-screen-captures"
+mkdir -p "$staging"
+capture="$(prowl read --pane "$pane" --source detection --json)"
+printf '%s\n' "$capture" | jq -e '.data.source == "detection"' >/dev/null
+printf '%s\n' "$capture" | jq -j '.data.text' > "$staging/raw-capture.txt"
+```
+
+This is a diagnostic/capture source, not a more complete terminal-history read;
+normal pane inspection should keep the default viewport source.
 
 ### `prowl send [target] [text]`
 Type into a pane, optionally wait for completion and capture output.

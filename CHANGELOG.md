@@ -1,5 +1,21 @@
 # Changelog
 
+## [2026.8.9](https://github.com/onevcat/Prowl/releases/tag/v2026.8.9)
+
+This release streamlines the toolbar layout and improves the accuracy of agent status detection for Claude and Codex.
+
+### New
+- `prowl agents --json` can now include a `detection_reason` field, showing why an agent was classified as blocked, working, or idle.
+- Added `prowl read --source detection`, which reads the same screen buffer Prowl uses internally for agent state detection.
+
+### Improved
+- Unified the top toolbar across Normal, Shelf, and Canvas modes around Agents + Quick Launch, with the notifications bell surfaced separately. The branch/folder name was removed from the toolbar since it's already shown in the sidebar.
+- Rename Branch moved from the toolbar into the worktree's context menu (and an app-level sheet), keeping its configurable shortcut.
+
+### Fixed
+- Codex's directory-trust, hook-review, and first-run sign-in prompts are now correctly detected as blocked instead of being read as idle or working.
+- Fixed Claude's history-search viewer being misdetected as idle after its filter/navigation footer text changed.
+
 ## [2026.8.5](https://github.com/onevcat/Prowl/releases/tag/v2026.8.5)
 
 ### New

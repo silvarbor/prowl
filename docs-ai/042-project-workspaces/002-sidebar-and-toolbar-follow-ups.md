@@ -28,11 +28,12 @@ workspaces (and plain folders) integrate with existing chrome.
 
 ## Current state
 
-All three fixes are verified in the working tree: `WorktreeDetailTitleView.swift` keeps
-the no-op `Button` wrapper (with an explanatory comment), `WorkspaceChildRowsView.swift`
-uses `contentShape(.interaction, .rect)` + `onTapGesture`, and
-`SidebarListView.expandableRepositoryIDs` filters on
-`$0.capabilities.supportsWorktrees || $0.isWorkspace`.
+The workspace child-row and collapse/expand fixes remain in the working tree:
+`WorkspaceChildRowsView.swift` uses `contentShape(.interaction, .rect)` +
+`onTapGesture`, and `SidebarListView.expandableRepositoryIDs` filters on
+`$0.capabilities.supportsWorktrees || $0.isWorkspace`. The toolbar title and its no-op
+`Button` wrapper were removed on 2026-08-07 by
+[058](../058-unified-toolbar-layout/000-plan.md), superseding that presentation-only fix.
 
 Note: #485 trades the project guideline "prefer `Button` over `onTapGesture`" for
 consistency with the existing worktree-row implementation; if worktree rows ever move

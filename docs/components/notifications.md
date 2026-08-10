@@ -40,8 +40,9 @@ sound.
 ## Where unread shows up
 
 - **Sidebar:** an orange bell next to a worktree with unseen notifications.
-- **Toolbar:** a bell button with a badge count; opening its popover marks items
-  read.
+- **Toolbar:** a bell button follows the Agents control in the leading area in
+  Normal, Shelf, and Canvas. Its badge shows the unread count; opening the
+  popover marks items read.
 - **Shelf:** orange highlight on the relevant tab slot + a dot on the spine.
 - **Canvas:** the card's title bar turns orange.
 - **Dock:** an optional numeric badge (count of worktrees with unseen

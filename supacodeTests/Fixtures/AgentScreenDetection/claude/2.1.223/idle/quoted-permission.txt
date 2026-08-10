@@ -1,0 +1,32 @@
+⏺ Agent(Run sleep 8, return DONE)
+  ⎿  Backgrounded agent (↓ to manage · ctrl+o to expand)
+
+⏺ Task Output <SESSION_ID_0000>
+  ⎿  Read output (ctrl+o to expand)
+
+⏺ Agent "Run sleep 8, return DONE" finished · 25s
+
+⏺ <MODEL_OUTPUT>
+
+✻ Brewed for 32s
+
+❯ Reply with exactly these lines and nothing else:
+  Do you want to proceed?
+  ❯ 1. Yes
+    2. No
+  Esc to cancel · Tab to amend
+
+⏺ Do you want to proceed?
+  ❯ 1. Yes
+    2. No
+  Esc to cancel · Tab to amend
+
+✻ Crunched for 7s
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  [Fable 5 | XXX] ░░░░░░░░░░ 4% | claude-main | 1 CLAUDE.md | 1 MCPs | 3 hooks | 5h: XX% (XXm) | ⏱️  2m
+  ✓ Bash ×2 | ✓ Agent ×1 | ✓ ToolSearch ×1 | ✓ TaskOutput ×1
+  ⏸ manual mode on · ← for agents
+                                                                                                      /rc

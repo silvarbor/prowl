@@ -29,7 +29,8 @@
   (Add Opened / Add Remote / Add Local menu; bare-repository rows render but are not
   offered as a source), `WorkspaceDetailView.swift`, `WorkspaceChildRowsView.swift`,
   `WorkspaceRepositoriesGridView.swift`, `RemoveWorkspaceConfirmationView.swift`;
-  `SidebarListView.swift` and `WorktreeDetailTitleView.swift` carry the 002 fixes.
+  `SidebarListView.swift` carries the surviving 002 fix; the toolbar-title portion was
+  superseded by [058](../058-unified-toolbar-layout/000-plan.md).
 - Entry points — "New Workspace" lives in the Worktrees menu
   (`supacode/Commands/WorktreeCommands.swift`) and the command palette
   (`CommandPaletteFeature` / `CommandPaletteItem.newWorkspace`). The standalone sidebar
@@ -46,7 +47,8 @@
 - Tests — `supacodeTests/ProjectWorkspaceTests.swift` (~950 lines of domain tests),
   `RepositoriesFeatureTests.swift` (incl. `removeSelectedWorkspaceSelectsNextRepository`),
   `GitClientBranchRefsTests.swift` (incl. `branchRefOptionsPreservesLocalBranchNamedHEAD`),
-  `DetailToolbarTitleTests.swift`.
+  toolbar-title tests (later removed with the title UI in
+  [058](../058-unified-toolbar-layout/000-plan.md)).
 - User-facing behavior is documented in `docs/components/workspaces.md` (added in the
   same merge).
 

@@ -753,11 +753,12 @@ extension RepositoriesFeature {
       return .none
 
     case .requestRenameBranchPrompt(let worktreeID):
-      guard state.worktree(for: worktreeID) != nil else { return .none }
+      guard let worktree = state.worktree(for: worktreeID) else { return .none }
       state.nextPendingRenameBranchRequestID += 1
       state.pendingRenameBranchRequest = .init(
         id: state.nextPendingRenameBranchRequestID,
-        worktreeID: worktreeID
+        worktreeID: worktreeID,
+        currentName: worktree.name
       )
       return .none
 

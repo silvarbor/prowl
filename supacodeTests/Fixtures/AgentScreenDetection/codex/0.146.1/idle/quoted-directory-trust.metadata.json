@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-06T16:27:00Z",
+  "cli_version": "0.146.1",
+  "capture_source": "prowl-read-detection",
+  "terminal": {
+    "columns": 132,
+    "rows": 52
+  },
+  "redactions": [
+    "temporary capture root replaced with a synthetic equal-width path",
+    "usage balances and plan labels replaced with placeholders",
+    "private persona-styled model output replaced with <MODEL_OUTPUT>",
+    "terminal right-edge padding removed without changing line wrapping"
+  ],
+  "issue": null
+}

@@ -6,6 +6,7 @@ struct WorktreeCommands: Commands {
   @Bindable var store: StoreOf<AppFeature>
   let terminalManager: WorktreeTerminalManager
   @FocusedValue(\.openSelectedWorktreeAction) private var openSelectedWorktreeAction
+  @FocusedValue(\.renameBranchAction) private var renameBranchAction
   @FocusedValue(\.confirmWorktreeAction) private var confirmWorktreeAction
   @FocusedValue(\.archiveWorktreeAction) private var archiveWorktreeAction
   @FocusedValue(\.deleteWorktreeAction) private var deleteWorktreeAction
@@ -66,6 +67,12 @@ struct WorktreeCommands: Commands {
         worktreeMenuButton(entry: entry)
       }
       Divider()
+      Button("Rename Branch…") {
+        renameBranchAction?()
+      }
+      .modifier(KeyboardShortcutModifier(shortcut: keyboardShortcut(for: AppShortcuts.CommandID.renameBranch)))
+      .help(helpText(title: "Rename Branch", commandID: AppShortcuts.CommandID.renameBranch))
+      .disabled(renameBranchAction == nil)
       Button(store.state.repositories.isShowingArchivedWorktrees ? "Exit Archived Worktrees" : "Archived Worktrees") {
         store.send(.repositories(.selectArchivedWorktrees))
       }
@@ -324,6 +331,10 @@ private struct OpenSelectedWorktreeActionKey: FocusedValueKey {
   typealias Value = FocusedAction<Void>
 }
 
+private struct RenameBranchActionKey: FocusedValueKey {
+  typealias Value = FocusedAction<Void>
+}
+
 private struct DeleteWorktreeActionKey: FocusedValueKey {
   typealias Value = FocusedAction<Void>
 }
@@ -336,6 +347,11 @@ extension FocusedValues {
   var openSelectedWorktreeAction: FocusedAction<Void>? {
     get { self[OpenSelectedWorktreeActionKey.self] }
     set { self[OpenSelectedWorktreeActionKey.self] = newValue }
+  }
+
+  var renameBranchAction: FocusedAction<Void>? {
+    get { self[RenameBranchActionKey.self] }
+    set { self[RenameBranchActionKey.self] = newValue }
   }
 
   var confirmWorktreeAction: FocusedAction<Void>? {

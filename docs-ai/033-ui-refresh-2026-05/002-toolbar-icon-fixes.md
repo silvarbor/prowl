@@ -27,8 +27,10 @@ PR #467 (`fix/toolbar-icon`):
 
 ## Current state
 
-`WorktreeDetailTitleView.swift` still swaps to `pencil` on hover inside a fixed
-18×18 frame. `ToolbarNotificationsPopoverButton.swift` matches its pre-#467 icon
-styling, as the merged PR left it. The same contributor's later PRs belong to other
-entries: #532/#539 → [028](../028-pr-status-tracking/000-plan.md), #540 →
+At the time of this fix, `WorktreeDetailTitleView.swift` swapped to `pencil` on
+hover inside a fixed 18×18 frame. The branch title view was removed on 2026-08-07 by
+[058](../058-unified-toolbar-layout/000-plan.md), which made the hover fix obsolete.
+`ToolbarNotificationsPopoverButton.swift` retains its pre-#467 icon styling. The same
+contributor's later PRs belong to other entries: #532/#539 →
+[028](../028-pr-status-tracking/000-plan.md), #540 →
 [003](../003-diff-window/000-plan.md).

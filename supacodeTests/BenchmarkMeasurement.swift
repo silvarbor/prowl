@@ -67,6 +67,11 @@ nonisolated enum BenchmarkMeasurement {
     return (median(referenceTimes), median(shippedTimes))
   }
 
+  static func repeatedMedian(_ body: () -> Void) -> Duration {
+    body()
+    return median((0..<iterations).map { _ in time(body) })
+  }
+
   static func time(_ body: () -> Void) -> Duration {
     let start = ContinuousClock.now
     body()
@@ -85,6 +90,26 @@ nonisolated enum BenchmarkMeasurement {
     milliseconds(medians.reference) / milliseconds(medians.shipped)
   }
 
+  static func reportAbsolute(
+    suite: String,
+    name: String,
+    median: Duration,
+    normalizingBy workloadCount: Int = 1
+  ) {
+    guard isFullMode else { return }
+    let environment = ProcessInfo.processInfo.environment
+    let record = AbsoluteRecord(
+      date: Date.now.ISO8601Format(),
+      suite: suite,
+      name: name,
+      medianMilliseconds: milliseconds(median) / Double(workloadCount),
+      normalizationDivisor: workloadCount,
+      iterations: iterations,
+      gitSHA: environment["PROWL_BENCH_GIT_SHA"]
+    )
+    write(record)
+  }
+
   /// Appends one measurement to the bench log when running under `make bench`.
   /// JSON lines keyed by git SHA keep the series across commits comparable on
   /// one machine; nothing in the test assertions ever reads this file back.
@@ -101,8 +126,12 @@ nonisolated enum BenchmarkMeasurement {
       iterations: iterations,
       gitSHA: environment["PROWL_BENCH_GIT_SHA"]
     )
-    guard let line = try? JSONEncoder().encode(record) else { return }
+    write(record)
+  }
 
+  private static func write(_ record: some Encodable) {
+    guard let line = try? JSONEncoder().encode(record) else { return }
+    let environment = ProcessInfo.processInfo.environment
     let directory =
       environment["PROWL_BENCH_LOG_DIR"].map { URL(fileURLWithPath: $0) }
       ?? FileManager.default.homeDirectoryForCurrentUser
@@ -116,6 +145,16 @@ nonisolated enum BenchmarkMeasurement {
     defer { try? handle.close() }
     _ = try? handle.seekToEnd()
     try? handle.write(contentsOf: line + Data("\n".utf8))
+  }
+
+  private struct AbsoluteRecord: Encodable {
+    let date: String
+    let suite: String
+    let name: String
+    let medianMilliseconds: Double
+    let normalizationDivisor: Int
+    let iterations: Int
+    let gitSHA: String?
   }
 
   private struct Record: Encodable {

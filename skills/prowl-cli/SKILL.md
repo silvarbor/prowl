@@ -131,9 +131,9 @@ prowl list --json | jq -e '.ok == true' >/dev/null || echo "command failed"
 
 Key fields by command (see `docs/components/cli.md` for the full contract):
 
-- `read` → `.data.text`, `.data.line_count`, `.data.truncated`, `.data.mode` (`snapshot`|`last`), `.data.source` (`screen`|`scrollback`|`mixed`), plus `.data.stabilized` / `.data.waited_ms` / `.data.samples` when `--wait-stable`.
+- `read` → `.data.text`, `.data.line_count`, `.data.truncated`, `.data.mode` (`snapshot`|`last`), `.data.source` (`screen`|`scrollback`|`mixed`|`detection`), plus `.data.stabilized` / `.data.waited_ms` / `.data.samples` when `--wait-stable`.
 - `send` → `.data.input` (source/characters/bytes/trailing_enter_sent); `.data.wait.exit_code` and `.data.wait.duration_ms` when waiting; `.data.capture.text` / `.data.capture.line_count` / `.data.capture.truncated` when `--capture`.
-- `list` / `agents` → `.data.items[]` / `.data.agents[]`, each with `.pane.id`, `.tab.id`, `.worktree.{id,name,path}`, `.task.status`.
+- `list` / `agents` → `.data.items[]` / `.data.agents[]`, each with `.pane.id`, `.tab.id`, and `.worktree.{id,name,path}`. Agent entries also include `.status`, `.raw_state`, and optional `.detection_reason`; list entries include `.task.status`.
 - `tab create` / `open` → `.data.target.{pane,tab,worktree}`.
 
 ## Reading Agent Output
@@ -156,6 +156,22 @@ for i in 1 2 3 4 5 6; do
 done
 prowl read --pane "$pane" --last 200 --wait-stable --json
 ```
+
+The default read source follows the viewport. Only when diagnosing agent-state detection or collecting a sanitized detector fixture, request the exact active-screen detector input and verify the returned source before trusting it. An older running app that does not honor `detection` fails with `READ_FAILED`; update or restart Prowl rather than accepting viewport text.
+
+Run the capture from the Prowl source checkout so its canonical private staging path is covered by `.gitignore`:
+
+```bash
+repo_root="$(git rev-parse --show-toplevel)"
+test -f "$repo_root/supacode.xcodeproj/project.pbxproj"
+staging="$repo_root/.local/agent-screen-captures"
+mkdir -p "$staging"
+capture="$(prowl read --pane "$pane" --source detection --json)"
+printf '%s\n' "$capture" | jq -e '.data.source == "detection"' >/dev/null
+printf '%s\n' "$capture" | jq -j '.data.text' > "$staging/raw-capture.txt"
+```
+
+Omit `--last` for detector captures. A scrolled pane's detection source can differ from its viewport. Treat the raw capture as private and redact it before committing any fixture.
 
 When you need complete output from an agent, prefer writing or redirecting to a file over reading rendered TUI output. Screen capture can be truncated or miss folded content.
 

@@ -9,9 +9,39 @@ private struct ReadCapture {
   let truncated: Bool
 }
 
+struct ReadCaptureRequest: Sendable {
+  let target: ReadResolvedTarget
+  let source: ReadInputSource
+}
+
 struct ReadCaptureInput: Sendable {
-  let viewportText: String
-  let screenText: String?
+  enum Content: Sendable {
+    case viewport(text: String, screenText: String?)
+    case detection(text: String)
+  }
+
+  let content: Content
+
+  var viewportText: String {
+    switch content {
+    case .viewport(let text, _), .detection(let text): text
+    }
+  }
+
+  var screenText: String? {
+    switch content {
+    case .viewport(_, let screenText): screenText
+    case .detection: nil
+    }
+  }
+
+  init(viewportText: String, screenText: String?) {
+    self.content = .viewport(text: viewportText, screenText: screenText)
+  }
+
+  init(detectionText: String) {
+    self.content = .detection(text: detectionText)
+  }
 }
 
 /// Resolved target metadata for read payload construction.
@@ -50,7 +80,7 @@ extension ReadResolvedTarget {
 @MainActor
 final class ReadCommandHandler: CommandHandler {
   typealias ResolveProvider = @MainActor (TargetSelector) -> Result<ReadResolvedTarget, TargetResolverError>
-  typealias CaptureProvider = @MainActor (ReadResolvedTarget) -> ReadCaptureInput?
+  typealias CaptureProvider = @MainActor (ReadCaptureRequest) -> ReadCaptureInput?
 
   private let resolveProvider: ResolveProvider
   private let captureProvider: CaptureProvider
@@ -92,7 +122,7 @@ final class ReadCommandHandler: CommandHandler {
       waitedMs = result.waitedMs
       samples = result.samples
     } else {
-      guard let single = makeCapture(target: target, last: input.last) else {
+      guard let single = makeCapture(target: target, input: input) else {
         return errorResponse(code: CLIErrorCode.readFailed, message: "Failed to read terminal text.")
       }
       capture = single
@@ -140,21 +170,42 @@ final class ReadCommandHandler: CommandHandler {
     static let timeoutSeconds = 10
   }
 
-  /// Capture the pane's current content, applying `--last` line selection when requested.
-  private func makeCapture(target: ReadResolvedTarget, last: Int?) -> ReadCapture? {
-    guard let captureInput = captureProvider(target) else { return nil }
-    if let last {
-      return captureLast(
-        requestedLineCount: last,
-        viewportText: captureInput.viewportText,
-        screenText: captureInput.screenText
+  /// Capture the requested terminal source, applying `--last` line selection when requested.
+  private func makeCapture(target: ReadResolvedTarget, input: ReadInput) -> ReadCapture? {
+    let request = ReadCaptureRequest(target: target, source: input.source)
+    guard let captureInput = captureProvider(request) else { return nil }
+
+    switch (input.source, captureInput.content) {
+    case (.viewport, .viewport(let viewportText, let screenText)):
+      if let last = input.last {
+        return captureLast(
+          requestedLineCount: last,
+          viewportText: viewportText,
+          screenText: screenText
+        )
+      }
+      return ReadCapture(
+        text: viewportText,
+        source: .screen,
+        truncated: false
       )
+
+    case (.detection, .detection(let text)):
+      let output: String
+      if let last = input.last {
+        output = joinLines(splitLines(text).suffix(last))
+      } else {
+        output = text
+      }
+      return ReadCapture(
+        text: output,
+        source: .detection,
+        truncated: false
+      )
+
+    default:
+      return nil
     }
-    return ReadCapture(
-      text: captureInput.viewportText,
-      source: .screen,
-      truncated: false
-    )
   }
 
   /// Re-read the pane on a fixed interval until its content stops changing for a streak of
@@ -170,7 +221,7 @@ final class ReadCommandHandler: CommandHandler {
     let requiredStreak = max(1, Int((Double(periodMs) / Double(intervalMs)).rounded(.up)))
     let maxSleeps = max(1, Int((Double(timeoutMs) / Double(intervalMs)).rounded(.up)))
 
-    guard var current = makeCapture(target: target, last: input.last) else { return nil }
+    guard var current = makeCapture(target: target, input: input) else { return nil }
     var streak = 0
     var samples = 1
     var sleeps = 0
@@ -191,7 +242,7 @@ final class ReadCommandHandler: CommandHandler {
         break  // Cancelled: return the best capture so far.
       }
       sleeps += 1
-      guard let next = makeCapture(target: target, last: input.last) else {
+      guard let next = makeCapture(target: target, input: input) else {
         break  // Capture became unavailable mid-poll (e.g. pane closed): stop with what we have.
       }
       samples += 1
