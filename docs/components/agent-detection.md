@@ -41,8 +41,10 @@ at a `~/.grok/` install (so Cursor's own `agent` entrypoint stays Cursor).
    selection row such as `❯ 1. Yes`; a bare input prompt cuts off the preceding transcript.
    Codex uses an exact bottom-of-screen `•`/`◦ Working (... esc to interrupt)` footer
    fallback. Its confirmation detector requires a numbered selected row such as `› 1. Yes`
-   paired with a live bottom footer or an explicit Yes/No choice structure. Ordinary prompt
-   text and completed responses are not confirmation boundaries.
+   paired with a live bottom footer or an explicit Yes/No choice structure. It also recognizes
+   the current directory-trust, hook-review, and initial sign-in menus as **Blocked** from
+   their complete selected-choice and footer structures. Ordinary prompt text and completed
+   responses are not confirmation boundaries.
    Other agent families keep their own patterns (including Oh My Pi's
    `Working… ⟦esc⟧` loader, braille frames, symbol cycles, Cursor's
    hexagons, Kimi's moon phases, etc.).
@@ -50,6 +52,20 @@ at a `~/.grok/` install (so Cursor's own `agent` entrypoint stays Cursor).
    input box (e.g. `3/5 agents done · 7m 29s · ↓ 288.5k tokens`) after the turn has
    ended; Prowl reads that footer as **Working**, so a churning workflow isn't
    mistaken for idle.
+
+For diagnostics and sanitized regression captures, `prowl read --source detection`
+returns the exact active-screen buffer used by stage 2. It is explicitly requested
+because it can differ from the visible viewport when a pane is scrolled; the default
+`prowl read` behavior is unchanged.
+
+`prowl agents --json` may also include `detection_reason`, a stable classifier rule or
+fallback identifier for the latest screen scan. Codex reports runtime-owned IDs for trust,
+hook, sign-in, confirmation, and working-footer matches. Claude does the same for viewer,
+blocker, spinner, elapsed-status, background-work, and current-composer regions; current
+history-search chrome such as `⌕ Filter history…` reports `claude.viewer` and preserves
+the last trusted state. An ordinary migrated-profile miss reports
+`fallback.noRuleMatched`. Reasons never include screen text, and the text-mode command and
+app UI remain unchanged.
 
 To avoid flicker, detection **stabilizes**: it tolerates several consecutive
 misses before declaring an agent gone, and a working agent gets a short (~3s)

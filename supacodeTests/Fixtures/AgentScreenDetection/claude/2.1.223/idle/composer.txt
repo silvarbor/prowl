@@ -1,0 +1,52 @@
+
+╭─── Claude Code v2.1.223 ───────────────────────────────────────────────────────────────────────────────╮
+│                                                    │ Tips for getting started                          │
+│                Welcome back fixture!               │ Run /init to create a CLAUDE.md file with instru… │
+│                                                    │ ───────────────────────────────────────────────── │
+│                       ▐▛███▜▌                      │ What's new                                        │
+│                      ▝▜█████▛▘                     │ Added owner wildcard entries (`"owner/*"`) to th… │
+│                        ▘▘ ▝▝                       │ Added a warning when workflow agents, forked ski… │
+│      Fable 5 with xhigh effort · Claude XXX ·      │ Added a `/teleport` hint in cloud sessions showi… │
+│      <ACCOUNT_ID_0000>'s Organization              │ /release-notes for more                           │
+│  /…/prowl-fixture-workspace-live-00000/claude-main │                                                   │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                                                        ◉ xhigh · /effort
+──────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ Try "write a test for <filepath>"
+──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  [Fable 5 | XXX] ██░░░░░░░░ 23% | claude-main | 1 CLAUDE.md | 1 MCPs | 3 hooks | 5h: XX% (XXm)       /rc
+  ⏸ manual mode on · ← for agents

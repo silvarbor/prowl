@@ -21,53 +21,66 @@ struct ToolbarNotificationsPopoverButton: View {
   }
 
   var body: some View {
+    button
+      .buttonStyle(.plain)
+      .glassEffect(.regular.interactive(), in: Capsule())
+      .help("Notifications. Hover or click to show all notifications.")
+      .accessibilityLabel("Notifications")
+      .onHover { hovering in
+        isHoveringButton = hovering
+        updatePresentation()
+      }
+      .popover(isPresented: $isPresented) {
+        ToolbarNotificationsPopoverView(
+          groups: groups,
+          onSelectNotification: { worktreeID, notification in
+            onSelectNotification(worktreeID, notification)
+            closePopover()
+          },
+          onDismissAll: {
+            onDismissAll()
+            closePopover()
+          }
+        )
+        .onHover { hovering in
+          isHoveringPopover = hovering
+          updatePresentation()
+        }
+        .onDisappear {
+          isHoveringPopover = false
+          isPinnedOpen = false
+        }
+      }
+      .onChange(of: groups) { _, newValue in
+        if newValue.isEmpty {
+          closePopover()
+        }
+      }
+      .onDisappear {
+        closeTask?.cancel()
+      }
+  }
+
+  private var button: some View {
     Button {
       togglePresentation()
     } label: {
-      HStack(spacing: 6) {
+      HStack(spacing: LeadingToolbarControlMetrics.labelSpacing) {
         Image(systemName: unseenWorktreeCount > 0 ? "bell.badge.fill" : "bell.fill")
           .foregroundStyle(unseenWorktreeCount > 0 ? .orange : .secondary)
           .accessibilityHidden(true)
+          .frame(
+            width: LeadingToolbarControlMetrics.iconSize,
+            height: LeadingToolbarControlMetrics.iconSize
+          )
         if notificationCount > 0 {
           Text(notificationCount, format: .number)
             .font(.caption.monospacedDigit())
         }
       }
-    }
-    .help("Notifications. Hover or click to show all notifications.")
-    .accessibilityLabel("Notifications")
-    .onHover { hovering in
-      isHoveringButton = hovering
-      updatePresentation()
-    }
-    .popover(isPresented: $isPresented) {
-      ToolbarNotificationsPopoverView(
-        groups: groups,
-        onSelectNotification: { worktreeID, notification in
-          onSelectNotification(worktreeID, notification)
-          closePopover()
-        },
-        onDismissAll: {
-          onDismissAll()
-          closePopover()
-        }
-      )
-      .onHover { hovering in
-        isHoveringPopover = hovering
-        updatePresentation()
-      }
-      .onDisappear {
-        isHoveringPopover = false
-        isPinnedOpen = false
-      }
-    }
-    .onChange(of: groups) { _, newValue in
-      if newValue.isEmpty {
-        closePopover()
-      }
-    }
-    .onDisappear {
-      closeTask?.cancel()
+      .font(LeadingToolbarControlMetrics.font)
+      .padding(.horizontal, LeadingToolbarControlMetrics.standaloneHorizontalPadding)
+      .padding(.vertical, LeadingToolbarControlMetrics.standaloneVerticalPadding)
     }
   }
 

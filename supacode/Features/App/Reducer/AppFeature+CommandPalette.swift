@@ -246,7 +246,14 @@ extension AppFeature {
       return .send(.stopRunScript)
 
     case .renameBranch:
-      guard let worktreeID = state.repositories.selectedWorktreeID else { return .none }
+      guard
+        let worktreeID = renameBranchCommandTargetID(
+          appState: state,
+          canvasFocusedWorktreeID: terminalClient.canvasFocusedWorktreeID()
+        )
+      else {
+        return .none
+      }
       return .send(.repositories(.requestRenameBranchPrompt(worktreeID)))
 
     case .openRepositorySettings(let repositoryID):

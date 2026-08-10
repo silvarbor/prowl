@@ -139,6 +139,45 @@ final class ProwlCLIIntegrationTests: XCTestCase {
     XCTAssertEqual(payload["command"] as? String, "agents")
   }
 
+  func testAgentsPayloadDetectionReasonRemainsBackwardCompatible() throws {
+    let modernData = try JSONEncoder().encode(
+      AgentsResponseData(
+        count: 1,
+        agents: [
+          makeAgentResponse(
+            id: "modern-pane",
+            name: "codex",
+            status: "blocked",
+            projectName: "Prowl",
+            branch: "main",
+            tabTitle: "Modern",
+            detectionReason: "codex.directoryTrust"
+          )
+        ]
+      )
+    )
+    let modernPayload = try JSONDecoder().decode(AgentsCommandPayload.self, from: modernData)
+    XCTAssertEqual(modernPayload.agents.first?.detectionReason, "codex.directoryTrust")
+
+    let legacyData = try JSONEncoder().encode(
+      AgentsResponseData(
+        count: 1,
+        agents: [
+          makeAgentResponse(
+            id: "legacy-pane",
+            name: "claude",
+            status: "idle",
+            projectName: "Prowl",
+            branch: "main",
+            tabTitle: "Legacy"
+          )
+        ]
+      )
+    )
+    let legacyPayload = try JSONDecoder().decode(AgentsCommandPayload.self, from: legacyData)
+    XCTAssertNil(legacyPayload.agents.first?.detectionReason)
+  }
+
   func testJSONModePreservesEscapedControlCharactersFromAppResponse() throws {
     let socketPath = temporarySocketPath(suffix: "json-control")
     let responseJSON = [
@@ -536,6 +575,7 @@ final class ProwlCLIIntegrationTests: XCTestCase {
             projectName: "Prowl",
             branch: "main",
             tabTitle: "Done tab",
+            detectionReason: "legacy.detector",
             session: AgentsResponseSession(
               id: "019f4e9e-1234-4567-89ab-0123456789ab",
               path: "/Users/me/.codex/sessions/rollout.jsonl",
@@ -582,6 +622,7 @@ final class ProwlCLIIntegrationTests: XCTestCase {
     XCTAssertTrue(lines[1].contains("Working"), "Expected working second: \(result.stdout)")
     XCTAssertTrue(lines[2].contains("Done"), "Expected done third: \(result.stdout)")
     XCTAssertTrue(lines[2].contains("session=019f4e9e-1234-4567-89ab-0123456789ab [exact]"))
+    XCTAssertFalse(result.stdout.contains("legacy.detector"), "Detection reason must remain JSON-only")
   }
 
   func testAgentsEmptyPayloadShowsNoAgentsFound() throws {
@@ -1391,6 +1432,7 @@ final class ProwlCLIIntegrationTests: XCTestCase {
     if case .read(let input) = envelope.command {
       XCTAssertEqual(input.selector, .pane("pane-123"))
       XCTAssertEqual(input.last, 5)
+      XCTAssertEqual(input.source, .viewport)
     } else {
       XCTFail("Expected read command envelope")
     }
@@ -1399,6 +1441,133 @@ final class ProwlCLIIntegrationTests: XCTestCase {
     XCTAssertEqual(payload["ok"] as? Bool, true)
     XCTAssertEqual(payload["command"] as? String, "read")
     XCTAssertEqual(payload["schema_version"] as? String, "prowl.cli.read.v1")
+  }
+
+  func testReadDetectionSourcePassesExactSourceToApp() throws {
+    let socketPath = temporarySocketPath(suffix: "read-detection")
+    let response = try CommandResponse(
+      ok: true,
+      command: "read",
+      schemaVersion: "prowl.cli.read.v1",
+      data: RawJSON(encoding: ReadResponseData(
+        target: ReadResponseTarget(
+          worktree: ListWorktree(
+            id: "Prowl:/Projects/Prowl",
+            name: "Prowl",
+            path: "/Projects/Prowl",
+            rootPath: "/Projects/Prowl",
+            kind: "git"
+          ),
+          tab: ReadResponseTab(id: "tab-1", title: "Prowl 1", selected: true),
+          pane: ReadResponsePane(id: "pane-1", title: "zsh", cwd: "/Projects/Prowl", focused: true)
+        ),
+        mode: "snapshot",
+        last: nil,
+        source: "detection",
+        truncated: false,
+        lineCount: 2,
+        text: "active-line-1\nactive-line-2"
+      ))
+    )
+
+    let (requestData, result) = try runWithMockServer(
+      socketPath: socketPath,
+      response: response,
+      args: ["read", "--source", "detection", "--json"]
+    )
+
+    XCTAssertEqual(result.exitCode, 0)
+    let envelope = try JSONDecoder().decode(CommandEnvelope.self, from: requestData)
+    if case .read(let input) = envelope.command {
+      XCTAssertEqual(input.source, .detection)
+    } else {
+      XCTFail("Expected read command envelope")
+    }
+
+    let payload = try jsonObject(from: result.stdout)
+    let data = try XCTUnwrap(payload["data"] as? [String: Any])
+    XCTAssertEqual(data["source"] as? String, "detection")
+  }
+
+  func testReadDetectionSourceRejectsUnhonoredSource() throws {
+    let socketPath = temporarySocketPath(suffix: "read-detection-unhonored")
+    let response = try CommandResponse(
+      ok: true,
+      command: "read",
+      schemaVersion: "prowl.cli.read.v1",
+      data: RawJSON(encoding: ReadResponseData(
+        target: ReadResponseTarget(
+          worktree: ListWorktree(
+            id: "Prowl:/Projects/Prowl",
+            name: "Prowl",
+            path: "/Projects/Prowl",
+            rootPath: "/Projects/Prowl",
+            kind: "git"
+          ),
+          tab: ReadResponseTab(id: "tab-1", title: "Prowl 1", selected: true),
+          pane: ReadResponsePane(id: "pane-1", title: "zsh", cwd: "/Projects/Prowl", focused: true)
+        ),
+        mode: "snapshot",
+        last: nil,
+        source: "screen",
+        truncated: false,
+        lineCount: 1,
+        text: "viewport"
+      ))
+    )
+
+    let (_, result) = try runWithMockServer(
+      socketPath: socketPath,
+      response: response,
+      args: ["read", "--source", "detection", "--json"]
+    )
+
+    XCTAssertNotEqual(result.exitCode, 0)
+    let payload = try jsonObject(from: result.stdout)
+    XCTAssertEqual(payload["ok"] as? Bool, false)
+    let error = try XCTUnwrap(payload["error"] as? [String: Any])
+    XCTAssertEqual(error["code"] as? String, CLIErrorCode.readFailed)
+    XCTAssertTrue((error["message"] as? String)?.contains("did not honor") == true)
+  }
+
+  func testReadDetectionSourceRejectsUnhonoredSourceInTextModeWithoutLeakingText() throws {
+    let socketPath = temporarySocketPath(suffix: "read-detection-unhonored-text")
+    let response = try CommandResponse(
+      ok: true,
+      command: "read",
+      schemaVersion: "prowl.cli.read.v1",
+      data: RawJSON(encoding: ReadResponseData(
+        target: ReadResponseTarget(
+          worktree: ListWorktree(
+            id: "Prowl:/Projects/Prowl",
+            name: "Prowl",
+            path: "/Projects/Prowl",
+            rootPath: "/Projects/Prowl",
+            kind: "git"
+          ),
+          tab: ReadResponseTab(id: "tab-1", title: "Prowl 1", selected: true),
+          pane: ReadResponsePane(id: "pane-1", title: "zsh", cwd: "/Projects/Prowl", focused: true)
+        ),
+        mode: "snapshot",
+        last: nil,
+        source: "screen",
+        truncated: false,
+        lineCount: 1,
+        text: "private viewport text"
+      ))
+    )
+
+    let (_, result) = try runWithMockServer(
+      socketPath: socketPath,
+      response: response,
+      args: ["read", "--source", "detection"]
+    )
+
+    XCTAssertNotEqual(result.exitCode, 0)
+    XCTAssertEqual(result.stdout, "")
+    XCTAssertTrue(result.stderr.contains("error [READ_FAILED]"))
+    XCTAssertFalse(result.stderr.contains("private viewport text"))
+    XCTAssertEqual(result.stderr.components(separatedBy: "READ_FAILED").count - 1, 1)
   }
 
   func testReadWithoutLastDefaultsToSnapshot() throws {
@@ -1852,6 +2021,7 @@ final class ProwlCLIIntegrationTests: XCTestCase {
     projectName: String,
     branch: String,
     tabTitle: String,
+    detectionReason: String? = nil,
     session: AgentsResponseSession? = nil
   ) -> AgentsResponseAgent {
     AgentsResponseAgent(
@@ -1860,6 +2030,7 @@ final class ProwlCLIIntegrationTests: XCTestCase {
       name: name,
       status: status,
       rawState: status,
+      detectionReason: detectionReason,
       lastChangedAt: "2026-06-13T04:12:25Z",
       project: AgentsResponseProject(name: projectName, branch: branch, path: "/Projects/\(projectName)"),
       worktree: ListWorktree(
@@ -2112,6 +2283,7 @@ private struct AgentsResponseAgent: Encodable {
     case name
     case status
     case rawState = "raw_state"
+    case detectionReason = "detection_reason"
     case lastChangedAt = "last_changed_at"
     case project
     case worktree
@@ -2121,6 +2293,7 @@ private struct AgentsResponseAgent: Encodable {
   }
 
   let rawState: String
+  let detectionReason: String?
   let lastChangedAt: String
   let project: AgentsResponseProject
   let worktree: ListWorktree

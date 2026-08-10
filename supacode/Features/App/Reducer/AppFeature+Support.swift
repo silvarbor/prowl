@@ -38,6 +38,44 @@ func openedWorktreeIDsForInfoWatcher(
   return repositories.openedWorktreeIDs.intersection(watchedIDs)
 }
 
+/// Resolves the window-scoped Rename Branch command without duplicating
+/// Normal/Canvas target semantics at each entry point. Explicit row context
+/// menus bypass this query because their target is already unambiguous.
+func renameBranchCommandTargetID(
+  appState: AppFeature.State,
+  canvasFocusedWorktreeID: Worktree.ID?
+) -> Worktree.ID? {
+  let repositories = appState.repositories
+  guard repositories.sidebarSelectedWorktreeIDs.count <= 1,
+    !appState.hasBlockingRenameBranchPresentation
+  else {
+    return nil
+  }
+  let explicitTargetID = repositories.isShowingCanvas ? canvasFocusedWorktreeID : nil
+  guard let target = repositories.actionTargetTerminalWorktree(explicitTargetID: explicitTargetID),
+    repositories.worktree(for: target.id) != nil,
+    !repositories.isWorktreeArchived(target.id)
+  else {
+    return nil
+  }
+  return target.id
+}
+
+extension AppFeature.State {
+  fileprivate var hasBlockingRenameBranchPresentation: Bool {
+    isRunScriptPromptPresented
+      || handoffHud != nil
+      || alert != nil
+      || repositories.isOpenPanelPresented
+      || repositories.worktreeCreationPrompt != nil
+      || repositories.workspaceCreationPrompt != nil
+      || repositories.pendingRenameBranchRequest != nil
+      || repositories.deleteWorktreeConfirmation != nil
+      || repositories.removeWorkspaceConfirmation != nil
+      || repositories.alert != nil
+  }
+}
+
 extension AppFeature {
   func appQuitProperties(launchedAt: Date?) -> [String: Any]? {
     guard let seconds = Self.sessionDurationSeconds(launchedAt: launchedAt, now: now) else { return nil }

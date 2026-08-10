@@ -78,3 +78,11 @@
 - **PR2 (dismiss-while-running) is deferred indefinitely**: Skip covers the
   waiting pain, hand-off is low-frequency, and the reducer-owned state
   means a future wave starts with zero rework.
+
+## Later layout evolution
+
+The placement and custom glass treatment above describe the initial delivery. On
+2026-08-07, [058 unified toolbar layout](../058-unified-toolbar-layout/000-plan.md)
+removed the redundant branch title and placed Agents + Quick Launch first, followed
+by a separately surfaced notifications capsule, across Normal, Shelf, and Canvas. The
+Agents popover and hand-off behavior remain the durable entry point delivered here.

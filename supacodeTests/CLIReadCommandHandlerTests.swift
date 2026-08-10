@@ -26,10 +26,13 @@ struct CLIReadCommandHandlerTests {
     )
   }
 
-  private static func makeEnvelope(last: Int? = nil) -> CommandEnvelope {
+  private static func makeEnvelope(
+    last: Int? = nil,
+    source: ReadInputSource = .viewport
+  ) -> CommandEnvelope {
     CommandEnvelope(
       output: .json,
-      command: .read(ReadInput(selector: .none, last: last))
+      command: .read(ReadInput(selector: .none, last: last, source: source))
     )
   }
 
@@ -56,6 +59,66 @@ struct CLIReadCommandHandlerTests {
     #expect(payload.truncated == false)
     #expect(payload.lineCount == 2)
     #expect(payload.text == "line-1\nline-2")
+  }
+
+  @Test func detectionSnapshotUsesExactDetectorInput() async throws {
+    let handler = ReadCommandHandler(
+      resolveProvider: { _ in .success(Self.makeTarget()) },
+      captureProvider: { request in
+        #expect(request.source == .detection)
+        return ReadCaptureInput(detectionText: "active-line-1\nactive-line-2\n")
+      }
+    )
+
+    let response = await handler.handle(envelope: Self.makeEnvelope(source: .detection))
+
+    #expect(response.ok)
+    let payload = try #require(try response.data?.decode(as: ReadCommandPayload.self))
+    #expect(payload.mode == .snapshot)
+    #expect(payload.source == .detection)
+    #expect(payload.truncated == false)
+    #expect(payload.lineCount == 3)
+    #expect(payload.text == "active-line-1\nactive-line-2\n")
+  }
+
+  @Test func detectionLastUsesOnlyDetectorInput() async throws {
+    let handler = ReadCommandHandler(
+      resolveProvider: { _ in .success(Self.makeTarget()) },
+      captureProvider: { _ in ReadCaptureInput(detectionText: "one\ntwo\nthree") }
+    )
+
+    let response = await handler.handle(envelope: Self.makeEnvelope(last: 2, source: .detection))
+
+    #expect(response.ok)
+    let payload = try #require(try response.data?.decode(as: ReadCommandPayload.self))
+    #expect(payload.mode == .last)
+    #expect(payload.source == .detection)
+    #expect(payload.truncated == false)
+    #expect(payload.lineCount == 2)
+    #expect(payload.text == "two\nthree")
+  }
+
+  @Test func detectionRejectsMismatchedCaptureSource() async {
+    let handler = ReadCommandHandler(
+      resolveProvider: { _ in .success(Self.makeTarget()) },
+      captureProvider: { _ in ReadCaptureInput(viewportText: "viewport", screenText: nil) }
+    )
+
+    let response = await handler.handle(envelope: Self.makeEnvelope(source: .detection))
+
+    #expect(response.ok == false)
+    #expect(response.error?.code == CLIErrorCode.readFailed)
+  }
+
+  @Test func readInputWithoutSourceDecodesAsViewport() throws {
+    let encoded = try JSONEncoder().encode(ReadInput())
+    var object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    object.removeValue(forKey: "source")
+    let legacyData = try JSONSerialization.data(withJSONObject: object)
+
+    let input = try JSONDecoder().decode(ReadInput.self, from: legacyData)
+
+    #expect(input.source == .viewport)
   }
 
   @Test func snapshotSucceedsWhenScreenCaptureUnavailable() async throws {

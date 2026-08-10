@@ -496,13 +496,14 @@ struct WorktreeRowsView: View {
       NSPasteboard.general.clearContents()
       NSPasteboard.general.setString(worktree.workingDirectory.path, forType: .string)
     }
+    Button("Reveal in Finder") {
+      NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: worktree.workingDirectory.path)
+    }
     Button("Copy Branch Name") {
       NSPasteboard.general.clearContents()
       NSPasteboard.general.setString(row.name, forType: .string)
     }
-    Button("Reveal in Finder") {
-      NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: worktree.workingDirectory.path)
-    }
+    renameBranchContextMenuItem(for: row, isBulkSelection: isBulkSelection)
     if row.info?.pullRequest != nil {
       Button("Open Pull Request") {
         store.send(.githubIntegration(.pullRequestAction(row.id, .openOnCodeHost)))
@@ -535,6 +536,22 @@ struct WorktreeRowsView: View {
       }
       .help(deleteTitle)
       .disabled(deleteTargets.isEmpty)
+    }
+  }
+
+  @ViewBuilder
+  private func renameBranchContextMenuItem(for row: WorktreeRowModel, isBulkSelection: Bool) -> some View {
+    if !isBulkSelection {
+      Button("Rename Branch…") {
+        store.send(.requestRenameBranchPrompt(row.id))
+      }
+      .help(
+        AppShortcuts.helpText(
+          title: "Rename branch",
+          commandID: AppShortcuts.CommandID.renameBranch,
+          in: resolvedKeybindings
+        )
+      )
     }
   }
 

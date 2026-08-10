@@ -1,53 +1,114 @@
+import Foundation
 import Testing
 
 @testable import supacode
 
 struct AgentScreenScanCacheTests {
   /// With no cache, the helper scans from scratch and returns a scan that
-  /// round-trips the inputs and the freshly computed raw state.
+  /// round-trips the inputs and the freshly computed detection result.
   @Test func scansFromScratchWithoutCache() {
-    let (raw, scan) = WorktreeTerminalState.resolveRawState(
+    let (detection, scan) = WorktreeTerminalState.resolveScreenDetection(
       agent: .claude,
       text: "screen",
       cache: nil
     )
 
-    #expect(raw == DetectedAgent.claude.detectState(in: "screen"))
-    #expect(scan == WorktreeTerminalState.AgentScreenScan(agent: .claude, text: "screen", raw: raw))
+    #expect(detection == DetectedAgent.claude.detectScreen(in: "screen"))
+    #expect(
+      scan
+        == WorktreeTerminalState.AgentScreenScan(
+          agent: .claude,
+          text: "screen",
+          detection: detection
+        )
+    )
   }
 
-  /// When the cached agent and text both match, the helper returns the cached
-  /// raw state without recomputing. Proven by seeding a sentinel raw a fresh
-  /// scan would never produce and asserting it comes back unchanged.
-  @Test func reusesCachedRawWhenAgentAndTextMatch() {
+  /// When the cached agent and text both match, the helper returns the complete
+  /// cached result without recomputing. A sentinel rule ID proves the reason,
+  /// not only the raw state, survives the cache hit.
+  @Test func reusesCachedDetectionWhenAgentAndTextMatch() {
     let text = ""
-    let sentinel = WorktreeTerminalState.AgentScreenScan(agent: .claude, text: text, raw: .blocked)
-    #expect(DetectedAgent.claude.detectState(in: text) != .blocked)
+    let sentinel = AgentScreenDetection(
+      state: .blocked,
+      reason: .matched(AgentScreenRuleID("test.sentinel"))
+    )
+    let cachedScan = WorktreeTerminalState.AgentScreenScan(
+      agent: .claude,
+      text: text,
+      detection: sentinel
+    )
+    #expect(DetectedAgent.claude.detectScreen(in: text) != sentinel)
 
-    let (raw, scan) = WorktreeTerminalState.resolveRawState(agent: .claude, text: text, cache: sentinel)
+    let (detection, scan) = WorktreeTerminalState.resolveScreenDetection(
+      agent: .claude,
+      text: text,
+      cache: cachedScan
+    )
 
-    #expect(raw == .blocked)
-    #expect(scan == sentinel)
+    #expect(detection == sentinel)
+    #expect(scan == cachedScan)
   }
 
   /// A changed screen invalidates the cache and forces a rescan.
   @Test func rescansWhenTextChanges() {
-    let cache = WorktreeTerminalState.AgentScreenScan(agent: .claude, text: "old", raw: .blocked)
+    let cachedScan = WorktreeTerminalState.AgentScreenScan(
+      agent: .claude,
+      text: "old",
+      detection: AgentScreenDetection(state: .blocked, reason: .legacyDetector)
+    )
 
-    let (raw, scan) = WorktreeTerminalState.resolveRawState(agent: .claude, text: "new", cache: cache)
+    let (detection, scan) = WorktreeTerminalState.resolveScreenDetection(
+      agent: .claude,
+      text: "new",
+      cache: cachedScan
+    )
 
-    #expect(raw == DetectedAgent.claude.detectState(in: "new"))
+    #expect(detection == DetectedAgent.claude.detectScreen(in: "new"))
     #expect(scan.text == "new")
   }
 
+  @MainActor
+  @Test func exitingAgentClearsCachedScreenDetection() {
+    let state = WorktreeTerminalState(
+      runtime: GhosttyRuntime(),
+      worktree: Worktree(
+        id: "/tmp/repo/wt-1",
+        name: "wt-1",
+        detail: "",
+        workingDirectory: URL(fileURLWithPath: "/tmp/repo/wt-1"),
+        repositoryRootURL: URL(fileURLWithPath: "/tmp/repo")
+      )
+    )
+    let surfaceID = UUID()
+    state.surfaceAgentStates[surfaceID] = PaneAgentState(detectedAgent: .codex)
+    state.lastAgentScreenScanBySurface[surfaceID] = WorktreeTerminalState.AgentScreenScan(
+      agent: .codex,
+      text: "screen",
+      detection: AgentScreenDetection(state: .working, reason: .legacyDetector)
+    )
+
+    state.removeAgentEntryIfNeeded(surfaceID: surfaceID)
+
+    #expect(state.lastAgentScreenScanBySurface[surfaceID] == nil)
+  }
+
   /// A different detected agent invalidates the cache even when the text is
-  /// identical, since raw state is agent-specific.
+  /// identical, since screen detections are agent-specific.
   @Test func rescansWhenAgentChanges() {
-    let cache = WorktreeTerminalState.AgentScreenScan(agent: .codex, text: "screen", raw: .blocked)
+    let cachedScan = WorktreeTerminalState.AgentScreenScan(
+      agent: .codex,
+      text: "screen",
+      detection: AgentScreenDetection(state: .blocked, reason: .legacyDetector)
+    )
 
-    let (raw, scan) = WorktreeTerminalState.resolveRawState(agent: .claude, text: "screen", cache: cache)
+    let (detection, scan) = WorktreeTerminalState.resolveScreenDetection(
+      agent: .claude,
+      text: "screen",
+      cache: cachedScan
+    )
 
-    #expect(raw == DetectedAgent.claude.detectState(in: "screen"))
+    #expect(detection == DetectedAgent.claude.detectScreen(in: "screen"))
     #expect(scan.agent == .claude)
   }
 }
