@@ -10,7 +10,7 @@ struct ToolbarNotificationsPopoverButton: View {
   @State private var isHoveringButton = false
   @State private var isHoveringPopover = false
   @State private var closeTask: Task<Void, Never>?
-  @Environment(\.minimumInterfaceTextSize) private var minimumTextSize
+  @Environment(\.interfaceText) private var interfaceText
 
   private var notificationCount: Int {
     groups.reduce(0) { count, repository in
@@ -76,7 +76,8 @@ struct ToolbarNotificationsPopoverButton: View {
           )
         if notificationCount > 0 {
           Text(notificationCount, format: .number)
-            .font(InterfaceTextMetrics.font(.caption, minimumSize: minimumTextSize).monospacedDigit())
+            .interfaceFont(.caption)
+            .monospacedDigit()
         }
       }
       .interfaceFont(

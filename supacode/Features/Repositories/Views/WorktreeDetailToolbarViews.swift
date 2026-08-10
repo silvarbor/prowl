@@ -174,7 +174,7 @@ struct CustomCommandOverflowButton: View {
   let onRunCustomCommand: (EffectiveCustomCommand.Identifier) -> Void
 
   @State private var isPresented = false
-  @Environment(\.minimumInterfaceTextSize) private var minimumTextSize
+  @Environment(\.interfaceText) private var interfaceText
   private let maxVisibleRows = 10
 
   var body: some View {
@@ -227,7 +227,7 @@ struct CustomCommandOverflowButton: View {
 
   private var popoverHeight: CGFloat {
     let visibleRows = min(maxVisibleRows, max(entries.count, 1))
-    let rowHeight = 32 + InterfaceTextMetrics.extraHeight(.body, minimumSize: minimumTextSize)
+    let rowHeight = 32 + InterfaceTextMetrics.extraHeight(.body, resolution: interfaceText)
     return CGFloat(visibleRows) * rowHeight + 16
   }
 

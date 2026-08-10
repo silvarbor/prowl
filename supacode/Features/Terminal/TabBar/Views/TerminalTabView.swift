@@ -26,7 +26,7 @@ struct TerminalTabView: View {
   @State private var tabWidth: CGFloat = 0
   @Environment(CommandKeyObserver.self) private var commandKeyObserver
   @Environment(\.resolvedKeybindings) private var resolvedKeybindings
-  @Environment(\.minimumInterfaceTextSize) private var minimumTextSize
+  @Environment(\.interfaceText) private var interfaceText
 
   var body: some View {
     ZStack(alignment: .leading) {
@@ -80,7 +80,7 @@ struct TerminalTabView: View {
             TerminalTabIconBadge(tab: tab, isActive: isActive)
           }
           RenameTextField(
-            fontSize: max(NSFont.smallSystemFontSize, minimumTextSize),
+            fontSize: InterfaceTextMetrics.pointSize(NSFont.smallSystemFontSize, resolution: interfaceText),
             text: $editingTitle,
             onCommit: { onEndRename() },
             onCancel: {

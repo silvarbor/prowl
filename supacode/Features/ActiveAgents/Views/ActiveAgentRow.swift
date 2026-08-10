@@ -108,7 +108,7 @@ struct BaguaWorkingIndicator: View {
 
   private func frameText(_ frame: String) -> some View {
     Text(frame)
-      .font(.system(size: 17, weight: .bold, design: .monospaced))
+      .fixedInterfaceFont(.system(size: 17, weight: .bold, design: .monospaced))
       .lineLimit(1)
       .frame(width: 20, height: 18)
       .accessibilityHidden(true)

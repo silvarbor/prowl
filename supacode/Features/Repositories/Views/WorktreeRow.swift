@@ -27,7 +27,7 @@ struct WorktreeRow: View {
   let onStopRunScript: (() -> Void)?
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.resolvedKeybindings) private var resolvedKeybindings
-  @Environment(\.minimumInterfaceTextSize) private var minimumTextSize
+  @Environment(\.interfaceText) private var interfaceText
 
   init(
     name: String,
@@ -104,7 +104,7 @@ struct WorktreeRow: View {
     let showsPullRequestTag = display.pullRequest != nil && display.pullRequestBadgeStyle != nil
     let nameColor = colorScheme == .dark ? Color.white : Color.primary
     let detailText = worktreeName.isEmpty ? name : worktreeName
-    let bodyFontAscender = InterfaceTextMetrics.bodyAscender(minimumSize: minimumTextSize)
+    let bodyFontAscender = InterfaceTextMetrics.bodyAscender(resolution: interfaceText)
     VStack(alignment: .leading, spacing: 2) {
       HStack(alignment: .firstTextBaseline, spacing: 6) {
         ZStack {
@@ -226,8 +226,8 @@ struct WorktreeRow: View {
   /// (body name, caption info) the row stacks.
   private var worktreeRowHeight: CGFloat {
     36
-      + InterfaceTextMetrics.extraHeight(.body, minimumSize: minimumTextSize)
-      + InterfaceTextMetrics.extraHeight(.caption, minimumSize: minimumTextSize)
+      + InterfaceTextMetrics.extraHeight(.body, resolution: interfaceText)
+      + InterfaceTextMetrics.extraHeight(.caption, resolution: interfaceText)
   }
 }
 
@@ -262,7 +262,7 @@ private struct WorktreeRowInfoView: View {
   let isQueued: Bool
   let shortcutHint: String?
   let showsShortcutHint: Bool
-  @Environment(\.minimumInterfaceTextSize) private var minimumTextSize
+  @Environment(\.interfaceText) private var interfaceText
 
   var body: some View {
     HStack(spacing: 4) {
@@ -278,7 +278,7 @@ private struct WorktreeRowInfoView: View {
       }
     }
     .interfaceFont(.caption)
-    .frame(minHeight: 14 + InterfaceTextMetrics.extraHeight(.caption, minimumSize: minimumTextSize))
+    .frame(minHeight: 14 + InterfaceTextMetrics.extraHeight(.caption, resolution: interfaceText))
     .animation(.easeInOut(duration: 0.15), value: showsShortcutHint)
   }
 
