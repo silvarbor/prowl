@@ -743,7 +743,7 @@ struct CanvasView: View {
             "Broadcasting to \(selectionState.selectedTabIDs.count) cards",
             systemImage: "dot.radiowaves.left.and.right"
           )
-          .font(.callout)
+          .interfaceFont(.callout)
           .padding(.horizontal, 10)
           .padding(.vertical, 6)
           .background(.bar, in: Capsule())
@@ -753,7 +753,7 @@ struct CanvasView: View {
           selectAllCards()
         } label: {
           Image(systemName: "checkmark.rectangle.stack")
-            .font(.body)
+            .interfaceFont(.body)
             .accessibilityLabel("Select All")
         }
         .buttonStyle(.bordered)
@@ -770,7 +770,7 @@ struct CanvasView: View {
           arrangeCardsWithFit()
         } label: {
           Image(systemName: "rectangle.3.group")
-            .font(.body)
+            .interfaceFont(.body)
             .accessibilityLabel("Arrange")
         }
         .buttonStyle(.bordered)
@@ -785,7 +785,7 @@ struct CanvasView: View {
           organizeCardsWithFit()
         } label: {
           Image(systemName: "square.grid.2x2")
-            .font(.body)
+            .interfaceFont(.body)
             .accessibilityLabel("Organize")
         }
         .buttonStyle(.bordered)
@@ -800,7 +800,7 @@ struct CanvasView: View {
           tileCardsWithFit()
         } label: {
           Image(systemName: "rectangle.split.2x1")
-            .font(.body)
+            .interfaceFont(.body)
             .accessibilityLabel("Tile")
         }
         .buttonStyle(.bordered)

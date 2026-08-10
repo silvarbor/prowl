@@ -47,6 +47,18 @@ extension View {
     modifier(InterfaceFontModifier(style: style, weight: weight, design: design))
   }
 
+  /// Reading text whose size was written as a point value rather than a
+  /// semantic style. It scales with the settings like any other text; only the
+  /// starting size is spelled out. Prefer a semantic style where one fits, so
+  /// the ramp stays the single source of relative sizing.
+  func interfaceFont(
+    size: Double,
+    weight: Font.Weight? = nil,
+    design: Font.Design? = nil
+  ) -> some View {
+    modifier(InterfaceSizedFontModifier(size: size, weight: weight, design: design))
+  }
+
   /// Text or a symbol whose size is deliberately fixed, exempt from the
   /// interface text settings. Use it where a point size is a layout constant
   /// rather than a reading size — an SF Symbol sized to a fixed slot, a glyph
@@ -67,6 +79,41 @@ private struct InterfaceFontModifier: ViewModifier {
     content.font(
       InterfaceTextMetrics.font(style, weight: weight, design: design, resolution: resolution)
     )
+  }
+}
+
+extension Text {
+  /// Resolved style for a value that has to stay a `Text`. String
+  /// interpolation composes `Text`, so a title assembled from several styled
+  /// pieces cannot go through the `View` modifiers, which return `some View`.
+  ///
+  /// The resolution is passed in because a `Text`-typed property cannot read
+  /// the environment. Read it once in the enclosing view and hand it down.
+  func interfaceFont(
+    _ style: Font.TextStyle,
+    weight: Font.Weight? = nil,
+    design: Font.Design? = nil,
+    resolution: InterfaceTextResolution
+  ) -> Text {
+    font(InterfaceTextMetrics.font(style, weight: weight, design: design, resolution: resolution))
+  }
+}
+
+private struct InterfaceSizedFontModifier: ViewModifier {
+  @Environment(\.interfaceText) private var resolution
+  let size: Double
+  let weight: Font.Weight?
+  let design: Font.Design?
+
+  func body(content: Content) -> some View {
+    var font = Font.system(
+      size: InterfaceTextMetrics.pointSize(size, resolution: resolution),
+      design: design ?? .default
+    )
+    if let weight {
+      font = font.weight(weight)
+    }
+    return content.font(font)
   }
 }
 
