@@ -28,11 +28,11 @@ struct AdvancedSettingsView: View {
                 Text("Not installed")
               }
             }
-            .font(.callout)
+            .interfaceFont(.callout)
 
             Text("Install the prowl command to control Prowl from the terminal.")
               .foregroundStyle(.secondary)
-              .font(.callout)
+              .interfaceFont(.callout)
 
             HStack(spacing: 8) {
               switch store.cliInstallStatus {
@@ -72,10 +72,10 @@ struct AdvancedSettingsView: View {
             .help("Share anonymous usage data with Prowl (requires restart)")
             Text("Anonymous usage data helps improve Prowl.")
               .foregroundStyle(.secondary)
-              .font(.callout)
+              .interfaceFont(.callout)
             Text("Requires app restart.")
               .foregroundStyle(.secondary)
-              .font(.callout)
+              .interfaceFont(.callout)
           }
           .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -87,10 +87,10 @@ struct AdvancedSettingsView: View {
             .help("Share anonymous crash reports with Prowl (requires restart)")
             Text("Anonymous crash reports help improve stability.")
               .foregroundStyle(.secondary)
-              .font(.callout)
+              .interfaceFont(.callout)
             Text("Requires app restart.")
               .foregroundStyle(.secondary)
-              .font(.callout)
+              .interfaceFont(.callout)
           }
           .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -101,7 +101,7 @@ struct AdvancedSettingsView: View {
             )
             Text("When enabled, Prowl attempts to restore tabs and splits after restart.")
               .foregroundStyle(.secondary)
-              .font(.callout)
+              .interfaceFont(.callout)
             Button("Clear saved terminal layout") {
               store.send(.clearTerminalLayoutSnapshotButtonTapped)
             }

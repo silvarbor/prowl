@@ -143,7 +143,7 @@ struct CanvasCardView: View {
         )
       }
       Text(repositoryName)
-        .font(.caption.bold())
+        .interfaceFont(.caption, weight: .bold)
         .lineLimit(1)
       HStack(spacing: 3) {
         Text("/")
@@ -152,7 +152,7 @@ struct CanvasCardView: View {
         }
         Text(worktreeName)
       }
-      .font(.caption)
+      .interfaceFont(.caption)
       .foregroundStyle(.secondary)
       .lineLimit(1)
       Spacer()
@@ -199,7 +199,7 @@ struct CanvasCardView: View {
             ? "arrow.down.right.and.arrow.up.left"
             : "arrow.up.left.and.arrow.down.right"
         )
-        .font(.caption2.weight(.semibold))
+        .interfaceFont(.caption2, weight: .semibold)
         .frame(width: 18, height: 18)
         .contentShape(.rect)
       }
@@ -212,7 +212,7 @@ struct CanvasCardView: View {
         onClose()
       } label: {
         Image(systemName: "xmark")
-          .font(.caption2.weight(.semibold))
+          .interfaceFont(.caption2, weight: .semibold)
           .frame(width: 18, height: 18)
           .contentShape(.rect)
       }
