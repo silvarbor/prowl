@@ -353,17 +353,22 @@ nonisolated private func hasInterruptPattern(_ lower: String) -> Bool {
     || (lower.contains("esc") && lower.contains("interrupt"))
 }
 
+private nonisolated let agentSpinnerScalars: Set<UnicodeScalar> = [
+  "·", "✱", "✲", "✳", "✴", "✵", "✶", "✷", "✸", "✹", "✺", "✻", "✼", "✽", "✾", "✿",
+  "❀", "❁", "❂", "❃", "❇", "❈", "❉", "❊", "❋", "✢", "✣", "✤", "✥", "✦", "✧", "✨",
+  "⊛", "⊕", "⊙", "◉", "◎", "◍", "⁂", "⁕", "※", "⍟", "☼", "★", "☆",
+]
+
+nonisolated func isAgentSpinnerScalar(_ scalar: UnicodeScalar) -> Bool {
+  agentSpinnerScalars.contains(scalar)
+}
+
 nonisolated func hasSpinnerActivity(_ content: String) -> Bool {
-  let spinnerScalars: Set<UnicodeScalar> = [
-    "·", "✱", "✲", "✳", "✴", "✵", "✶", "✷", "✸", "✹", "✺", "✻", "✼", "✽", "✾", "✿",
-    "❀", "❁", "❂", "❃", "❇", "❈", "❉", "❊", "❋", "✢", "✣", "✤", "✥", "✦", "✧", "✨",
-    "⊛", "⊕", "⊙", "◉", "◎", "◍", "⁂", "⁕", "※", "⍟", "☼", "★", "☆",
-  ]
-  return content.split(separator: "\n").contains { line in
+  content.split(separator: "\n").contains { line in
     let trimmed = line.trimmingCharacters(in: .whitespaces)
     guard let first = trimmed.unicodeScalars.first else { return false }
     let rest = String(trimmed.unicodeScalars.dropFirst())
-    return spinnerScalars.contains(first)
+    return isAgentSpinnerScalar(first)
       && rest.hasPrefix(" ")
       && rest.contains("…")
       && rest.contains(where: \.isLetter)
