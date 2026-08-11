@@ -4996,6 +4996,59 @@ struct RepositoriesFeatureTests {
     #expect(store.state.alert != nil)
   }
 
+  @Test func repositoriesLoadedClearsRenamePromptWhenTargetDisappears() async {
+    let worktree = makeWorktree(id: "/tmp/repo/wt", name: "eagle", repoRoot: "/tmp/repo")
+    let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
+    let reloadedRepository = makeRepository(id: "/tmp/repo", worktrees: [])
+    var state = makeState(repositories: [repository])
+    state.nextPendingRenameBranchRequestID = 1
+    state.pendingRenameBranchRequest = PendingRenameBranchRequest(
+      id: 1,
+      worktreeID: worktree.id,
+      currentName: worktree.name
+    )
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.repositoryPersistence.saveRepositorySnapshot = { _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .repositoriesLoaded(
+        [reloadedRepository],
+        failures: [],
+        roots: [repository.rootURL],
+        animated: false
+      )
+    ) {
+      $0.pendingRenameBranchRequest = nil
+    }
+  }
+
+  @Test func archivingTargetClearsRenamePrompt() async {
+    let worktree = makeWorktree(id: "/tmp/repo/wt", name: "eagle", repoRoot: "/tmp/repo")
+    let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
+    var state = makeState(repositories: [repository])
+    state.nextPendingRenameBranchRequestID = 1
+    state.pendingRenameBranchRequest = PendingRenameBranchRequest(
+      id: 1,
+      worktreeID: worktree.id,
+      currentName: worktree.name
+    )
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.date.now = Date(timeIntervalSince1970: 1_760_000_000)
+      $0.repositoryPersistence.saveArchivedWorktrees = { _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.worktreeLifecycle(.archiveWorktreeApply(worktree.id, repository.id))) {
+      $0.pendingRenameBranchRequest = nil
+    }
+  }
+
   @Test func requestRenameBranchWithEmptyNameShowsAlert() async {
     let worktree = makeWorktree(id: "/tmp/wt", name: "eagle")
     let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])

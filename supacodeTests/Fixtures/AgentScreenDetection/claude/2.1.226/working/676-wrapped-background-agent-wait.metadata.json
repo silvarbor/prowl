@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-08T12:32:00Z",
+  "cli_version": "2.1.226",
+  "capture_source": "prowl-read-detection",
+  "terminal": {
+    "columns": 36,
+    "rows": 83
+  },
+  "redactions": [
+    "terminal right-edge padding removed without changing line wrapping"
+  ],
+  "issue": null
+}

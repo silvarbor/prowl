@@ -185,10 +185,14 @@ CLion, PhpStorm, RubyMine), GitHub Desktop
 and terminals (Alacritty, Ghostty, iTerm2, Kitty, Warp, WezTerm). If the
 chosen app isn't installed, Prowl shows an alert.
 
-Other per-row context-menu items: **New Terminal Tab** (selects the worktree and
-opens a tab at the worktree **root** — unlike a plain new tab, it never inherits
-the focused tab's current directory), **Stop Running Script** (only while a
-Prowl-tracked run script is running), **Copy Path**, **Copy Branch Name**,
+Other per-row context-menu items: **Rename Branch…** (`⌘⇧M`; the context menu
+targets that row, while the shortcut targets the selected worktree or focused
+Canvas card and is unavailable during bulk selection, worktree creation, or
+another modal prompt), **New Terminal Tab** (selects the worktree and opens a
+tab at the worktree **root** — unlike a plain
+new tab, it never inherits the focused tab's current directory), **Stop Running
+Script** (only while a Prowl-tracked run script is running), **Copy Path**,
+**Copy Branch Name**,
 **Reveal in Finder**, **Open Pull Request** (only when the worktree has a PR),
 and **Close All Tabs** (disabled when the worktree has no tabs; uses the same
 active-agent / long-running-command confirmation as the tab bar's "Close All",

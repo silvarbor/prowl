@@ -50,9 +50,10 @@ struct PendingSidebarReveal: Equatable, Sendable {
   let worktreeID: Worktree.ID
 }
 
-struct PendingRenameBranchRequest: Equatable, Sendable {
+struct PendingRenameBranchRequest: Equatable, Identifiable, Sendable {
   let id: Int
   let worktreeID: Worktree.ID
+  let currentName: String
 }
 
 struct DeleteWorktreeConfirmation: Equatable, Identifiable {
@@ -574,6 +575,20 @@ struct RepositoriesFeature {
       workspaceCreationReducer
       Scope(state: \.activeAgents, action: \.activeAgents) {
         ActiveAgentsFeature()
+      }
+
+      // Presentation requests must never outlive their target. Keeping this
+      // reducer last makes the invariant hold after every repository mutation,
+      // including reloads, external pruning, archive, and delete flows.
+      Reduce { state, _ in
+        guard let request = state.pendingRenameBranchRequest,
+          state.worktree(for: request.worktreeID) == nil
+            || state.isWorktreeArchived(request.worktreeID)
+        else {
+          return .none
+        }
+        state.pendingRenameBranchRequest = nil
+        return .none
       }
     }
     .ifLet(\.$worktreeCreationPrompt, action: \.worktreeCreationPrompt) {

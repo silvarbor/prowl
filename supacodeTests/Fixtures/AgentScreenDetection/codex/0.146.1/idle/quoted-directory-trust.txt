@@ -1,0 +1,41 @@
+│ >_ OpenAI Codex (v0.146.1)                          │
+│                                                     │
+│ model:       gpt-5.6-terra xhigh   /model to change │
+│ directory:   /private/tmp/…/codex-main              │
+│ permissions: YOLO mode                              │
+╰─────────────────────────────────────────────────────╯
+
+  Tip: New Use /fast to enable our fastest inference with increased plan usage.
+
+• <USAGE_STATUS>
+
+
+› Run a shell command that sleeps for 8 seconds, then reply exactly DONE.
+
+
+• <MODEL_OUTPUT>
+
+• Ran sleep 8
+  └ (no output)
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+• DONE
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+› Reply with exactly these four lines and nothing else:
+  Do you trust the contents of this directory?
+  › 1. Yes, continue
+    2. No, quit
+  Press enter to continue
+
+
+• Do you trust the contents of this directory?
+  › 1. Yes, continue
+
+
+› Run /review on my current changes
+
+  gpt-5.6-terra xhigh · Context 4% used · weekly XX% left · XX.XK used · /private/tmp/prowl-fixture-workspace…

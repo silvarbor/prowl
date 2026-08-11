@@ -42,6 +42,7 @@ enum TerminalCloseConfirmationTarget {
   }
 }
 
+/// Transition metadata only. Never carry rendered screen text in diagnostics.
 struct AgentDetectionDiagnostic {
   let tabId: TerminalTabID
   let childPID: pid_t?
@@ -50,7 +51,27 @@ struct AgentDetectionDiagnostic {
   let identified: IdentifiedAgentProcess?
   let retainedAgent: DetectedAgent?
   let raw: AgentRawState?
+  let reason: AgentScreenDetectionReason?
   let stabilized: AgentRawState?
+
+  var summary: String {
+    let processSummary =
+      job?.processes
+      .map { "\($0.pid):\($0.argv0 ?? $0.name)" }
+      .joined(separator: ",") ?? "none"
+    return [
+      "tab=\(tabId.rawValue.uuidString.prefix(8))",
+      "childPID=\(childPID.map(String.init) ?? "nil")",
+      "ptyPGID=\(processGroupID.map(String.init) ?? "nil")",
+      "fgPGID=\(job.map { String($0.processGroupID) } ?? "nil")",
+      "processes=\(processSummary)",
+      "identified=\(identified.map { "\($0.agent.rawValue)(\($0.name))" } ?? "nil")",
+      "retained=\(retainedAgent?.rawValue ?? "nil")",
+      "raw=\(raw?.rawValue ?? "nil")",
+      "reason=\(reason?.identifier ?? "nil")",
+      "state=\(stabilized?.rawValue ?? "nil")",
+    ].joined(separator: " ")
+  }
 }
 
 @MainActor
@@ -61,13 +82,13 @@ final class WorktreeTerminalState {
     let isFocused: Bool
   }
 
-  /// One memoized agent-screen scan: the `raw` state `detectState` produced for
+  /// One memoized agent-screen scan: the complete detection result produced for
   /// `text` under `agent`. Cached per surface so an unchanged screen is not
-  /// re-parsed on the next poll.
+  /// re-parsed on the next poll and retains the rule or fallback reason.
   struct AgentScreenScan: Equatable {
     let agent: DetectedAgent
     let text: String
-    let raw: AgentRawState
+    let detection: AgentScreenDetection
   }
 
   let tabManager: TerminalTabManager

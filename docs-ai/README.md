@@ -109,3 +109,4 @@ agent-facing manual for that).
 | 055 | [agent-profile-runtimes](055-agent-profile-runtimes/000-plan.md) | 2026-08-01 | Capability-based runtime adapters and Agent Profile support across Prowl's recognized agent catalog |
 | 056 | [performance-optimization-2026-08](056-performance-optimization-2026-08/000-plan.md) | 2026-08-01 | August performance review series: exact cached line counts, opt-in Debug TCA logging, and agent screen-scan memoization |
 | 057 | [performance-benchmark-suite](057-performance-benchmark-suite/000-plan.md) | 2026-08-02 | Ratio-assertion benchmarks pinning the #644–#665 hot paths, `make bench` absolute-number reporting, and live measurement wrappers |
+| 058 | [unified-toolbar-layout](058-unified-toolbar-layout/000-plan.md) | 2026-08-07 | Remove redundant branch/title toolbar items and align the Agents + notifications cluster across Normal, Shelf, and Canvas |

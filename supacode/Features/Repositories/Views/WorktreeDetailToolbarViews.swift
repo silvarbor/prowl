@@ -247,40 +247,42 @@ private struct WorktreeToolbarPreview: View {
 
   init() {
     toolbarState = WorktreeDetailView.WorktreeToolbarState(
-      title: DetailToolbarTitle(kind: .branch(name: "feature/toolbar-preview")),
-      agentsCapsule: AgentsCapsuleState(
-        displayName: "codex",
-        iconSource: CommandIconMap.iconForFirstToken("codex"),
-        infoLine: "Pass this task to another agent in a new tab. codex will summarize its progress first."
+      shared: WorktreeDetailView.ToolbarSharedState(
+        agentsCapsule: AgentsCapsuleState(
+          displayName: "codex",
+          iconSource: CommandIconMap.iconForFirstToken("codex"),
+          infoLine: "Pass this task to another agent in a new tab. codex will summarize its progress first."
+        ),
+        agentsLauncherItems: [],
+        statusToast: nil,
+        pullRequest: nil,
+        codeHost: .github,
+        notificationGroups: [],
+        unseenNotificationWorktreeCount: 0,
+        runScriptEnabled: true,
+        runScriptIsRunning: false,
+        customCommands: [
+          EffectiveCustomCommand(
+            source: .repository,
+            command: UserCustomCommand(
+              title: "Test",
+              systemImage: "checkmark.circle.fill",
+              command: "swift test",
+              execution: .shellScript,
+              shortcut: UserCustomShortcut(
+                key: "u",
+                modifiers: UserCustomShortcutModifiers()
+              )
+            ))
+        ],
+        isUpdateAvailable: true,
+        isUpdateReadyToInstall: false,
+        availableUpdateVersion: "2026.5.1",
+        showRunButtonInToolbar: true
       ),
-      statusToast: nil,
-      pullRequest: nil,
-      codeHost: .github,
-      notificationGroups: [],
-      unseenNotificationWorktreeCount: 0,
       openActionSelection: .finder,
       openActionIsAutomatic: true,
       showExtras: false,
-      runScriptEnabled: true,
-      runScriptIsRunning: false,
-      customCommands: [
-        EffectiveCustomCommand(
-          source: .repository,
-          command: UserCustomCommand(
-            title: "Test",
-            systemImage: "checkmark.circle.fill",
-            command: "swift test",
-            execution: .shellScript,
-            shortcut: UserCustomShortcut(
-              key: "u",
-              modifiers: UserCustomShortcutModifiers()
-            )
-          ))
-      ],
-      isUpdateAvailable: true,
-      isUpdateReadyToInstall: false,
-      availableUpdateVersion: "2026.5.1",
-      showRunButtonInToolbar: true,
       showDefaultEditorInToolbar: true
     )
     let observer = CommandKeyObserver()
@@ -296,9 +298,6 @@ private struct WorktreeToolbarPreview: View {
     .toolbar {
       WorktreeDetailView.WorktreeToolbarContent(
         toolbarState: toolbarState,
-        onRenameBranch: { _ in },
-        externalRenamePrompt: nil,
-        onConsumeExternalRenamePrompt: { _ in },
         onOpenWorktree: { _ in },
         onOpenActionSelectionChanged: { _ in },
         onResetOpenActionToAutomatic: {},
@@ -336,15 +335,19 @@ private struct CanvasToolbarPreview: View {
       Text("Canvas Content")
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle("Canvas")
+        .toolbar(removing: .title)
         .toolbar {
-          ToolbarItem(placement: .primaryAction) {
-            ToolbarNotificationsPopoverButton(
-              groups: [],
-              unseenWorktreeCount: 0,
-              onSelectNotification: { _, _ in },
-              onDismissAll: {}
-            )
-          }
+          WorktreeDetailView.AgentNotificationsToolbarContent(
+            agentsCapsule: nil,
+            agentsLauncherItems: [],
+            notificationGroups: [],
+            unseenNotificationWorktreeCount: 0,
+            onHandOff: {},
+            onLaunchProfile: { _ in },
+            onManageProfiles: {},
+            onSelectNotification: { _, _ in },
+            onDismissAllNotifications: {}
+          )
         }
     }
     .frame(width: 900, height: 300)

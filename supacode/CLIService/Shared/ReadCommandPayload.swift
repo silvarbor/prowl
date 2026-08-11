@@ -65,6 +65,7 @@ public enum ReadSource: String, Codable, Sendable {
   case screen
   case scrollback
   case mixed
+  case detection
 }
 
 public struct ReadTarget: Codable, Sendable, Equatable {

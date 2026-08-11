@@ -97,7 +97,7 @@ struct ScreenHeuristicsTests {
 
   @Test func claudeDetection() {
     #expect(
-      DetectedAgent.claude.detectState(
+      claudeProfileState(
         in: """
           Reading file
           ✽ Tempering…
@@ -108,7 +108,7 @@ struct ScreenHeuristicsTests {
       ) == .working
     )
     #expect(
-      DetectedAgent.claude.detectState(
+      claudeProfileState(
         in: """
           Do you want to proceed?
           ❯ 1. Yes
@@ -119,7 +119,7 @@ struct ScreenHeuristicsTests {
       ) == .blocked
     )
     #expect(
-      DetectedAgent.claude.detectState(
+      claudeProfileState(
         in: """
           Task complete.
           ─────────
@@ -130,9 +130,39 @@ struct ScreenHeuristicsTests {
     )
   }
 
+  @Test func claudeCurrentTrustAndSubagentScreensRemainClassified() {
+    #expect(
+      claudeProfileState(
+        in: """
+          Accessing workspace:
+
+          Quick safety check: Is this a project you created or one you trust?
+          Claude Code'll be able to read, edit, and execute files here.
+
+          ❯ 1. Yes, I trust this folder
+            2. No, exit
+
+          Enter to confirm · Esc to cancel
+          """
+      ) == .blocked
+    )
+    #expect(
+      claudeProfileState(
+        in: """
+          ✢ Manifesting… (5s · ↓ 180 tokens · thought for 1s)
+          ─────────
+          ❯
+          ─────────
+            ⏺ main
+            ◯ general-purpose  Answer a simple question  0s
+          """
+      ) == .working
+    )
+  }
+
   @Test func claudeIgnoresStalePermissionPromptNearCurrentIdlePrompt() {
     #expect(
-      DetectedAgent.claude.detectState(
+      claudeProfileState(
         in: """
           Do you want to proceed?
           ❯ 1. Yes
@@ -161,7 +191,7 @@ struct ScreenHeuristicsTests {
 
   @Test func claudeShortCompletedResponseQuestionBeforeIdlePromptIsIdle() {
     #expect(
-      DetectedAgent.claude.detectState(
+      claudeProfileState(
         in: """
           ⏺ The completed response explains: Do you want to proceed?
           ─────────
@@ -172,7 +202,7 @@ struct ScreenHeuristicsTests {
       ) == .idle
     )
     #expect(
-      DetectedAgent.claude.detectState(
+      claudeProfileState(
         in: """
           ❯ Quote the phrase Do you want to proceed?
           ─────────
@@ -183,7 +213,7 @@ struct ScreenHeuristicsTests {
 
   @Test func claudeIgnoresStalePermissionPromptOutsideRecentTail() {
     #expect(
-      DetectedAgent.claude.detectState(
+      claudeProfileState(
         in: """
           Do you want to proceed?
           ❯ 1. Yes
@@ -224,7 +254,7 @@ struct ScreenHeuristicsTests {
 
   @Test func claudeDetectsBlockedWhenFirstOptionSelectedInLongMenu() {
     #expect(
-      DetectedAgent.claude.detectState(
+      claudeProfileState(
         in: """
           需要决策：/release 跳进去发现 APK 没有链时，怎么走接？
 
@@ -252,7 +282,7 @@ struct ScreenHeuristicsTests {
 
   @Test func claudeDoesNotTreatHistoryInputAndBranchNameAsPermissionPrompt() {
     #expect(
-      DetectedAgent.claude.detectState(
+      claudeProfileState(
         in: """
           ✻ Crunched for 10s
 
@@ -283,7 +313,7 @@ struct ScreenHeuristicsTests {
 
   @Test func claudeViewerChromeAtBottomCarriesNoSignal() {
     #expect(
-      DetectedAgent.claude.detectState(
+      claudeProfileState(
         in: """
           ✻ Tempering… (12s · esc to interrupt)
           older transcript content
@@ -292,7 +322,7 @@ struct ScreenHeuristicsTests {
       ) == .unknown
     )
     #expect(
-      DetectedAgent.claude.detectState(
+      claudeProfileState(
         in: """
           Task complete.
           ⌕ Search…
@@ -306,7 +336,7 @@ struct ScreenHeuristicsTests {
     // Regression: a chat message quoting "ctrl+r to toggle" used to force
     // idle while the spinner below showed Claude still working.
     #expect(
-      DetectedAgent.claude.detectState(
+      claudeProfileState(
         in: """
           ⏺ 收尾完成,现状如下:
 
@@ -333,7 +363,7 @@ struct ScreenHeuristicsTests {
     ]
     for statusRow in statusRows {
       #expect(
-        DetectedAgent.claude.detectState(
+        claudeProfileState(
           in: """
             \(statusRow)
             ─────────
@@ -347,7 +377,7 @@ struct ScreenHeuristicsTests {
 
   @Test func claudeQuotedInterruptHintInIdleResponseIsIdle() {
     #expect(
-      DetectedAgent.claude.detectState(
+      claudeProfileState(
         in: """
           ⏺ The live status row includes the phrase "esc to interrupt".
           ─────────
@@ -361,7 +391,7 @@ struct ScreenHeuristicsTests {
 
   @Test func claudeElapsedStatusLineIsScopedAndRequiresACompleteToken() {
     #expect(
-      DetectedAgent.claude.detectState(
+      claudeProfileState(
         in: """
           ● Forging… (10s · thinking with high effort)
           ─────────
@@ -377,7 +407,7 @@ struct ScreenHeuristicsTests {
     ]
     for statusRow in invalidRows {
       #expect(
-        DetectedAgent.claude.detectState(
+        claudeProfileState(
           in: """
             \(statusRow)
             ─────────
@@ -389,7 +419,7 @@ struct ScreenHeuristicsTests {
     }
 
     #expect(
-      DetectedAgent.claude.detectState(
+      claudeProfileState(
         in: """
           ● Retrying… (10s · thinking with high effort)
           Completed line 1
@@ -408,7 +438,7 @@ struct ScreenHeuristicsTests {
     // interrupt" above the prompt), but Claude keeps a status line BELOW the
     // input box. The "<done>/<total> agents done" segment marks active work.
     #expect(
-      DetectedAgent.claude.detectState(
+      claudeProfileState(
         in: """
           ⏺ Kicked off the scout workflow in the background.
           ─────────
@@ -420,7 +450,7 @@ struct ScreenHeuristicsTests {
     )
     // Idle with an ordinary footer (no workflow line) stays idle.
     #expect(
-      DetectedAgent.claude.detectState(
+      claudeProfileState(
         in: """
           Task complete.
           ─────────
@@ -433,7 +463,7 @@ struct ScreenHeuristicsTests {
     // The marker quoted in conversation (above the prompt) must NOT force
     // working — the check is anchored to the below-prompt footer.
     #expect(
-      DetectedAgent.claude.detectState(
+      claudeProfileState(
         in: """
           ⏺ The run showed 3/5 agents done before it wrapped up.
           ─────────
@@ -445,22 +475,133 @@ struct ScreenHeuristicsTests {
     )
   }
 
+  private func claudeProfileState(in screen: String) -> AgentRawState {
+    let detection = DetectedAgent.claude.detectScreen(in: screen)
+    #expect(detection.reason != .legacyDetector)
+    return detection.state
+  }
+
   @Test func codexDetection() {
     #expect(
-      DetectedAgent.codex.detectState(
+      codexProfileState(
         in: """
           › 1. Yes, proceed (y)
           Press enter to confirm or esc to cancel
           """
       ) == .blocked
     )
-    #expect(DetectedAgent.codex.detectState(in: "• Working (12s • esc to interrupt)") == .working)
-    #expect(DetectedAgent.codex.detectState(in: "Ready for input") == .idle)
+    #expect(codexProfileState(in: "• Working (12s • esc to interrupt)") == .working)
+    #expect(codexProfileState(in: "Ready for input") == .idle)
+  }
+
+  @Test func codexCurrentPreSessionBlockersAreBlocked() {
+    #expect(
+      codexProfileState(
+        in: """
+          > You are in /tmp/detection-workspace
+
+            Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of
+            prompt injection. Trusting the directory allows project-local config, hooks, and exec policies to load.
+
+          › 1. Yes, continue
+            2. No, quit
+
+            Press enter to continue
+          """
+      ) == .blocked
+    )
+    #expect(
+      codexProfileState(
+        in: """
+            Hooks need review
+            1 hook is new or changed.
+            Hooks can run outside the sandbox after you trust them.
+
+          › 1. Review hooks
+            2. Trust all and continue
+            3. Continue without trusting (hooks won't run)
+
+            Press enter to confirm or esc to go back
+          """
+      ) == .blocked
+    )
+    #expect(
+      codexProfileState(
+        in: """
+            Welcome to Codex, OpenAI's command-line coding agent
+
+            Sign in with ChatGPT to use Codex as part of your paid plan
+            or connect an API key for usage-based billing
+
+          > 1. Sign in with ChatGPT
+              Usage included with Plus, Pro, Business, and Enterprise plans
+
+            2. Sign in with Device Code
+              Sign in from another device with a one-time code
+
+            3. Provide your own API key
+              Pay for what you use
+
+            Press enter to continue
+          """
+      ) == .blocked
+    )
+  }
+
+  @Test func codexSignInAlternativeSelectedChoiceIsBlocked() {
+    #expect(
+      codexProfileState(
+        in: """
+            Welcome to Codex, OpenAI's command-line coding agent
+
+            1. Sign in with ChatGPT
+          > 2. Sign in with Device Code
+            3. Provide your own API key
+
+            Press enter to continue
+          """
+      ) == .blocked
+    )
+  }
+
+  @Test func codexStalePreSessionPromptBeforeCurrentInputIsIdle() {
+    #expect(
+      codexProfileState(
+        in: """
+            Do you trust the contents of this directory?
+          › 1. Yes, continue
+            2. No, quit
+            Press enter to continue
+
+          › Explain the prompt above without opening it.
+          gpt-5.6-terra xhigh · Context 5% used
+          """
+      ) == .idle
+    )
+  }
+
+  @Test func codexStaleSignInMenuBeforeCurrentInputIsIdle() {
+    #expect(
+      codexProfileState(
+        in: """
+            Welcome to Codex, OpenAI's command-line coding agent
+
+            1. Sign in with ChatGPT
+          > 2. Sign in with Device Code
+            3. Provide your own API key
+
+            Press enter to continue
+
+          › Explain the sign-in menu above without acting on it.
+          gpt-5.6-terra xhigh · Context 5% used
+          """
+      ) == .idle
+    )
   }
 
   @Test func codexTranscriptConfirmationVocabularyDoesNotOverrideLiveState() {
     #expect(
-      DetectedAgent.codex.detectState(
+      codexProfileState(
         in: """
           › Reply with two lines containing do you want and yes.
           • Working (2s • esc to interrupt)
@@ -470,7 +611,7 @@ struct ScreenHeuristicsTests {
       ) == .working
     )
     #expect(
-      DetectedAgent.codex.detectState(
+      codexProfileState(
         in: """
           › Reply with two lines containing do you want and yes.
           • The parser looks for do you want.
@@ -481,7 +622,7 @@ struct ScreenHeuristicsTests {
       ) == .idle
     )
     #expect(
-      DetectedAgent.codex.detectState(
+      codexProfileState(
         in: """
           › Explain a confirmation dialog without opening one.
           • A dialog might say: Would you like to run the command?
@@ -496,7 +637,7 @@ struct ScreenHeuristicsTests {
 
   @Test func codexConfirmationVocabularyWithoutPromptIsIdle() {
     #expect(
-      DetectedAgent.codex.detectState(
+      codexProfileState(
         in: """
           • The previous prompt said: press enter to confirm or esc to cancel.
             It also mentioned allow command? and [y/n].
@@ -507,7 +648,7 @@ struct ScreenHeuristicsTests {
 
   @Test func codexUserPromptConfirmationVocabularyIsIdle() {
     #expect(
-      DetectedAgent.codex.detectState(
+      codexProfileState(
         in: """
           › Explain why the UI says press enter to confirm or esc to cancel.
           gpt-5.6-terra xhigh · Context 5% used
@@ -515,7 +656,7 @@ struct ScreenHeuristicsTests {
       ) == .idle
     )
     #expect(
-      DetectedAgent.codex.detectState(
+      codexProfileState(
         in: """
           Press enter to confirm or esc to cancel
           › 1. Explain this footer ordering.
@@ -529,9 +670,9 @@ struct ScreenHeuristicsTests {
       › Describe the confirmation footer.
       • The footer says: Press enter to confirm or esc to cancel.
       """
-    #expect(DetectedAgent.codex.detectState(in: completedResponse) == .idle)
+    #expect(codexProfileState(in: completedResponse) == .idle)
     #expect(
-      DetectedAgent.codex.detectState(
+      codexProfileState(
         in: """
           \(completedResponse)
           • Working (2s • esc to interrupt)
@@ -539,7 +680,7 @@ struct ScreenHeuristicsTests {
       ) == .working
     )
     #expect(
-      DetectedAgent.codex.detectState(
+      codexProfileState(
         in: """
           \(completedResponse)
           ›
@@ -550,7 +691,7 @@ struct ScreenHeuristicsTests {
 
   @Test func codexCurrentConfirmationOutranksRetainedWorkingFooter() {
     #expect(
-      DetectedAgent.codex.detectState(
+      codexProfileState(
         in: """
           • Working (4s • esc to interrupt)
           Would you like to run the following command?
@@ -564,7 +705,7 @@ struct ScreenHeuristicsTests {
 
   @Test func codexWorkingFooterMustBeInTheLiveBottomRegion() {
     #expect(
-      DetectedAgent.codex.detectState(
+      codexProfileState(
         in: """
           • Working (4s • esc to interrupt)
           • Completed line 1
@@ -582,8 +723,14 @@ struct ScreenHeuristicsTests {
       "• Retrying… (10s)",
     ]
     for bullet in transcriptBullets {
-      #expect(DetectedAgent.codex.detectState(in: bullet) == .idle)
+      #expect(codexProfileState(in: bullet) == .idle)
     }
+  }
+
+  private func codexProfileState(in screen: String) -> AgentRawState {
+    let detection = DetectedAgent.codex.detectScreen(in: screen)
+    #expect(detection.reason != .legacyDetector)
+    return detection.state
   }
 
   @Test func geminiDetection() {

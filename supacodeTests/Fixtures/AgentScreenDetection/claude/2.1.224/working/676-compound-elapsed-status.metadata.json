@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-07T09:50:00Z",
+  "cli_version": "2.1.224",
+  "capture_source": "prowl-read-detection",
+  "terminal": {
+    "columns": 167,
+    "rows": 47
+  },
+  "redactions": [
+    "capture root and account path segments replaced with equal-width synthetic values",
+    "usage balances and plan labels replaced with placeholders",
+    "terminal right-edge padding removed without changing line wrapping"
+  ],
+  "issue": null
+}

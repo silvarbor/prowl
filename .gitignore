@@ -80,6 +80,9 @@ build/
 # Prowl-generated handoff artifacts can include terminal/session excerpts.
 .prowl/handoff/
 
+# Private, unredacted agent-screen captures staged before fixture sanitization.
+.local/agent-screen-captures/
+
 # Release-only credentials (analytics, crash reporting)
 Config/Secrets.env
 .build-benchmark/

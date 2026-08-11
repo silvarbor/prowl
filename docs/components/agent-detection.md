@@ -41,15 +41,39 @@ at a `~/.grok/` install (so Cursor's own `agent` entrypoint stays Cursor).
    selection row such as `❯ 1. Yes`; a bare input prompt cuts off the preceding transcript.
    Codex uses an exact bottom-of-screen `•`/`◦ Working (... esc to interrupt)` footer
    fallback. Its confirmation detector requires a numbered selected row such as `› 1. Yes`
-   paired with a live bottom footer or an explicit Yes/No choice structure. Ordinary prompt
-   text and completed responses are not confirmation boundaries.
+   paired with a live bottom footer or an explicit Yes/No choice structure. It also recognizes
+   the current directory-trust, hook-review, and initial sign-in menus as **Blocked** from
+   their complete selected-choice and footer structures. Ordinary prompt text and completed
+   responses are not confirmation boundaries.
    Other agent families keep their own patterns (including Oh My Pi's
    `Working… ⟦esc⟧` loader, braille frames, symbol cycles, Cursor's
    hexagons, Kimi's moon phases, etc.).
-   For Claude, a running **background workflow** keeps a status line *below* the
-   input box (e.g. `3/5 agents done · 7m 29s · ↓ 288.5k tokens`) after the turn has
-   ended; Prowl reads that footer as **Working**, so a churning workflow isn't
-   mistaken for idle.
+   Claude's live status row (`● <label>… (<elapsed> · …)`) accepts a multi-word
+   label and a compound elapsed segment such as `28m 34s` or `1h 4m 2s`, so a turn
+   keeps reporting **Working** after it passes a minute.
+   For Claude, **background agents** end the main turn while they run, leaving
+   `✻ Waiting for 1 background agent to finish` above the input box — a spinner
+   glyph with no ellipsis, which the spinner pattern alone rejects. Prowl reads
+   that wait row as **Working**, along with the older background-workflow footer
+   (`3/5 agents done · 7m 29s · ↓ 288.5k tokens`) below the box.
+   The agent switcher block below the box (`⏺ main` plus one `◯` row per agent) is
+   deliberately *not* read as activity: a subagent that returns control while it
+   still awaits collection keeps its row with the elapsed frozen, so the rows
+   cannot distinguish running work from finished work on a single frame.
+
+For diagnostics and sanitized regression captures, `prowl read --source detection`
+returns the exact active-screen buffer used by stage 2. It is explicitly requested
+because it can differ from the visible viewport when a pane is scrolled; the default
+`prowl read` behavior is unchanged.
+
+`prowl agents --json` may also include `detection_reason`, a stable classifier rule or
+fallback identifier for the latest screen scan. Codex reports runtime-owned IDs for trust,
+hook, sign-in, confirmation, and working-footer matches. Claude does the same for viewer,
+blocker, spinner, elapsed-status, background-work, and current-composer regions; current
+history-search chrome such as `⌕ Filter history…` reports `claude.viewer` and preserves
+the last trusted state. An ordinary migrated-profile miss reports
+`fallback.noRuleMatched`. Reasons never include screen text, and the text-mode command and
+app UI remain unchanged.
 
 To avoid flicker, detection **stabilizes**: it tolerates several consecutive
 misses before declaring an agent gone, and a working agent gets a short (~3s)
@@ -100,9 +124,9 @@ The sidebar worktree row spinner and `prowl list`'s `task.status` report
 
 - a terminal command reports progress (OSC 9;4 / ConEmu-style, e.g. a long shell
   command), **or**
-- a detected agent is **Working** or **Blocked** — including Claude running a
-  background **workflow**, detected from its below-prompt `… agents done …` status
-  line even while the input box looks idle.
+- a detected agent is **Working** or **Blocked** — including Claude waiting on
+  **background agents**, detected from the `✻ Waiting for … background agent …`
+  row even while the input box looks idle.
 
 A **Blocked** agent is the exception to the spinner. Because it has stopped and
 is waiting on you, the sidebar row shows a red attention icon instead of the
@@ -112,7 +136,7 @@ contract is unchanged; use `prowl agents` to tell blocked from working. A
 worktree that is being created, archived, or deleted keeps its own spinner,
 which takes precedence over the agent indicator.
 
-It's a single coarse running/idle bit (it can't distinguish a background workflow
+It's a single coarse running/idle bit (it can't distinguish background agents
 from a long command). For the agent's finer state use the
 [Active Agents panel](active-agents.md) or [`prowl agents`](cli.md). Expect up to
 ~2 s before it lights on a warm pane, and the ~3 s working-hold before it clears.

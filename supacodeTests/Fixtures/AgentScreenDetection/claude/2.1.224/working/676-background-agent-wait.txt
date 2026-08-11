@@ -1,0 +1,59 @@
+│                                                    │ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
+│                       ▐▛███▜▌                      │ What's new                                                                                                                                 │
+│                      ▝▜█████▛▘                     │ Added self-hosted environments: `claude self-hosted-runner` turns your own machines or containers into a place Claude Code web, mobile, a… │
+│                        ▘▘ ▝▝                       │ Added `archive` plugin source: install plugins from a zip over HTTPS without git or npm, with optional SHA-256 pinning                     │
+│   Opus 5 (1M context) with high… · Claude XXX ·    │ Added a cancel-and-confirm step when removing an unavailable paste changes a command's text                                                │
+│   <ACCOUNT_ID_0000>'s Org                          │ /release-notes for more                                                                                                                    │
+│              /…/scratchpad/fixture-ws              │                                                                                                                                            │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+❯ Launch exactly one general-purpose subagent whose only job is to run the shell command `sleep 300` and then reply DONE. Run that subagent in the background. Then wait for it to finish and
+  report its reply. Do nothing else at all while waiting.
+
+⏺ I'll launch the subagent now.
+
+⏺ Agent(Sleep 300 then reply)
+  ⎿  Backgrounded agent (↓ to manage · ctrl+o to expand)
+  ⎿  Allowed by auto mode classifier
+
+⏺ Subagent launched in the background, running sleep 300. Waiting for its completion notification.
+
+✻ Waiting for 1 background agent to finish
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 to keep future transcripts
+  [Opus 5 (1M context)] | --------------------  3% | $X.XX | ⏱️ 0m 54s | 🟢                                                                                                             /rc active
+  ⏵⏵ auto mode on · 1 shell
+
+  ⏺ main
+  ◯ general-purpose  Sleep 300 then reply                                                                                                                                    1m 5s · ↓ 21.4k tokens

@@ -3,6 +3,18 @@
 import ArgumentParser
 import ProwlCLIShared
 
+private enum ReadSourceOption: String, ExpressibleByArgument {
+  case viewport
+  case detection
+
+  var inputSource: ReadInputSource {
+    switch self {
+    case .viewport: .viewport
+    case .detection: .detection
+    }
+  }
+}
+
 struct ReadCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "read",
@@ -14,6 +26,12 @@ struct ReadCommand: ParsableCommand {
 
   @Option(name: .long, help: "Number of recent lines to read (omit for snapshot).")
   var last: Int?
+
+  @Option(
+    name: .long,
+    help: "Content source: viewport, or detection for the exact active-screen agent detector input."
+  )
+  private var source: ReadSourceOption = .viewport
 
   @Flag(name: .long, help: "Re-read the pane until its output stops changing before returning (good for live TUIs).")
   var waitStable = false
@@ -52,18 +70,38 @@ struct ReadCommand: ParsableCommand {
 
       try validateStabilityOptions()
 
+      let requestedSource = source.inputSource
       let envelope = CommandEnvelope(
         output: options.outputMode,
         command: .read(ReadInput(
           selector: sel,
           last: last,
+          source: requestedSource,
           waitStable: waitStable,
           stableIntervalMs: stableInterval,
           stablePeriodMs: stablePeriod,
           waitTimeoutSeconds: waitTimeout
         ))
       )
-      try CLIRunner.execute(envelope)
+      try CLIRunner.execute(envelope) { response in
+        try Self.validate(response: response, requestedSource: requestedSource)
+      }
+    }
+  }
+
+  private static func validate(
+    response: CommandResponse,
+    requestedSource: ReadInputSource
+  ) throws {
+    guard requestedSource == .detection else { return }
+    guard let data = response.data,
+      let payload = try? data.decode(as: ReadCommandPayload.self),
+      payload.source == .detection
+    else {
+      throw ExitError(
+        code: CLIErrorCode.readFailed,
+        message: "The running Prowl app did not honor --source detection. Update or restart Prowl, then retry."
+      )
     }
   }
 

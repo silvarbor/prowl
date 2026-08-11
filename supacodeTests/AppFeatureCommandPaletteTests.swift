@@ -770,9 +770,72 @@ struct AppFeatureCommandPaletteTests {
       $0.repositories.nextPendingRenameBranchRequestID = 1
       $0.repositories.pendingRenameBranchRequest = PendingRenameBranchRequest(
         id: 1,
-        worktreeID: worktree.id
+        worktreeID: worktree.id,
+        currentName: worktree.name
       )
     }
+  }
+
+  @Test(.dependencies) func renameBranchDelegateUsesCanvasFocusedWorktree() async {
+    let worktree = makeWorktree(
+      id: "/tmp/repo-canvas-rename/wt-1",
+      name: "wt-1",
+      repoRoot: "/tmp/repo-canvas-rename"
+    )
+    let repository = makeRepository(id: "/tmp/repo-canvas-rename", worktrees: [worktree])
+    var repositoriesState = RepositoriesFeature.State()
+    repositoriesState.repositories = [repository]
+    repositoriesState.selection = .canvas
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.canvasFocusedWorktreeID = { worktree.id }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.commandPalette(.delegate(.renameBranch)))
+    await store.receive(\.repositories.requestRenameBranchPrompt) {
+      $0.repositories.nextPendingRenameBranchRequestID = 1
+      $0.repositories.pendingRenameBranchRequest = PendingRenameBranchRequest(
+        id: 1,
+        worktreeID: worktree.id,
+        currentName: worktree.name
+      )
+    }
+  }
+
+  @Test(.dependencies) func renameBranchDelegateNoopsDuringSidebarMultiSelection() async {
+    let worktreeA = makeWorktree(
+      id: "/tmp/repo-multi-rename/wt-a",
+      name: "wt-a",
+      repoRoot: "/tmp/repo-multi-rename"
+    )
+    let worktreeB = makeWorktree(
+      id: "/tmp/repo-multi-rename/wt-b",
+      name: "wt-b",
+      repoRoot: "/tmp/repo-multi-rename"
+    )
+    let repository = makeRepository(id: "/tmp/repo-multi-rename", worktrees: [worktreeA, worktreeB])
+    var repositoriesState = RepositoriesFeature.State()
+    repositoriesState.repositories = [repository]
+    repositoriesState.selection = .worktree(worktreeA.id)
+    repositoriesState.sidebarSelectedWorktreeIDs = [worktreeA.id, worktreeB.id]
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    }
+
+    await store.send(.commandPalette(.delegate(.renameBranch)))
+    await store.finish()
   }
 
   @Test(.dependencies) func renameBranchDelegateNoopsWithoutSelectedWorktree() async {

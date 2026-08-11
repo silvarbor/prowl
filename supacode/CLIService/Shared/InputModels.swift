@@ -109,9 +109,16 @@ public struct KeyInput: Codable, Sendable {
   }
 }
 
+public enum ReadInputSource: String, Codable, Sendable {
+  case viewport
+  case detection
+}
+
 public struct ReadInput: Codable, Sendable {
   public let selector: TargetSelector
   public let last: Int?
+  /// The terminal buffer requested by the caller.
+  public let source: ReadInputSource
   /// When true, the app re-reads the pane until its output stops changing before responding.
   public let waitStable: Bool
   /// Sampling interval in milliseconds while waiting for stable output (nil → app default).
@@ -121,9 +128,20 @@ public struct ReadInput: Codable, Sendable {
   /// Maximum seconds to keep waiting for stable output before returning the latest snapshot (nil → app default).
   public let waitTimeoutSeconds: Int?
 
+  enum CodingKeys: String, CodingKey {
+    case selector
+    case last
+    case source
+    case waitStable
+    case stableIntervalMs
+    case stablePeriodMs
+    case waitTimeoutSeconds
+  }
+
   public init(
     selector: TargetSelector = .none,
     last: Int? = nil,
+    source: ReadInputSource = .viewport,
     waitStable: Bool = false,
     stableIntervalMs: Int? = nil,
     stablePeriodMs: Int? = nil,
@@ -131,10 +149,33 @@ public struct ReadInput: Codable, Sendable {
   ) {
     self.selector = selector
     self.last = last
+    self.source = source
     self.waitStable = waitStable
     self.stableIntervalMs = stableIntervalMs
     self.stablePeriodMs = stablePeriodMs
     self.waitTimeoutSeconds = waitTimeoutSeconds
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.selector = try container.decodeIfPresent(TargetSelector.self, forKey: .selector) ?? .none
+    self.last = try container.decodeIfPresent(Int.self, forKey: .last)
+    self.source = try container.decodeIfPresent(ReadInputSource.self, forKey: .source) ?? .viewport
+    self.waitStable = try container.decodeIfPresent(Bool.self, forKey: .waitStable) ?? false
+    self.stableIntervalMs = try container.decodeIfPresent(Int.self, forKey: .stableIntervalMs)
+    self.stablePeriodMs = try container.decodeIfPresent(Int.self, forKey: .stablePeriodMs)
+    self.waitTimeoutSeconds = try container.decodeIfPresent(Int.self, forKey: .waitTimeoutSeconds)
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(selector, forKey: .selector)
+    try container.encodeIfPresent(last, forKey: .last)
+    try container.encode(source, forKey: .source)
+    try container.encode(waitStable, forKey: .waitStable)
+    try container.encodeIfPresent(stableIntervalMs, forKey: .stableIntervalMs)
+    try container.encodeIfPresent(stablePeriodMs, forKey: .stablePeriodMs)
+    try container.encodeIfPresent(waitTimeoutSeconds, forKey: .waitTimeoutSeconds)
   }
 }
 
