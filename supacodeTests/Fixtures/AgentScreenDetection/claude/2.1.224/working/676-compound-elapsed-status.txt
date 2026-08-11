@@ -1,0 +1,35 @@
+  281–290: 1823(3)1831(3)1847(3)1861(1)1867(3)1871(3)1873(1)1877(1)1879(3)1889(1)
+  291–300: 1901(1)1907(3)1913(1)1931(3)1933(1)1949(1)1951(3)1973(1)1979(3)1987(3)
+
+  Tally: 145 primes ≡ 1 (mod 4), 154 ≡ 3 (mod 4), plus 2. The 3-mod-4 lead through the whole range is Chebyshev's bias; the race first favors 1 mod 4 at 26861, well
+  past this list.
+
+  Generated from memory without computation tools, so the arithmetic carries no independent check.
+
+✻ Worked for 2m 5s
+
+❯ Run the script ./spin.sh in the foreground with a 200 second timeout and wait for it to finish. Reply DONE with its output. Use exactly one tool call and emit no
+  text before it.
+
+  Ran 1 shell command
+
+⏺ ./spin.sh does not exist in /Users/usr/Code/fixtureco/prowl/prowl (exit 127). Give me the correct path and I'll run it.
+
+✻ Churned for 6s
+
+❯ Run this exact command in the foreground with a 200 second timeout, using exactly one tool call and no text before it: bash
+  /private/tmp/claude-502/-Users-usr-Code-fixtureco-prowl-prowl/00000000-0000-0000-0000-000000000000/scratchpad/fixture-ws/spin.sh
+
+  Running 1 shell command · 1m 35s…
+  ⎿  $ bash /private/tmp/claude-502/-Users-usr-Code-fixtureco-prowl-prowl/00000000-0000-0000-0000-000000000000/scratchpad/fixture-ws/spin.sh (1m 32s)
+     (ctrl+b to run in background)
+
+● Perusing… (1m 38s · ↓ 187 tokens)
+  ⎿  Tip: Dynamic workflows let Claude write a script that orchestrates many agents for you. Mention the keyword ultracode or ask Claude to use a workflow directly.
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 to keep future transcripts
+  [Opus 5 (1M context)] | #-------------------  6% | $X.XX | ⏱️ 16m 23s | 🟢                                                                                /rc active
+  ⏵⏵ auto mode on (shift+tab to cycle)

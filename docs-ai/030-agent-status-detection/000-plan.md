@@ -142,3 +142,7 @@ the failed attempt to extend the first signal to plain commands is
   history-search viewer chrome was fixed from captured evidence, and the third-runtime
   adoption gate stopped further migration — see
   [012-claude-screen-profile.md](012-claude-screen-profile.md)
+- Updated 2026-08-08: a captured failing screen supports the subagent-wait rule that
+  012 deferred; adding it exposed that every row rule read one physical line, which
+  misses Claude's wrapped rows on narrow panes — see
+  [013-background-agent-wait-and-wrapped-rows.md](013-background-agent-wait-and-wrapped-rows.md)

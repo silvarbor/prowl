@@ -35,7 +35,9 @@ enum ClaudeScreenProfile {
     if hasElapsedStatusLine(regions.liveStatus) {
       return AgentScreenDetection(state: .working, reason: .matched(RuleID.elapsedStatus))
     }
-    if regions.belowPromptLower.contains("agents done") {
+    if hasBackgroundAgentWait(regions.liveStatus)
+      || regions.belowPromptLines.joined(separator: "\n").lowercased().contains("agents done")
+    {
       return AgentScreenDetection(state: .working, reason: .matched(RuleID.backgroundWork))
     }
     if regions.hasIdleComposer {
@@ -99,27 +101,76 @@ enum ClaudeScreenProfile {
     }
   }
 
+  // Claude's live status row is "● <label>… (<elapsed> · <detail>)". The label is
+  // free text and is not always a single word — "Running gates and merge
+  // lifecycle…" is as common as "Forging…" — so only the trailing ellipsis is
+  // structural. The elapsed segment grows with the turn and becomes several
+  // tokens once it passes a minute: "45s", "28m 34s", "1h 4m 2s". Both parts stay
+  // strict about completeness so transcript prose such as "(1st attempt)" or
+  // "(10seconds)" still cannot pass as a live status row.
+  // Free-text labels contain parentheses — "Running tests (focused)…" — so the
+  // elapsed segment is located from the END of the row. Candidate openings are
+  // tried right to left, and the first one whose contents parse as a complete
+  // elapsed segment wins. Anchoring at the first "(" instead would read
+  // "focused)… (1m 38s" as the elapsed and reject a live row.
   nonisolated private static func hasElapsedStatusLine(_ content: String) -> Bool {
-    content.split(separator: "\n").contains { line in
-      let trimmed = line.trimmingCharacters(in: .whitespaces)
-      guard trimmed.first == "●" else { return false }
-      let body = trimmed.dropFirst().trimmingCharacters(in: .whitespaces)
-      guard let open = body.firstIndex(of: "(") else { return false }
+    claudeLogicalRows(content).contains { row in
+      guard row.first == "●" else { return false }
+      let body = row.dropFirst().trimmingCharacters(in: .whitespaces)
 
-      let label = body[..<open].trimmingCharacters(in: .whitespaces)
-      guard label.hasSuffix("…"), label.split(whereSeparator: { $0.isWhitespace }).count == 1 else {
+      for open in body.indices.reversed() where body[open] == "(" {
+        let label = body[..<open].trimmingCharacters(in: .whitespaces)
+        guard label.hasSuffix("…") else { continue }
+        if hasCompleteElapsedSegment(body[body.index(after: open)...]) {
+          return true
+        }
+      }
+      return false
+    }
+  }
+
+  // One or more "<digits><unit>" tokens separated by single spaces, terminated by
+  // the closing paren or by the " · " that separates elapsed from the rest of the
+  // row. A partial token ("10seconds", "1st") fails the terminator check.
+  nonisolated private static func hasCompleteElapsedSegment(_ elapsed: Substring) -> Bool {
+    var remainder = elapsed
+    var tokenCount = 0
+
+    while true {
+      let digits = remainder.prefix(while: \.isNumber)
+      guard !digits.isEmpty else { break }
+      let afterDigits = remainder.dropFirst(digits.count)
+      guard let unit = afterDigits.first, unit == "s" || unit == "m" || unit == "h" else { break }
+      tokenCount += 1
+      remainder = afterDigits.dropFirst()
+      guard remainder.hasPrefix(" "), remainder.dropFirst().first?.isNumber == true else { break }
+      remainder = remainder.dropFirst()
+    }
+
+    guard tokenCount > 0 else { return false }
+    return remainder.hasPrefix(")") || remainder.hasPrefix(" · ")
+  }
+
+  // When Claude delegates to a background agent, its own turn ends first: the
+  // spinner above the prompt is replaced by "✻ Waiting for 1 background agent to
+  // finish". That row carries a spinner glyph but no "…", so hasSpinnerActivity
+  // rejects it and the pane reports finished while the agent is still running.
+  //
+  // The agent switcher block below the input box ("⏺ main" plus one "◯" row per
+  // agent) looks like a better signal but is not one. A subagent that returns
+  // control while still awaiting collection keeps its row, with the elapsed value
+  // frozen — a single screen cannot separate that from a running agent, so
+  // matching the row shape would hold the pane at working after the work stopped.
+  // The wait row is only painted while Claude is genuinely blocked on an agent,
+  // and it is scoped to the live status region so a transcript quoting it cannot
+  // trip the rule.
+  nonisolated private static func hasBackgroundAgentWait(_ liveStatus: String) -> Bool {
+    claudeLogicalRows(liveStatus).contains { row in
+      guard let first = row.unicodeScalars.first, isAgentSpinnerScalar(first) else {
         return false
       }
-
-      let elapsed = body[body.index(after: open)...]
-      let digits = elapsed.prefix(while: \.isNumber)
-      guard !digits.isEmpty else { return false }
-      let afterDigits = elapsed.dropFirst(digits.count)
-      guard let unit = afterDigits.first, unit == "s" || unit == "m" || unit == "h" else {
-        return false
-      }
-      let trailing = afterDigits.dropFirst()
-      return trailing.hasPrefix(")") || trailing.hasPrefix(" · ")
+      let lower = row.lowercased()
+      return lower.contains("waiting for") && lower.contains("background agent")
     }
   }
 }
@@ -128,7 +179,7 @@ private struct ClaudeScreenRegions: Sendable {
   let currentInteractionLines: [String]
   let currentInteractionLower: String
   let liveStatus: String
-  let belowPromptLower: String
+  let belowPromptLines: [String]
   let bottomChromeLines: [String]
   let bottomViewerLines: [String]
   let hasIdleComposer: Bool
@@ -142,12 +193,18 @@ private struct ClaudeScreenRegions: Sendable {
     )
     self.currentInteractionLines = currentInteractionLines
     self.currentInteractionLower = currentInteractionLines.joined(separator: "\n").lowercased()
-    self.liveStatus = agentDetectionRecentLines(
-      Self.contentAbovePrompt(screenLines: lines, promptIndex: promptIndex),
-      limit: 3
+    // Reconstruct rows before limiting the region. Counting the limit in physical
+    // lines drops the head of any row that wraps onto three or more continuations,
+    // and the head is what carries the "●" or spinner glyph the rules key on.
+    // Widths that narrow are reachable: a surface can be as few as five columns.
+    self.liveStatus = claudeLogicalRows(
+      Self.contentAbovePrompt(screenLines: lines, promptIndex: promptIndex)
     )
-    self.belowPromptLower = Self.contentBelowPrompt(screenLines: lines, promptIndex: promptIndex)
-      .lowercased()
+    .suffix(3)
+    .joined(separator: "\n")
+    self.belowPromptLines = Self.contentBelowPrompt(screenLines: lines, promptIndex: promptIndex)
+      .split(separator: "\n", omittingEmptySubsequences: false)
+      .map(String.init)
 
     let nonEmptyLines = lines.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     self.bottomChromeLines = Array(nonEmptyLines.suffix(3))
@@ -200,6 +257,54 @@ private struct ClaudeScreenRegions: Sendable {
     return isBoxBorderLine(screenLines[screenLines.index(before: promptIndex)])
       && isBoxBorderLine(screenLines[nextIndex])
   }
+}
+
+// Claude wraps a row too wide for the pane onto indented continuation lines —
+// observed at 40 columns on 2.1.225:
+//
+//   "✻ Waiting for 1 background agent to"
+//   "  finish"
+//
+// Narrow split panes are ordinary, so every rule that reads a row has to see the
+// logical row rather than the first physical one, and so does the region that
+// selects which rows the rules see. Only an adjacent line indented past its head
+// and starting with ordinary text is a continuation: a line opening with its own
+// marker starts a new row, which keeps this from swallowing the whole region and
+// inventing rows that were never on screen.
+//
+// Rows arrive already trimmed and unindented, so running this over its own output
+// returns that output unchanged.
+nonisolated private func claudeLogicalRows(_ content: String) -> [String] {
+  var rows: [String] = []
+  var current: String?
+  var headIndent = 0
+
+  for line in content.split(separator: "\n", omittingEmptySubsequences: false) {
+    let trimmed = line.trimmingCharacters(in: .whitespaces)
+    guard !trimmed.isEmpty else {
+      if let row = current { rows.append(row) }
+      current = nil
+      continue
+    }
+    let indent = line.prefix(while: { $0 == " " }).count
+
+    if current != nil, indent > headIndent, !claudeRowStartsNewRow(trimmed) {
+      current?.append(" ")
+      current?.append(trimmed)
+      continue
+    }
+    if let row = current { rows.append(row) }
+    current = trimmed
+    headIndent = indent
+  }
+  if let row = current { rows.append(row) }
+  return rows
+}
+
+nonisolated private func claudeRowStartsNewRow(_ trimmed: String) -> Bool {
+  guard let first = trimmed.unicodeScalars.first else { return false }
+  if isAgentSpinnerScalar(first) { return true }
+  return "●⏺◯⎿❯─-".unicodeScalars.contains(first)
 }
 
 nonisolated private func isClaudeNumberedSelectionLine(_ line: String) -> Bool {
