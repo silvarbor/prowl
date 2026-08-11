@@ -210,7 +210,11 @@ struct ContentView: View {
     )
     return NavigationSplitView(columnVisibility: visibility) {
       SidebarView(store: repositoriesStore, terminalManager: terminalManager)
-        .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
+        .navigationSplitViewColumnWidth(
+          min: 220,
+          ideal: 260,
+          max: 320
+        )
     } detail: {
       WorktreeDetailView(store: store, terminalManager: terminalManager)
     }

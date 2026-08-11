@@ -21,6 +21,27 @@ struct AppearanceSettingsView: View {
               }
             }
           }
+          Picker("Interface text size", selection: $store.interfaceTextScale) {
+            ForEach(InterfaceTextScale.allCases) { scale in
+              Text(scale.title).tag(scale)
+            }
+          }
+          .help(
+            "Scale all app text by this amount, keeping headings larger than "
+              + "body text and body text larger than captions. "
+              + "Terminal text follows your Ghostty font size instead."
+          )
+          Picker("Minimum text size", selection: $store.minimumTextSize) {
+            ForEach(MinimumTextSize.allCases) { size in
+              Text(size.title).tag(size)
+            }
+          }
+          .help(
+            "Never use text smaller than this size, like Safari's minimum font "
+              + "size. A floor raises small text to meet it, so sizes below the "
+              + "floor become equal. Use Interface text size to enlarge "
+              + "everything and keep the differences."
+          )
           VStack(alignment: .leading, spacing: 6) {
             Text(
               """
