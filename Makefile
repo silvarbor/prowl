@@ -34,6 +34,12 @@ FORMAT_BASE_REF ?= origin/main
 BUILD_SETTINGS_CACHE := $(CURRENT_MAKEFILE_DIR)/.build_settings_cache.json
 PBXPROJ_PATH := $(CURRENT_MAKEFILE_DIR)/supacode.xcodeproj/project.pbxproj
 
+# Code-signing identity for local Debug products, the app and the test host alike.
+# Empty auto-selects one that carries a Team ID; "-" opts out and keeps the ad-hoc
+# signature. See scripts/resolve-codesign-identity.sh.
+PROWL_CODESIGN_IDENTITY ?=
+CODESIGN_IDENTITY_SCRIPT := $(CURRENT_MAKEFILE_DIR)/scripts/resolve-codesign-identity.sh
+
 # Release-only analytics/crash credentials. Included from Config/Secrets.env if present,
 # or overridable from the environment (e.g. CI). Debug builds skip SDK init regardless.
 -include Config/Secrets.env
@@ -42,7 +48,7 @@ PROWL_POSTHOG_API_KEY ?=
 PROWL_POSTHOG_HOST ?=
 
 .DEFAULT_GOAL := help
-.PHONY: build-ghostty-xcframework ensure-ghostty sync-ghostty _record-ghostty-hash build-app build-cli build-cli-release embed-cli-debug embed-cli embed-docs run-app install-dev-build install-release archive export-archive format format-changed format-lint lint check test test-app test-cli-smoke test-cli-integration benchmark-build bump-version log-stream
+.PHONY: build-ghostty-xcframework ensure-ghostty sync-ghostty _record-ghostty-hash build-app build-cli build-cli-release embed-cli-debug embed-cli embed-docs run-app sign-debug-app install-dev-build install-release archive export-archive format format-changed format-lint lint check test test-app test-cli-smoke test-cli-integration benchmark-build bump-version log-stream
 
 help:  # Display this help.
 	@-+echo "Run make with one of the following targets:"
@@ -113,6 +119,66 @@ embed-docs: # Stage docs/ into Resources for bundling into the app (.app/Content
 
 build-app: ensure-ghostty embed-cli-debug embed-docs # Build the macOS app (Debug)
 	bash -o pipefail -c 'xcodebuild -project supacode.xcodeproj -scheme supacode -configuration Debug build -skipMacroValidation -clonedSourcePackagesDirPath $(SPM_CACHE_DIR) SWIFT_COMPILATION_MODE=incremental 2>&1 | mise exec -- xcsift -w --format toon'
+	@$(MAKE) --no-print-directory sign-debug-app
+
+# Resolve BUILT_PRODUCTS_DIR and FULL_PRODUCT_NAME for the Debug configuration into
+# $$build_dir and $$product, reading the cached build settings when they are newer
+# than the project file. Leaves $$settings in scope for callers that need more fields.
+define resolve_debug_product
+	cache="$(BUILD_SETTINGS_CACHE)"; \
+	pbxproj="$(PBXPROJ_PATH)"; \
+	if [ -f "$$cache" ] && [ "$$cache" -nt "$$pbxproj" ]; then \
+		settings="$$(cat "$$cache")"; \
+	else \
+		settings="$$(xcodebuild -project supacode.xcodeproj -scheme supacode -configuration Debug -showBuildSettings -json 2>/dev/null)"; \
+		printf '%s' "$$settings" > "$$cache"; \
+	fi; \
+	build_dir="$$(echo "$$settings" | jq -er '.[0].buildSettings.BUILT_PRODUCTS_DIR')"; \
+	product="$$(echo "$$settings" | jq -er '.[0].buildSettings.FULL_PRODUCT_NAME')";
+endef
+
+# Sign the Debug bundle with a stable identity. TCC stores the code requirement it
+# granted against, and an ad-hoc signature's requirement is pinned to the cdhash,
+# which every build changes: the grant stops matching and macOS re-asks for
+# Documents, Desktop, Downloads and Music. Those prompts name Prowl because a
+# terminal child's file access is attributed to the app responsible for it, so the
+# agents running in panes trip them. A named identity yields a cdhash-free
+# requirement, and the answers survive rebuilds.
+#
+# Precedence lives in scripts/resolve-codesign-identity.sh, which the test host
+# resolves through as well so both products carry the same requirement and share
+# one grant.
+sign-debug-app: # Sign the built Debug app so TCC grants survive rebuilds
+	@set -euo pipefail; \
+	identity="$$(bash "$(CODESIGN_IDENTITY_SCRIPT)")"; \
+	if [ -z "$$identity" ]; then \
+		exit 0; \
+	fi; \
+	$(resolve_debug_product) \
+	if [ -z "$$build_dir" ] || [ -z "$$product" ] || [ "$$build_dir" = "null" ] || [ "$$product" = "null" ]; then \
+		echo "error: failed to resolve app path from build settings"; \
+		exit 1; \
+	fi; \
+	app="$$build_dir/$$product"; \
+	if [ ! -d "$$app/Contents" ]; then \
+		echo "error: not an app bundle: $$app"; \
+		exit 1; \
+	fi; \
+	codesign --force --sign "$$identity" --preserve-metadata=entitlements "$$app"; \
+	codesign --verify --deep --strict --verbose=4 "$$app" >/dev/null 2>&1 || { \
+		echo "error: '$$app' failed code-signature verification." >&2; \
+		codesign --verify --deep --strict --verbose=4 "$$app" >&2 || true; \
+		exit 1; \
+	}; \
+	dr="$$(codesign --display --requirements - "$$app" 2>&1)"; \
+	case "$$dr" in \
+		*cdhash*) \
+			echo "error: designated requirement is cdhash-pinned; TCC grants will not survive a rebuild." >&2; \
+			printf '%s\n' "$$dr" >&2; \
+			exit 1; \
+			;; \
+	esac; \
+	echo "signed $$app with '$$identity'"
 
 sync-cli-version: # Sync app MARKETING_VERSION into ProwlCLIShared/ProwlVersion.swift
 	@version="$$(/usr/bin/awk -F' = ' '/MARKETING_VERSION = [0-9.]*;/{gsub(/;/,"",$$2);print $$2; exit}' \
@@ -159,16 +225,7 @@ embed-cli: build-cli-release # Build release CLI and copy into Resources for dis
 
 run-app: build-app # Build then launch (Debug) with log streaming
 	@set -euo pipefail; \
-	cache="$(BUILD_SETTINGS_CACHE)"; \
-	pbxproj="$(PBXPROJ_PATH)"; \
-	if [ -f "$$cache" ] && [ "$$cache" -nt "$$pbxproj" ]; then \
-		settings="$$(cat "$$cache")"; \
-	else \
-		settings="$$(xcodebuild -project supacode.xcodeproj -scheme supacode -configuration Debug -showBuildSettings -json 2>/dev/null)"; \
-		printf '%s' "$$settings" > "$$cache"; \
-	fi; \
-	build_dir="$$(echo "$$settings" | jq -er '.[0].buildSettings.BUILT_PRODUCTS_DIR')"; \
-	product="$$(echo "$$settings" | jq -er '.[0].buildSettings.FULL_PRODUCT_NAME')"; \
+	$(resolve_debug_product) \
 	exec_name="$$(echo "$$settings" | jq -r '.[0].buildSettings.EXECUTABLE_NAME')"; \
 	if [ -z "$$build_dir" ] || [ -z "$$product" ] || [ "$$build_dir" = "null" ] || [ "$$product" = "null" ] || [ -z "$$exec_name" ] || [ "$$exec_name" = "null" ]; then \
 		echo "error: failed to resolve app path from build settings"; \
@@ -179,16 +236,7 @@ run-app: build-app # Build then launch (Debug) with log streaming
 
 install-dev-build: build-app # Build Debug and install to /Applications
 	@set -euo pipefail; \
-	cache="$(BUILD_SETTINGS_CACHE)"; \
-	pbxproj="$(PBXPROJ_PATH)"; \
-	if [ -f "$$cache" ] && [ "$$cache" -nt "$$pbxproj" ]; then \
-		settings="$$(cat "$$cache")"; \
-	else \
-		settings="$$(xcodebuild -project supacode.xcodeproj -scheme supacode -configuration Debug -showBuildSettings -json 2>/dev/null)"; \
-		printf '%s' "$$settings" > "$$cache"; \
-	fi; \
-	build_dir="$$(echo "$$settings" | jq -er '.[0].buildSettings.BUILT_PRODUCTS_DIR')"; \
-	product="$$(echo "$$settings" | jq -er '.[0].buildSettings.FULL_PRODUCT_NAME')"; \
+	$(resolve_debug_product) \
 	if [ -z "$$build_dir" ] || [ -z "$$product" ] || [ "$$build_dir" = "null" ] || [ "$$product" = "null" ]; then \
 		echo "error: failed to resolve app path from build settings"; \
 		exit 1; \
@@ -326,13 +374,26 @@ export-archive: # Export xarchive
 
 test: ensure-ghostty embed-cli-debug embed-docs test-app
 
+# The test host is a second Prowl Debug bundle, and macOS makes it the responsible
+# process for anything running in the terminal that launched it. Left ad-hoc it
+# carries a cdhash-pinned requirement that no grant matches, so a test run makes
+# the agents in the surrounding panes re-prompt for Documents, Desktop, Downloads
+# and Music — observed twice before this. Signing it with the same identity as the
+# app gives both the same requirement, so one grant covers both. With no identity
+# available the previous unsigned flags stand, which is what CI gets.
 test-app: ensure-ghostty # Run app/unit tests via xcodebuild
 	@set -euo pipefail; \
 	result_bundle="$(CURRENT_MAKEFILE_DIR)/build/test-results/supacode-tests.xcresult"; \
 	mkdir -p "$$(dirname "$$result_bundle")"; \
 	rm -rf "$$result_bundle"; \
+	identity="$$(bash "$(CODESIGN_IDENTITY_SCRIPT)")"; \
+	if [ -n "$$identity" ]; then \
+		signing_args=(CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="$$identity" CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES DEVELOPMENT_TEAM=); \
+	else \
+		signing_args=(CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=); \
+	fi; \
 	set +e; \
-	xcodebuild test -project supacode.xcodeproj -scheme supacode -destination "platform=macOS" -resultBundlePath "$$result_bundle" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation -clonedSourcePackagesDirPath $(SPM_CACHE_DIR) SWIFT_COMPILATION_MODE=incremental 2>&1 | mise exec -- xcsift -w --format toon; \
+	xcodebuild test -project supacode.xcodeproj -scheme supacode -destination "platform=macOS" -resultBundlePath "$$result_bundle" "$${signing_args[@]}" -skipMacroValidation -clonedSourcePackagesDirPath $(SPM_CACHE_DIR) SWIFT_COMPILATION_MODE=incremental 2>&1 | mise exec -- xcsift -w --format toon; \
 	xcodebuild_status=$${PIPESTATUS[0]}; \
 	set -e; \
 	if [ "$$xcodebuild_status" -ne 0 ]; then \
