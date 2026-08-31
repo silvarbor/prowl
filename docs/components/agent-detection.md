@@ -72,6 +72,10 @@ at a `~/.grok/` install (so Cursor's own `agent` entrypoint stays Cursor).
    deliberately *not* read as activity: a subagent that returns control while it
    still awaits collection keeps its row with the elapsed frozen, so the rows
    cannot distinguish running work from finished work on a single frame.
+   The rule above the composer is a border even when Claude annotates it with the
+   session name (`───… phase-aware-compaction-recovery ─`); reading it as ordinary
+   content ended the live block on the rule itself and reported every annotated
+   screen idle.
 
 For diagnostics and sanitized regression captures, `prowl read --source detection`
 returns the exact active-screen buffer used by stage 2. It is explicitly requested

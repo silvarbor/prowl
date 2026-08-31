@@ -377,8 +377,38 @@ nonisolated private func isClaudeNumberedSelectionLine(_ line: String) -> Bool {
   return isNumberedChoice(option)
 }
 
+// The composer's top rule carries the session title at its right edge on
+// current Claude Code — "───… phase-aware-compaction-recovery ─" — so a border
+// is no longer made of rule characters alone. Requiring purity left the
+// annotated rule inside the content above the prompt, where it became the
+// bottom row of the live status block; the block ends at the first row that is
+// not live chrome, so it ended on the rule and never reached the spinner or the
+// "✻ Waiting for N background agents to finish" row directly above it. Every
+// annotated screen read as idle, including a Claude waiting on subagents.
+//
+// An annotated rule opens with its own run of rule characters and carries one
+// label between that run and the trailing one, so the label may not contain a
+// rule character itself. That bound keeps a wrapped transcript row that merely
+// begins with a dash from ending the history above the composer.
 nonisolated private func isBoxBorderLine(_ line: String) -> Bool {
   let trimmed = line.trimmingCharacters(in: .whitespaces)
   guard trimmed.count >= 3 else { return false }
-  return trimmed.allSatisfy { $0 == "─" || $0 == "-" }
+  if trimmed.allSatisfy(isBoxBorderScalar) { return true }
+
+  // Only the box-drawing rule is annotated. A label is ordinary text and
+  // routinely contains "-", so treating the ASCII rule the same way would read
+  // any dashed prose row as a border.
+  let leadingRule = trimmed.prefix(while: { $0 == "\u{2500}" })
+  guard leadingRule.count >= 3 else { return false }
+  let label =
+    trimmed
+    .dropFirst(leadingRule.count)
+    .drop(while: { $0 == " " })
+    .reversed()
+    .drop(while: { $0 == "\u{2500}" || $0 == " " })
+  return !label.isEmpty && !label.contains("\u{2500}")
+}
+
+nonisolated private func isBoxBorderScalar(_ character: Character) -> Bool {
+  character == "\u{2500}" || character == "-"
 }

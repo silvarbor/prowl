@@ -243,6 +243,84 @@ struct ClaudeBackgroundAgentDetectionTests {
     #expect(detection.reason == .matched(ClaudeScreenProfile.RuleID.elapsedStatus))
   }
 
+  @Test func annotatedComposerRuleKeepsTheWaitRowInTheLiveBlock() {
+    // Captured live on 2026-08-31: the rule above the composer carries the
+    // session name at its right edge. Requiring a rule of nothing but rule
+    // characters left that row inside the content above the prompt, where it
+    // became the bottom of the live status block and ended it before the wait row
+    // above could be read, so an agent waiting on subagents reported idle.
+    let detection = detect(
+      """
+      ⏺ Running. On approval, every gate holds on this head.
+
+      ✻ Waiting for 1 background agent to finish
+
+      ───────────────────────────────── phase-aware-compaction-recovery ─
+      ❯
+      ───────────────────────────────────────────────────────────────────
+        ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+
+        ⏺ main
+        ◯ general-purpose  Reading the manifest    10m 5s · ↓ 247.5k tokens
+      """
+    )
+
+    #expect(detection.state == .working)
+    #expect(detection.reason == .matched(ClaudeScreenProfile.RuleID.backgroundWork))
+  }
+
+  @Test func annotatedComposerRuleKeepsTheStatusRowInTheLiveBlock() {
+    let detection = detect(
+      """
+      ⏺ Transport selected. The next mutation is owned by the PR flow.
+
+      ● Propagating… (37s · ↓ 1.3k tokens)
+
+      ───────────────────────────────── phase-aware-compaction-recovery ─
+      ❯
+      ───────────────────────────────────────────────────────────────────
+        ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+      """
+    )
+
+    #expect(detection.state == .working)
+    #expect(detection.reason == .matched(ClaudeScreenProfile.RuleID.elapsedStatus))
+  }
+
+  @Test func annotatedComposerRuleWithNothingLiveAboveItStaysIdle() {
+    let detection = detect(
+      """
+      ⏺ Every gate holds. Nothing is running.
+
+      ───────────────────────────────── phase-aware-compaction-recovery ─
+      ❯
+      ───────────────────────────────────────────────────────────────────
+        ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+      """
+    )
+
+    #expect(detection.state == .idle)
+    #expect(detection.reason == .matched(ClaudeScreenProfile.RuleID.idleComposer))
+  }
+
+  @Test func aRowWhoseTextCarriesRuleCharactersIsNotABorder() {
+    // An annotation sits between the leading run of rule characters and the
+    // trailing one, so it may not contain a rule character itself. Without that
+    // bound a transcript row that merely opens with a rule would be read as the
+    // composer border, and the history above it would be promoted into the live
+    // block — reporting working off rows the TUI has already retired.
+    let detection = detect(
+      """
+      ✻ Waiting for 1 background agent to finish
+      ─── one ─ two ─ three ───
+      ❯
+      ─────────
+      """
+    )
+
+    #expect(detection.state == .idle)
+  }
+
   @Test func incompleteElapsedSegmentsStayIdle() {
     let notWorking = [
       "● Retrying the merge lifecycle… (1st attempt)",
