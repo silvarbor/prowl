@@ -2,11 +2,10 @@
 
 ## Status
 
-Implementation, adversarial review, and reviewed-head live verification are complete in
-[#747](https://github.com/onevcat/Prowl/pull/747), after B3 merged as
-[#744](https://github.com/onevcat/Prowl/pull/744). C1 is the last implementation slice in R2a and
-the PR is merge-ready. Merging #747 completes the R2a implementation scope; release packaging and
-publishing remain the normal post-merge release operation.
+Merged in [#747](https://github.com/onevcat/Prowl/pull/747) on 2026-08-31 after implementation,
+adversarial review, and reviewed-head live verification, following B3
+([#744](https://github.com/onevcat/Prowl/pull/744)). C1 closed the R2a implementation scope, and
+R2a shipped the same day in v2026.8.31.
 
 ## Product contract
 

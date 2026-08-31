@@ -1,6 +1,6 @@
 {
   "_comment": "Metadata for the docs/ manual. The last_synced_commit is the commit at which docs/ was last verified against the implementation; the sync-docs skill (.claude/skills/sync-docs/SKILL.md) diffs HEAD against it and updates this file. Committed to git on purpose so the baseline persists across sessions and machines. A dotfile + .json so a future docs website does not render it as a page.",
-  "last_synced_commit": "71b65d6dc9a26c5f4168e3ebcf8a24ad51b01532",
-  "last_synced_date": "2026-08-29",
-  "note": "Verified the agent workflows + bundled skills range (PRs #706-#736: managed hooks for eight runtimes, agents wait/signal/read semantics, prowl skills, Settings Agents > CLI & Skills): cli.md, settings.md, agent-detection.md, and agent-profiles.md were maintained in-branch; widened the create-tab preflight sentence in cli.md to all eight managed runtimes and refreshed the README cli.md command list."
+  "last_synced_commit": "25f26a3ee5620736ca363518dc8a90f3ae2fd830",
+  "last_synced_date": "2026-08-31",
+  "note": "Verified the R2a workflow range (B1/B2/B3/C1: engine, workflow CLI, status center) plus #748/#749: cli.md, notifications.md, settings-fields.md, and agent-detection.md were maintained in-branch; added the global.onevcat.json workflow persistence fields (disabledWorkflowIDs, workflowBindings) to settings-fields.md."
 }

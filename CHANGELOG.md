@@ -1,5 +1,20 @@
 # Changelog
 
+## [2026.8.31](https://github.com/onevcat/Prowl/releases/tag/v2026.8.31)
+
+This release lays the groundwork for Agent Workflows — multi-step, multi-agent orchestrations that Prowl runs and supervises for you. The engine and CLI are ready to try today; the complete experience, including starting and managing runs from the UI, arrives together with the workflow interface in an upcoming release.
+
+### New
+
+- Agent Workflows (early preview): define multi-step, multi-role workflows in YAML and run them with `prowl workflow run`. Track progress with `prowl workflow status`, complete a step with `prowl workflow done`, and stop a run with `prowl workflow cancel`; validate a definition file or inspect the schema with `prowl workflow validate` and `prowl workflow schema`. The start sheet, Settings page, and built-in workflows ship in a later release.
+- A workflow status indicator now appears in the toolbar for the selected worktree. Hover or pin it to see the run's active role, current step, repeat progress, and any attention that needs your input.
+- `prowl agents dispatch` sends a new task into an agent that is already running in a pane, without restarting it, so you can queue a follow-up request once the agent goes idle.
+
+### Fixed
+
+- Creating a new tab or split, or launching an Agent Profile, no longer fails or leaves a dead shell when the display is asleep.
+- Worktree rows for a blocked agent now show a "needs input" icon instead of the running spinner, so a blocked agent no longer looks like it is still working.
+
 ## [2026.8.29](https://github.com/onevcat/Prowl/releases/tag/v2026.8.29)
 
 This release focuses on letting Prowl and your agents know what other agents are actually doing, plus new CLI and Settings tooling for skills and panes.

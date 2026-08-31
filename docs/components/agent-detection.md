@@ -259,6 +259,14 @@ The sidebar worktree row spinner and `prowl list`'s `task.status` report
   **background agents**, detected from the `✻ Waiting for … background agent …`
   row even while the input box looks idle.
 
+A **Blocked** agent is the exception to the spinner. Because it has stopped and
+is waiting on you, the sidebar row shows a red attention icon instead of the
+spinner — a spinner there would tell you to wait, which is backwards. The row
+still counts as **running** for `prowl list`'s `task.status`, so the CLI
+contract is unchanged; use `prowl agents` to tell blocked from working. A
+worktree that is being created, archived, or deleted keeps its own spinner,
+which takes precedence over the agent indicator.
+
 It's a single coarse running/idle bit (it can't distinguish background agents
 from a long command). For the agent's finer state use the
 [Active Agents panel](active-agents.md) or [`prowl agents`](cli.md). Expect up to

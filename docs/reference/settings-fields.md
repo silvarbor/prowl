@@ -108,6 +108,12 @@ per-repo Default Agent Profile) and `lastLaunchedAgentProfileID` (launch
 memory for the Recommended resolution). See
 [`components/agent-profiles.md`](../components/agent-profiles.md).
 
+**Workflows** also persist in `global.onevcat.json`: `disabledWorkflowIDs`
+(`<scope>/<id>` keys of workflow definitions switched off; the Settings UI for
+toggling them ships later) and `workflowBindings` (remembered `launch`-role
+Profile bindings, one per requirements digest). Both are written by the
+workflow runtime rather than edited by hand.
+
 ## Notes for agents
 
 - Defaults here are the **factory** values; a human's file may differ.

@@ -34,8 +34,8 @@ say when each is cut:
 | Release | State | Next action |
 | --- | --- | --- |
 | R1 | **Shipped** — v2026.8.29 (2026-08-29) | — |
-| R2a | In progress | B1 #740, #726 T0 #739, #733 #741, B2 #743, and B3 #744 merged; C1 #747 is in review ([063.010](010-c1-workflow-status-center.md)) |
-| R2b | Planned | after R2a ships |
+| R2a | **Shipped** — v2026.8.31 (2026-08-31) | — |
+| R2b | Planned | C2 starts next |
 | R3 | Planned | after R2b ships |
 
 #### R1 PR ledger
@@ -194,6 +194,13 @@ R3+: V2 / S5 rest;  delete HANDOFF_RETIRED stubs
 
 ## Change log
 
+- 2026-08-31 — R2a shipped in v2026.8.31: B1 #740, #733 #741, #726 T0 #739, B2 #743, B3 #744, C1 #747.
+  The release also carried the display-sleep fix #746 and two external contributions (#748
+  blocked-agent sidebar indicator, #749 fixture `--agent` validation). `make agent-versions` ran
+  before the release and warned that six tier-A runtimes are newer than their attested contracts
+  (claude 2.1.251, codex 0.151.0, droid 0.204.0, qodercli 1.1.31, omp 18.0.10, opencode 1.18.25);
+  #726 T1 (R2b) verifies them. The release notes frame workflows as an early preview until the
+  R2b UI ships.
 - 2026-08-29 — B2 implemented on `feat/workflow-runner-core-b2` and opened as #743 after a grill session that
   settled the runner shape (pure reducer + effects, token check in the machine, per-activation
   watchdog streams, `run.json` v1 without tokens, Relaunch for launch roles only, immediate Skip
