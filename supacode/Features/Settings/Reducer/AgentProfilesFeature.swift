@@ -3,7 +3,7 @@ import Foundation
 import Sharing
 import SwiftUI
 
-/// Settings → Agents: the global agent profile list (docs-ai 053). List order
+/// Settings → Agents → Profiles: the global agent profile list (docs-ai 053). List order
 /// is the recommendation fallback order; edits persist to
 /// `UserGlobalSettings` the same way global custom commands do. Editing one
 /// profile is a native drill-in `AgentProfileEditorFeature` represented by a

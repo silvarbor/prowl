@@ -143,6 +143,7 @@ make log-stream            # Stream app logs (subsystem: com.onevcat.prowl)
 ```bash
 make build-cli             # Build `prowl` CLI via SwiftPM
 make test-cli-smoke        # Quick CLI smoke checks
+make test-cli-unit         # CLI unit tests
 make test-cli-integration  # End-to-end CLI socket integration tests
 ```
 

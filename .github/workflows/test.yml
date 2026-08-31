@@ -26,7 +26,7 @@ jobs:
       - uses: ./.github/actions/setup-macos
       - run: make lint
       - name: Stage debug app resources
-        run: make embed-cli-debug embed-docs
+        run: make embed-cli-debug embed-docs embed-skills
       - name: Build app and run tests in parallel
         shell: bash
         run: |
@@ -53,13 +53,16 @@ jobs:
           pid_app=$!
           run_task cli-smoke make test-cli-smoke &
           pid_smoke=$!
-          run_task cli-integration make test-cli-integration &
+          run_task cli-tests make test-cli-unit test-cli-integration &
           pid_cli=$!
+          run_task scripts make test-scripts &
+          pid_scripts=$!
 
           failed=0
           wait "$pid_app" || failed=1
           wait "$pid_smoke" || failed=1
           wait "$pid_cli" || failed=1
+          wait "$pid_scripts" || failed=1
           exit "$failed"
       - name: Upload xcresult bundle (on failure)
         if: failure()

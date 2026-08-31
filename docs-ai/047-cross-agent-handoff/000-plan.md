@@ -109,3 +109,4 @@ cwd, which is weaker than the pid-anchored, ambiguity-safe native session identi
   its runtime resume layer. Briefing is now explicit (`--brief` / `--no-brief`),
   and the HUD has only the deterministic Context Only fallback — see
   [006-remove-fork-briefing](006-remove-fork-briefing.md).
+- Updated 2026-08-22: successor direction — the fixed handoff flow is planned to become the built-in `prowl.handoff` workflow of [063-agent-workflows](../063-agent-workflows/000-plan.md); `prowl handoff to|save` becomes a deprecated alias and the `.prowl/handoff/` artifact contract survives as the `handoff.transition` action.

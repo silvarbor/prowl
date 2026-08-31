@@ -1,5 +1,5 @@
 {
-  "originHash" : "e72afa9e5f10f1505a3d4fb929733c3183a228458b9840524d15027f7afd88ff",
+  "originHash" : "7643fa12a28d827327bdbe83f87db88bb3a3e9b400463e3aa384776ca321786f",
   "pins" : [
     {
       "identity" : "combine-schedulers",
@@ -161,6 +161,15 @@
       "state" : {
         "revision" : "cb281f343fd953280336dcbd3822cdf47c182f5b",
         "version" : "1.10.0"
+      }
+    },
+    {
+      "identity" : "yams",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/jpsim/Yams.git",
+      "state" : {
+        "revision" : "a27b21e0c81c5bf42049b897a62aaf387e80f279",
+        "version" : "6.2.2"
       }
     },
     {

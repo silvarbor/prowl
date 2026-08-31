@@ -109,13 +109,23 @@ extension WorktreeTerminalState {
     appendNotification(title: title, body: body, surfaceId: surfaceId)
   }
 
-  func appendNotification(title: String, body: String, surfaceId: UUID) {
+  func appendNotification(
+    title: String,
+    body: String,
+    surfaceId: UUID,
+    treatAsViewedWhenWorktreeIsVisible: Bool = false
+  ) {
     let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
     let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !(trimmedTitle.isEmpty && trimmedBody.isEmpty) else { return }
+    let isWorktreeSelected = isSelected()
+    let isWorkflowViewed = treatAsViewedWhenWorktreeIsVisible && isViewingWorktree()
     if notificationsEnabled {
       let previousHasUnseen = hasUnseenNotification
-      let isRead = isSelected() && isFocusedSurface(surfaceId)
+      let isRead =
+        treatAsViewedWhenWorktreeIsVisible
+        ? isWorkflowViewed
+        : (isWorktreeSelected && isFocusedSurface(surfaceId))
       notifications.insert(
         WorktreeTerminalNotification(
           surfaceId: surfaceId,
@@ -128,7 +138,8 @@ extension WorktreeTerminalState {
       )
       emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
     }
-    onNotificationReceived?(surfaceId, trimmedTitle, trimmedBody, isViewedSurface(surfaceId))
+    let isViewed = treatAsViewedWhenWorktreeIsVisible ? isWorkflowViewed : isViewedSurface(surfaceId)
+    onNotificationReceived?(surfaceId, trimmedTitle, trimmedBody, isViewed)
   }
 
   static func formatDuration(_ seconds: Int) -> String {

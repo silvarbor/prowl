@@ -16,10 +16,10 @@ This file defines the **JSON output contract** for:
 
 ## Supported selectors
 
-- `--worktree <id|name|path>`
-- `--tab <id>`
-- `--pane <id>`
-- no selector, meaning “focus current target”
+`focus` uses [targeting.md](targeting.md): `--pane` / `--tab` accept typed handles,
+and `--target` or the optional positional target accept UUIDs, worktree references,
+and prefixed `pN` / `tN` handles. A positional target plus selector flag is invalid;
+no selector means “focus current target”.
 
 ## Success payload
 
@@ -70,7 +70,7 @@ This file defines the **JSON output contract** for:
 
 ### `requested`
 
-- `selector`: `"worktree"` | `"tab"` | `"pane"` | `"current"`
+- `selector`: `"worktree"` | `"tab"` | `"pane"` | `"auto"` | `"current"`
 - `value`: string or `null`
   - `null` only when `selector == "current"`.
 

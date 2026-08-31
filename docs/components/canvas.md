@@ -32,6 +32,8 @@ Canvas lets you **type a command once and send it to many agents at once**:
 
 Selection controls:
 - `⌘`-click a card body → toggle it in/out of the selection.
+- `⌘`-click a terminal link → open it. Recognized links take priority over card
+  multi-selection, including when `⌘` is held across repeated clicks.
 - **Click (without `⌘`)** an already-selected card → make it the **primary** (the
   one you type into) without deselecting the rest. (`⌘`-clicking a selected card
   instead *removes* it from the selection.)

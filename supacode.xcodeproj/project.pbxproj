@@ -12,6 +12,7 @@
 		C8B33B9AFE69E738ABFA08BE /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = 497B582F42253CBC8FBF101F /* ComposableArchitecture */; };
 		D1BB05892F5ACB5900553512 /* YiTong in Frameworks */ = {isa = PBXBuildFile; productRef = D1BB05882F5ACB5900553512 /* YiTong */; };
 		66055880DA0BAF0D05D67D02 /* GlyphonKit in Frameworks */ = {isa = PBXBuildFile; productRef = 0C10F7612452A2EF85A71541 /* GlyphonKit */; };
+		7A1D5E2C9B3F4A6D8E0C1B2C /* Yams in Frameworks */ = {isa = PBXBuildFile; productRef = 7A1D5E2C9B3F4A6D8E0C1B2B /* Yams */; };
 		D63D00F72F2A5EEE00018D05 /* DependenciesTestSupport in Frameworks */ = {isa = PBXBuildFile; productRef = D63D00F62F2A5EEE00018D05 /* DependenciesTestSupport */; };
 		D64162B02F23CAF100260CA3 /* ghostty in Resources */ = {isa = PBXBuildFile; fileRef = D64162AD2F23CAF100260CA3 /* ghostty */; };
 		D64162B12F23CAF100260CA3 /* terminfo in Resources */ = {isa = PBXBuildFile; fileRef = D64162AE2F23CAF100260CA3 /* terminfo */; };
@@ -21,6 +22,8 @@
 		D6A1CB362F1F4ACB004FDABD /* Carbon.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D6A1CB342F1F4AC2004FDABD /* Carbon.framework */; };
 		D6CLI0012F99000100000001 /* prowl-cli in Resources */ = {isa = PBXBuildFile; fileRef = D6CLI0022F99000100000001 /* prowl-cli */; };
 		D6DOC0012F99000300000001 /* docs in Resources */ = {isa = PBXBuildFile; fileRef = D6DOC0022F99000300000001 /* docs */; };
+		D6SKL0012F99000500000001 /* skills in Resources */ = {isa = PBXBuildFile; fileRef = D6SKL0022F99000500000001 /* skills */; };
+		D6HOK0012F99000400000001 /* agent-hooks in Resources */ = {isa = PBXBuildFile; fileRef = D6HOK0022F99000400000001 /* agent-hooks */; };
 		D6D054282F2E3EBF00D70ED5 /* PostHog in Frameworks */ = {isa = PBXBuildFile; productRef = D6D054272F2E3EBF00D70ED5 /* PostHog */; };
 		DFE570C142184CC387C1BC78 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = B5698573F7354B14B940EA60 /* Sparkle */; };
 /* End PBXBuildFile section */
@@ -44,6 +47,8 @@
 		D6A1CB342F1F4AC2004FDABD /* Carbon.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Carbon.framework; path = System/Library/Frameworks/Carbon.framework; sourceTree = SDKROOT; };
 		D6CLI0022F99000100000001 /* prowl-cli */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "prowl-cli"; path = "Resources/prowl-cli"; sourceTree = "<group>"; };
 		D6DOC0022F99000300000001 /* docs */ = {isa = PBXFileReference; lastKnownFileType = folder; name = docs; path = "Resources/docs"; sourceTree = "<group>"; };
+		D6SKL0022F99000500000001 /* skills */ = {isa = PBXFileReference; lastKnownFileType = folder; name = skills; path = "Resources/skills"; sourceTree = "<group>"; };
+		D6HOK0022F99000400000001 /* agent-hooks */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "agent-hooks"; path = "Resources/agent-hooks"; sourceTree = "<group>"; };
 		D6F821012F1FCBC1004B4174 /* supacodeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = supacodeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -83,6 +88,7 @@
 			files = (
 				D1BB05892F5ACB5900553512 /* YiTong in Frameworks */,
 				66055880DA0BAF0D05D67D02 /* GlyphonKit in Frameworks */,
+				7A1D5E2C9B3F4A6D8E0C1B2C /* Yams in Frameworks */,
 				C8B33B9AFE69E738ABFA08BE /* ComposableArchitecture in Frameworks */,
 				886A649F771240E8A5AC792D /* Dependencies in Frameworks */,
 				D6A1CB312F1F4ABF004FDABD /* GhosttyKit.xcframework in Frameworks */,
@@ -109,9 +115,11 @@
 			isa = PBXGroup;
 			children = (
 				D6DOC0022F99000300000001 /* docs */,
+				D6SKL0022F99000500000001 /* skills */,
 				D64162AD2F23CAF100260CA3 /* ghostty */,
 				D64162AF2F23CAF100260CA3 /* git-wt */,
 				D6CLI0022F99000100000001 /* prowl-cli */,
+				D6HOK0022F99000400000001 /* agent-hooks */,
 				D64162AE2F23CAF100260CA3 /* terminfo */,
 				D69CE04C2F1F378200584C57 /* supacode */,
 				D6F821022F1FCBC1004B4174 /* supacodeTests */,
@@ -168,6 +176,7 @@
 				D6D054272F2E3EBF00D70ED5 /* PostHog */,
 				D1BB05882F5ACB5900553512 /* YiTong */,
 				0C10F7612452A2EF85A71541 /* GlyphonKit */,
+				7A1D5E2C9B3F4A6D8E0C1B2B /* Yams */,
 			);
 			productName = supacode;
 			productReference = D69CE04A2F1F378200584C57 /* Prowl.app */;
@@ -234,6 +243,7 @@
 				D6D054262F2E3EB300D70ED5 /* XCRemoteSwiftPackageReference "posthog-ios" */,
 				D1BB05872F5ACB5900553512 /* XCRemoteSwiftPackageReference "YiTong" */,
 				AA918EA35EA8913669138FE5 /* XCRemoteSwiftPackageReference "GlyphonKit" */,
+				7A1D5E2C9B3F4A6D8E0C1B2A /* XCRemoteSwiftPackageReference "Yams" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = D69CE04B2F1F378200584C57 /* Products */;
@@ -252,10 +262,12 @@
 			buildActionMask = 2147483647;
 			files = (
 				D6DOC0012F99000300000001 /* docs in Resources */,
+				D6SKL0012F99000500000001 /* skills in Resources */,
 				D64162B02F23CAF100260CA3 /* ghostty in Resources */,
 				D64162B12F23CAF100260CA3 /* terminfo in Resources */,
 				D64162B22F23CAF100260CA3 /* git-wt in Resources */,
 				D6CLI0012F99000100000001 /* prowl-cli in Resources */,
+				D6HOK0012F99000400000001 /* agent-hooks in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -477,7 +489,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				COMPILATION_CACHE_ENABLE_CACHING = YES;
-				CURRENT_PROJECT_VERSION = 20260809;
+				CURRENT_PROJECT_VERSION = 20260829;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = "";
@@ -502,7 +514,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 2026.8.9;
+				MARKETING_VERSION = 2026.8.29;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lc++",
@@ -537,7 +549,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				COMPILATION_CACHE_ENABLE_CACHING = NO;
-				CURRENT_PROJECT_VERSION = 20260809;
+				CURRENT_PROJECT_VERSION = 20260829;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = "";
@@ -560,7 +572,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 2026.8.9;
+				MARKETING_VERSION = 2026.8.29;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lc++",
@@ -590,12 +602,12 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 20260809;
+				CURRENT_PROJECT_VERSION = 20260829;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.1;
-				MARKETING_VERSION = 2026.8.9;
+				MARKETING_VERSION = 2026.8.29;
 				PRODUCT_BUNDLE_IDENTIFIER = com.onevcat.prowlTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
@@ -612,12 +624,12 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 20260809;
+				CURRENT_PROJECT_VERSION = 20260829;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.1;
-				MARKETING_VERSION = 2026.8.9;
+				MARKETING_VERSION = 2026.8.29;
 				PRODUCT_BUNDLE_IDENTIFIER = com.onevcat.prowlTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
@@ -718,6 +730,14 @@
 				minimumVersion = 0.1.0;
 			};
 		};
+		7A1D5E2C9B3F4A6D8E0C1B2A /* XCRemoteSwiftPackageReference "Yams" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/jpsim/Yams.git";
+			requirement = {
+				kind = exactVersion;
+				version = 6.2.2;
+			};
+		};
 		D6D054262F2E3EB300D70ED5 /* XCRemoteSwiftPackageReference "posthog-ios" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/PostHog/posthog-ios.git";
@@ -758,6 +778,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = AA918EA35EA8913669138FE5 /* XCRemoteSwiftPackageReference "GlyphonKit" */;
 			productName = GlyphonKit;
+		};
+		7A1D5E2C9B3F4A6D8E0C1B2B /* Yams */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7A1D5E2C9B3F4A6D8E0C1B2A /* XCRemoteSwiftPackageReference "Yams" */;
+			productName = Yams;
 		};
 		D63D00F62F2A5EEE00018D05 /* DependenciesTestSupport */ = {
 			isa = XCSwiftPackageProductDependency;

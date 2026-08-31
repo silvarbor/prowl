@@ -6479,6 +6479,7 @@ struct RepositoriesFeatureTests {
     let store = TestStore(initialState: makeState(repositories: [repository])) {
       RepositoriesFeature()
     } withDependencies: {
+      $0.continuousClock = TestClock()
       $0.githubIntegration.isAvailable = { false }
       $0.gitClient.remoteInfo = { _ in
         Issue.record("remoteInfo should not be requested when GitHub integration is unavailable")
@@ -6614,6 +6615,8 @@ struct RepositoriesFeatureTests {
       )
     let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
     }
 
     await store.send(.githubIntegration(.githubIntegrationAvailabilityUpdated(false))) {
@@ -7705,6 +7708,233 @@ struct RepositoriesFeatureTests {
     #expect(rows.first?.info == nil)
   }
 
+  @Test func diffTargetForWorkspaceChildDiffsChildRepoAndHostsHunkInWorkspace() {
+    let entry = ProjectWorkspace.RepositoryEntry(
+      id: "app",
+      name: "App",
+      path: "app",
+      sourceKind: .existingPath,
+      branchName: "metadata-branch"
+    )
+    let repository = makeWorkspaceRepository(id: "/tmp/ws-diff", children: [entry])
+    var state = makeState(repositories: [repository])
+    let childID = entry.resolvedURL(relativeTo: repository.rootURL).path(percentEncoded: false)
+    state.workspaceChildBranchByID[childID] = "live-branch"
+
+    let target = state.diffTarget(for: .workspaceChild(workspaceID: repository.id, path: childID))
+
+    let childURL = URL(fileURLWithPath: childID)
+    #expect(target?.id == .workspaceChild(workspaceID: repository.id, path: childID))
+    #expect(target?.workingDirectory == childURL)
+    // Live branch wins over the metadata branch.
+    #expect(target?.branchName == "live-branch")
+    #expect(target?.repositoryRootURL == childURL)
+    // Hunk stays hosted in the workspace terminal, running in the child dir.
+    #expect(target?.terminalHost.id == repository.id)
+    #expect(target?.terminalHost.workingDirectory == repository.rootURL)
+    #expect(target?.terminalWorkingDirectory == childURL)
+  }
+
+  @Test func diffTargetForWorkspaceChildFallsBackBranchToMetadataThenRepositoryName() {
+    let withMetadataBranch = ProjectWorkspace.RepositoryEntry(
+      id: "app",
+      name: "App",
+      path: "app",
+      sourceKind: .existingPath,
+      branchName: "metadata-branch"
+    )
+    let withoutAnyBranch = ProjectWorkspace.RepositoryEntry(
+      id: "api",
+      name: "Api",
+      path: "api",
+      sourceKind: .existingPath
+    )
+    let repository = makeWorkspaceRepository(
+      id: "/tmp/ws-diff-fallback",
+      children: [withMetadataBranch, withoutAnyBranch]
+    )
+    let state = makeState(repositories: [repository])
+    let metadataChildID = withMetadataBranch.resolvedURL(relativeTo: repository.rootURL)
+      .path(percentEncoded: false)
+    let namelessChildID = withoutAnyBranch.resolvedURL(relativeTo: repository.rootURL)
+      .path(percentEncoded: false)
+
+    #expect(
+      state.diffTarget(
+        for: .workspaceChild(workspaceID: repository.id, path: metadataChildID)
+      )?.branchName == "metadata-branch"
+    )
+    #expect(
+      state.diffTarget(
+        for: .workspaceChild(workspaceID: repository.id, path: namelessChildID)
+      )?.branchName == "Api"
+    )
+  }
+
+  @Test func diffTargetResolvesWorktreesAndRejectsUnknownChildren() {
+    let worktree = makeWorktree(id: "/tmp/repo-dt/wt", name: "feature")
+    let repository = makeRepository(id: "/tmp/repo-dt", worktrees: [worktree])
+    let state = makeState(repositories: [repository])
+
+    #expect(state.diffTarget(for: .worktree(worktree.id)) == DiffTarget(worktree: worktree))
+    #expect(state.diffTarget(for: .worktree("/tmp/missing")) == nil)
+    #expect(
+      state.diffTarget(for: .workspaceChild(workspaceID: repository.id, path: "/tmp/missing")) == nil
+    )
+  }
+
+  @Test func diffTargetScopesWorkspaceChildToItsOwnWorkspace() {
+    // Two workspaces referencing the same absolute child path: each target
+    // must resolve within its own workspace so Hunk lands in the right
+    // terminal.
+    let sharedEntry = ProjectWorkspace.RepositoryEntry(
+      id: "shared",
+      name: "Shared",
+      path: "/tmp/shared-child",
+      sourceKind: .existingPath
+    )
+    let firstWorkspace = makeWorkspaceRepository(id: "/tmp/ws-dup-1", children: [sharedEntry])
+    let secondWorkspace = makeWorkspaceRepository(id: "/tmp/ws-dup-2", children: [sharedEntry])
+    let state = makeState(repositories: [firstWorkspace, secondWorkspace])
+    let childID = sharedEntry.resolvedURL(relativeTo: firstWorkspace.rootURL).path(percentEncoded: false)
+
+    let firstTarget = state.diffTarget(
+      for: .workspaceChild(workspaceID: firstWorkspace.id, path: childID)
+    )
+    let secondTarget = state.diffTarget(
+      for: .workspaceChild(workspaceID: secondWorkspace.id, path: childID)
+    )
+
+    #expect(firstTarget?.terminalHost.id == firstWorkspace.id)
+    #expect(secondTarget?.terminalHost.id == secondWorkspace.id)
+    #expect(firstTarget?.workingDirectory == secondTarget?.workingDirectory)
+  }
+
+  @Test func diffTargetUsesRecordedSourceRootForSettingsAndTemplates() {
+    // Linked and worktree checkouts live inside the workspace folder but
+    // belong to a source repository elsewhere; settings and {repoPath} must
+    // follow the recorded source. Remote clones have no local source and stay
+    // rooted at the checkout.
+    let linkedEntry = ProjectWorkspace.RepositoryEntry(
+      id: "app",
+      name: "App",
+      path: "app",
+      sourceKind: .existingPath,
+      sourceLocation: "/tmp/source-repo"
+    )
+    let remoteEntry = ProjectWorkspace.RepositoryEntry(
+      id: "api",
+      name: "Api",
+      path: "api",
+      sourceKind: .remote,
+      sourceLocation: "https://example.com/api.git"
+    )
+    let repository = makeWorkspaceRepository(
+      id: "/tmp/ws-roots",
+      children: [linkedEntry, remoteEntry]
+    )
+    let state = makeState(repositories: [repository])
+    let linkedChildID = linkedEntry.resolvedURL(relativeTo: repository.rootURL)
+      .path(percentEncoded: false)
+    let remoteChildID = remoteEntry.resolvedURL(relativeTo: repository.rootURL)
+      .path(percentEncoded: false)
+
+    let linkedTarget = state.diffTarget(
+      for: .workspaceChild(workspaceID: repository.id, path: linkedChildID)
+    )
+    let remoteTarget = state.diffTarget(
+      for: .workspaceChild(workspaceID: repository.id, path: remoteChildID)
+    )
+
+    #expect(linkedTarget?.repositoryRootURL == URL(fileURLWithPath: "/tmp/source-repo"))
+    #expect(linkedTarget?.workingDirectory == URL(fileURLWithPath: linkedChildID))
+    #expect(remoteTarget?.repositoryRootURL == URL(fileURLWithPath: remoteChildID))
+  }
+
+  @Test func pruneClearsSelectedChildRemovedFromItsWorkspaceDespiteDuplicatePath() {
+    // Two workspaces reference the same absolute child path. Removing the
+    // child from the selected workspace must clear the selection even though
+    // the path stays globally valid through the other workspace — otherwise
+    // View/Palette advertise Diff for a target that resolves to nil.
+    let sharedEntry = ProjectWorkspace.RepositoryEntry(
+      id: "shared",
+      name: "Shared",
+      path: "/tmp/shared-prune-child",
+      sourceKind: .existingPath
+    )
+    let selectedWorkspace = makeWorkspaceRepository(id: "/tmp/ws-prune-1", children: [sharedEntry])
+    let otherWorkspace = makeWorkspaceRepository(id: "/tmp/ws-prune-2", children: [sharedEntry])
+    var state = makeState(repositories: [selectedWorkspace, otherWorkspace])
+    let childID = sharedEntry.resolvedURL(relativeTo: selectedWorkspace.rootURL)
+      .path(percentEncoded: false)
+    state.selection = .repository(selectedWorkspace.id)
+    state.selectedWorkspaceChildID = childID
+
+    // Reload with the child still present: selection survives.
+    pruneWorkspaceChildInfo(state: &state)
+    #expect(state.selectedWorkspaceChildID == childID)
+
+    // Reload after the child was removed from the selected workspace only.
+    let emptiedWorkspace = makeWorkspaceRepository(id: "/tmp/ws-prune-1", children: [])
+    state.repositories = [emptiedWorkspace, otherWorkspace]
+    pruneWorkspaceChildInfo(state: &state)
+    #expect(state.selectedWorkspaceChildID == nil)
+    #expect(state.selectedDiffTargetID == nil)
+  }
+
+  @Test func pullRequestForDiffTargetDispatchesToTheMatchingCache() {
+    let entry = ProjectWorkspace.RepositoryEntry(
+      id: "app",
+      name: "App",
+      path: "app",
+      sourceKind: .existingPath
+    )
+    let workspace = makeWorkspaceRepository(id: "/tmp/ws-pr", children: [entry])
+    let worktree = makeWorktree(id: "/tmp/repo-pr/wt", name: "feature")
+    let repository = makeRepository(id: "/tmp/repo-pr", worktrees: [worktree])
+    var state = makeState(repositories: [repository, workspace])
+    let childID = entry.resolvedURL(relativeTo: workspace.rootURL).path(percentEncoded: false)
+    let worktreePR = makePullRequest(state: "OPEN", headRefName: "feature", number: 1)
+    let childPR = makePullRequest(state: "OPEN", headRefName: "child-branch", number: 2)
+    state.worktreeInfoByID[worktree.id] = WorktreeInfoEntry(pullRequest: worktreePR)
+    state.workspaceChildInfoByID[childID] = WorktreeInfoEntry(pullRequest: childPR)
+
+    #expect(state.pullRequest(for: .worktree(worktree.id)) == worktreePR)
+    #expect(
+      state.pullRequest(for: .workspaceChild(workspaceID: workspace.id, path: childID)) == childPR
+    )
+    #expect(state.pullRequest(for: .worktree("/tmp/missing")) == nil)
+  }
+
+  @Test func selectedDiffTargetIDFollowsWorktreeThenWorkspaceChild() {
+    let entry = ProjectWorkspace.RepositoryEntry(
+      id: "app",
+      name: "App",
+      path: "app",
+      sourceKind: .existingPath
+    )
+    let workspace = makeWorkspaceRepository(id: "/tmp/ws-selected", children: [entry])
+    let worktree = makeWorktree(id: "/tmp/repo-sel/wt", name: "alpha")
+    let repository = makeRepository(id: "/tmp/repo-sel", worktrees: [worktree])
+    var state = makeState(repositories: [repository, workspace])
+    let childID = entry.resolvedURL(relativeTo: workspace.rootURL).path(percentEncoded: false)
+
+    state.selection = .worktree(worktree.id)
+    #expect(state.selectedDiffTargetID == .worktree(worktree.id))
+
+    state.selection = .repository(workspace.id)
+    state.selectedWorkspaceChildID = childID
+    #expect(state.selectedDiffTargetID == .workspaceChild(workspaceID: workspace.id, path: childID))
+
+    // A stale child id must not leak once a non-workspace repository is selected.
+    state.selection = .repository(repository.id)
+    #expect(state.selectedDiffTargetID == nil)
+
+    state.selection = .repository(workspace.id)
+    state.selectedWorkspaceChildID = nil
+    #expect(state.selectedDiffTargetID == nil)
+  }
+
   @Test func openWorkspaceChildFocusesOrCreatesBoundTerminalTabInChildDirectory() async {
     let entry = ProjectWorkspace.RepositoryEntry(
       id: "app",
@@ -7788,6 +8018,35 @@ struct RepositoriesFeatureTests {
     #expect(store.state.workspaceChildInfoByID[childID]?.addedLines == 7)
     #expect(store.state.workspaceChildInfoByID[childID]?.removedLines == 2)
     #expect(store.state.workspaceChildInfoByID[childID]?.skippedUntrackedFileCount == 1)
+  }
+
+  @Test func workspaceChildrenInfoLoadedIgnoresUpdatesForRemovedChildren() async {
+    // An in-flight refresh can land after a reload removed its child; the
+    // stale update must not repopulate the just-pruned maps.
+    let entry = ProjectWorkspace.RepositoryEntry(
+      id: "app",
+      name: "App",
+      path: "app",
+      sourceKind: .existingPath
+    )
+    let repository = makeWorkspaceRepository(id: "/tmp/ws-stale", children: [entry])
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    }
+
+    await store.send(
+      .workspaceChildrenInfoLoaded([
+        WorkspaceChildInfoUpdate(
+          id: "/tmp/ws-removed/app",
+          branch: "stale",
+          lineChanges: GitLineChanges(added: 1, removed: 1),
+          pullRequest: nil
+        )
+      ])
+    )
+
+    #expect(store.state.workspaceChildBranchByID.isEmpty)
+    #expect(store.state.workspaceChildInfoByID.isEmpty)
   }
 
   @Test func openRepositoriesFinishedRefreshesWorkspaceChildren() async {

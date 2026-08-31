@@ -17,10 +17,9 @@ This file defines the **JSON output contract** for:
 
 ## Supported targeting
 
-- `--worktree <id|name|path>`
-- `--tab <id>`
-- `--pane <id>`
-- no selector, meaning current focused pane
+`read` uses the shared generic target grammar in [targeting.md](targeting.md), so
+`read p12` and `read --target t6` resolve the displayed current-process handles.
+No selector retains the interactive current-focus fallback.
 
 ## Success payload
 
@@ -95,10 +94,10 @@ This file defines the **JSON output contract** for:
 - `mode`: `"snapshot"` | `"last"`
   - `"snapshot"` for plain `prowl read`
   - `"last"` for `prowl read --last N`
-- `last`: integer or `null`
-  - required as an integer when `mode == "last"`
-  - must be `null` when `mode == "snapshot"`
-- `source`: `"screen"` | `"scrollback"` | `"mixed"`
+- `last`: optional integer
+  - present as an integer when `mode == "last"`
+  - omitted for a snapshot
+- `source`: `"screen"` | `"scrollback"` | `"mixed"` | `"detection"`
   - `"screen"`: visible screen snapshot only
   - `"scrollback"`: satisfied from scrollback/history
   - `"mixed"`: combined view when the runtime had to stitch sources together
@@ -117,6 +116,15 @@ This file defines the **JSON output contract** for:
 - `text`: string
   - UTF-8 text payload
   - may be empty if the target pane currently has no readable text
+
+## Stable wait and detection extensions
+
+- `--source detection` returns the exact active-screen buffer used by agent
+  detection; an incompatible older app fails rather than substituting viewport text.
+- `--wait-stable` samples until output stabilizes or the timeout is reached.
+  `stabilized`, `waited_ms`, and `samples` are present only when waiting was
+  requested.
+- `--stable-interval`, `--stable-period`, and `--wait-timeout` tune that wait.
 
 ## Output invariants
 

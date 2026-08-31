@@ -1,0 +1,10 @@
+{
+  "type": "agent-turn-complete",
+  "thread-id": "fixture-codex-thread",
+  "turn-id": "fixture-codex-turn",
+  "cwd": "/tmp/Prowl Fixtures/界",
+  "input-messages": ["fixture prompt"],
+  "last-assistant-message": "This fixture field must never cross the Prowl hook bridge.",
+  "client": "fixture",
+  "future-field": true
+}

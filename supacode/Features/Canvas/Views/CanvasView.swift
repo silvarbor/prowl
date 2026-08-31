@@ -256,11 +256,21 @@ struct CanvasView: View {
     .onDisappear { deactivateCanvas() }
   }
 
-  func showsSelectionShield(for tabID: TerminalTabID) -> Bool {
-    if commandKeyObserver.isPressed { return true }
-    if selectionState.isSelecting { return true }
-    if selectionState.isBroadcasting, selectionState.primaryTabID != tabID { return true }
-    return false
+  func interactionState(
+    for tabID: TerminalTabID,
+    in tree: SplitTree<GhosttySurfaceView>
+  ) -> (linkActivationRequested: Bool, showsSelectionShield: Bool) {
+    let linkActivationRequested = CanvasInteractionPolicy.linkActivationRequested(
+      hasHoveredLink: CanvasInteractionPolicy.hasHoveredLink(in: tree),
+      isCommandModifierActive: NSEvent.modifierFlags.contains(.command)
+    )
+    let showsSelectionShield = CanvasInteractionPolicy.showsSelectionShield(
+      commandSelectionActive: commandKeyObserver.isPressed,
+      selectionModeActive: selectionState.isSelecting,
+      broadcastFollower: selectionState.isBroadcasting && selectionState.primaryTabID != tabID,
+      linkActivationRequested: linkActivationRequested
+    )
+    return (linkActivationRequested, showsSelectionShield)
   }
 
   // MARK: - Cards Layer
@@ -330,6 +340,7 @@ struct CanvasView: View {
     let splitDivider = terminalManager.splitDividerAppearance()
     let repositoryAppearance = appearance(for: state.repositoryRootURL)
     let resolvedRepositoryName = repositoryDisplayName(for: state.repositoryRootURL)
+    let interaction = interactionState(for: tab.id, in: tree)
 
     AnimatedExpandableCard(
       progress: isCardExpanded ? 1 : 0,
@@ -358,7 +369,8 @@ struct CanvasView: View {
         isExpanded: isCardExpanded,
         expandHelp: expandHelp,
         canvasScale: isCardExpanded ? 1 : canvasScale,
-        showsSelectionShield: showsSelectionShield(for: tab.id),
+        linkActivationRequested: interaction.linkActivationRequested,
+        showsSelectionShield: interaction.showsSelectionShield,
         onTap: {
           let cmdHeld = NSEvent.modifierFlags.contains(.command)
           if cmdHeld {

@@ -221,6 +221,14 @@ actor AgentSessionResolver {
     let now: Date
   }
 
+  private struct ResolveInput {
+    let identified: IdentifiedAgentProcess
+    let workingDirectory: URL?
+    let activeText: String
+    let configRoot: URL?
+    let now: Date
+  }
+
   /// Unresolved lookups retry quickly while the narrow scan stays cheap, then
   /// back off exponentially while the pane stays ambiguous; wide fallback
   /// scans (full history trees) start at the slow end. 15 s cap keeps a
@@ -311,13 +319,53 @@ actor AgentSessionResolver {
     configRoot: URL? = nil,
     now: Date = Date()
   ) -> AgentSessionResolution {
+    resolve(
+      ResolveInput(
+        identified: identified,
+        workingDirectory: workingDirectory,
+        activeText: activeText,
+        configRoot: configRoot,
+        now: now
+      ),
+      bypassResultCache: false
+    )
+  }
+
+  /// Recomputes session attribution from current process/screen evidence instead
+  /// of replaying a `PaneAgentState` or pid-result cache entry. File/root parsing
+  /// caches remain valid optimizations because they are keyed by file identity.
+  func resolveFresh(
+    identified: IdentifiedAgentProcess,
+    workingDirectory: URL?,
+    activeText: String,
+    configRoot: URL? = nil,
+    now: Date = Date()
+  ) -> AgentSessionResolution {
+    resolve(
+      ResolveInput(
+        identified: identified,
+        workingDirectory: workingDirectory,
+        activeText: activeText,
+        configRoot: configRoot,
+        now: now
+      ),
+      bypassResultCache: true
+    )
+  }
+
+  private func resolve(_ input: ResolveInput, bypassResultCache: Bool) -> AgentSessionResolution {
+    let identified = input.identified
+    let workingDirectory = input.workingDirectory
+    let activeText = input.activeText
+    let configRoot = input.configRoot
+    let now = input.now
     let process = identified.process
     guard let startedAt = ProcessDetection.processStartDate(pid: process.pid) else {
       return AgentSessionResolution(session: nil, isFresh: true)
     }
     let key = CacheKey(pid: process.pid, startedAt: startedAt)
     let cached = cache[key]
-    if let cached {
+    if !bypassResultCache, let cached {
       let lifetime = Self.cacheLifetime(
         hasSession: cached.session != nil,
         usedWideScan: cached.usedWideScan,

@@ -68,6 +68,81 @@ enum OutputRenderer {
         return
       }
 
+      if response.command == "agents.read",
+         let data = response.data,
+         let payload = try? data.decode(as: AgentReadCommandPayload.self)
+      {
+        renderAgentsRead(payload)
+        return
+      }
+
+      if response.command == "agents.signal",
+         let data = response.data,
+         let payload = try? data.decode(as: AgentSignalCommandPayload.self)
+      {
+        print(agentSignalText(payload))
+        for line in agentSignalWarningLines(payload) {
+          FileHandle.standardError.write(Data((line + "\n").utf8))
+        }
+        return
+      }
+
+      if response.command == "agents.dispatch",
+         let data = response.data,
+         let payload = try? data.decode(as: AgentDispatchCommandPayload.self)
+      {
+        print(dispatchText(payload))
+        return
+      }
+
+      if response.command == "agents.dispatch-complete",
+         let data = response.data,
+         let payload = try? data.decode(as: DispatchCompleteCommandPayload.self)
+      {
+        print(dispatchCompleteText(payload))
+        return
+      }
+
+      if response.command == "agents.dispatch-abandon",
+         let data = response.data,
+         let payload = try? data.decode(as: DispatchAbandonCommandPayload.self)
+      {
+        print(dispatchAbandonText(payload))
+        return
+      }
+
+      if response.command == "agents.wait",
+         let data = response.data,
+         let payload = try? data.decode(as: AgentWaitCommandPayload.self)
+      {
+        print(agentWaitText(payload))
+        return
+      }
+
+      if response.command == "profiles",
+         let data = response.data,
+         let payload = try? data.decode(as: ProfilesCommandPayload.self)
+      {
+        print(renderProfiles(payload))
+        return
+      }
+
+      if response.command == "skills",
+         let data = response.data,
+         let payload = try? data.decode(as: SkillsCommandPayload.self)
+      {
+        renderSkills(payload)
+        return
+      }
+
+      if response.command == "workflow",
+         let data = response.data,
+         let payload = try? data.decode(as: WorkflowCommandPayload.self)
+      {
+        renderWorkflow(payload)
+        return
+      }
+
       if response.command == "focus",
          let data = response.data,
          let payload = try? data.decode(as: FocusCommandPayload.self)
@@ -89,6 +164,15 @@ enum OutputRenderer {
          let payload = try? data.decode(as: ReadCommandPayload.self)
       {
         print(renderRead(payload))
+        return
+      }
+
+      if response.command == "create" || response.command == "close",
+         let data = response.data,
+         let payload = try? data.decode(as: LifecycleCommandPayload.self)
+      {
+        print(renderLifecycle(payload, command: response.command))
+        renderLifecycleWarnings(payload)
         return
       }
 
@@ -126,7 +210,7 @@ enum OutputRenderer {
 
     if let error = response.error {
       FileHandle.standardError.write(
-        Data("error [\(error.code)]: \(error.message)\n".utf8)
+        Data("\(errorText(error, command: response.command))\n".utf8)
       )
     }
   }
@@ -251,6 +335,240 @@ enum OutputRenderer {
     }.joined(separator: "\n")
   }
 
+  static func agentSignalWarningLines(_ payload: AgentSignalCommandPayload) -> [String] {
+    (payload.warnings ?? []).map { "warning: [\($0.code.rawValue)] \($0.message)" }
+  }
+
+  static func agentSignalText(_ payload: AgentSignalCommandPayload) -> String {
+    let event: String
+    if payload.signal.event == .progress, let progress = payload.signal.progress {
+      event = "progress=\(progress)"
+    } else {
+      event = payload.signal.event.rawValue
+    }
+    return "Signaled \(event) for pane \(payload.pane.id)."
+  }
+
+  static func dispatchText(_ payload: AgentDispatchCommandPayload) -> String {
+    [
+      "Dispatched \(payload.dispatch.id) (\(payload.dispatch.state.rawValue))",
+      "  pane: \(payload.target.pane.id)",
+      "  created: \(payload.dispatch.createdAt)",
+    ].joined(separator: "\n")
+  }
+
+  static func dispatchCompleteText(_ payload: DispatchCompleteCommandPayload) -> String {
+    let replayed = payload.replayed ? " (replayed)" : ""
+    return [
+      "Completed dispatch \(payload.receipt.id): \(payload.receipt.outcome.rawValue)\(replayed)",
+      "  pane: \(payload.target.pane.id)",
+      "  summary: \(payload.receipt.summary)",
+    ].joined(separator: "\n")
+  }
+
+  static func dispatchAbandonText(_ payload: DispatchAbandonCommandPayload) -> String {
+    let replayed = payload.replayed ? " (replayed)" : ""
+    return [
+      "Abandoned dispatch \(payload.record.id)\(replayed)",
+      "  pane: \(payload.target.pane.id)",
+      "  reason: \(payload.record.reason)",
+    ].joined(separator: "\n")
+  }
+
+  static func agentWaitText(_ payload: AgentWaitCommandPayload) -> String {
+    switch payload {
+    case .dispatch(let wait):
+      return [
+        "Dispatch \(wait.receipt.id) \(wait.receipt.outcome.rawValue) after \(wait.waitedMilliseconds) ms",
+        "  pane: \(wait.target.pane.id)",
+        "  summary: \(wait.receipt.summary)",
+      ].joined(separator: "\n")
+    case .condition(let wait):
+      return [
+        "Agent reached \(wait.condition.rawValue) after \(wait.waitedMilliseconds) ms",
+        "  pane: \(wait.target.pane.id)",
+        "  observation: \(wait.observation.status.rawValue) [\(wait.observation.confidence)] via \(wait.observation.source)",
+      ].joined(separator: "\n")
+    }
+  }
+
+  static func errorText(_ error: CommandError, command: String) -> String {
+    var lines = ["error [\(error.code)]: \(error.message)"]
+    if command == "agents.dispatch",
+      let details = try? error.details?.decode(as: AgentDispatchErrorDetails.self)
+    {
+      lines.append("  pane: \(details.target.pane.id)")
+      if let record = details.record {
+        lines.append("  dispatch: \(record.id) (\(record.state.rawValue))")
+      }
+      if let observation = details.observation {
+        lines.append(
+          "  observation: \(observation.status.rawValue) [\(observation.confidence)] via \(observation.source)"
+        )
+      }
+      return lines.joined(separator: "\n")
+    }
+    guard command == "agents.wait",
+      let details = try? error.details?.decode(as: AgentWaitErrorDetails.self)
+    else {
+      return lines[0]
+    }
+
+    switch details {
+    case .dispatch(let wait):
+      lines.append("  dispatch: \(wait.record.id) (\(wait.record.state.rawValue))")
+      lines.append("  pane: \(wait.target.pane.id)")
+      lines.append("  waited: \(wait.waitedMilliseconds) ms")
+    case .condition(let wait):
+      lines.append("  condition: \(wait.condition.rawValue)")
+      if let target = wait.target {
+        lines.append("  pane: \(target.pane.id)")
+      }
+      if let observation = wait.observation {
+        lines.append(
+          "  observation: \(observation.status.rawValue) [\(observation.confidence)] via \(observation.source)"
+        )
+      }
+      lines.append("  waited: \(wait.waitedMilliseconds) ms")
+    }
+    return lines.joined(separator: "\n")
+  }
+
+  private static func renderProfiles(_ payload: ProfilesCommandPayload) -> String {
+    guard !payload.profiles.isEmpty else { return "No Agent Profiles found." }
+    return payload.profiles.map { profile in
+      let enabled = profile.enabled ? "enabled".green : "disabled".dim
+      let availability: String
+      switch profile.availability.status {
+      case .available:
+        availability = "available".green
+      case .unavailable:
+        availability = "unavailable".yellow
+      case .unknown:
+        availability = "unknown".dim
+      }
+      let reason = profile.availability.reason.map { "  \($0.dim)" } ?? ""
+      return "\(profile.name.bold)  \(profile.runtime)  \(enabled)  \(availability)  \(profile.id.dim)\(reason)"
+    }.joined(separator: "\n")
+  }
+
+  private static func renderSkills(_ payload: SkillsCommandPayload) {
+    switch payload {
+    case .list(let list):
+      print(skillsListText(list))
+    case .install(let change):
+      print(skillsChangeText(change, removing: false))
+      renderSkillsNote(change)
+    case .uninstall(let change):
+      print(skillsChangeText(change, removing: true))
+      renderSkillsNote(change)
+    case .path(let path):
+      print(path.skill.path)
+    }
+  }
+
+  static func skillsListText(_ payload: SkillsListPayload) -> String {
+    guard !payload.skills.isEmpty else { return "No bundled skills found." }
+    return payload.skills.map { skill in
+      let audience =
+        skill.audience == .workflow
+        ? "[workflow — not installable]".yellow
+        : "[user]".dim
+      var lines = ["\(skill.id.bold)  \(skill.name)  \(audience)"]
+      for target in skill.targets {
+        let detected = target.detected ? "" : "  \("(target not detected)".dim)"
+        let destination = target.destination.map { "  \("→ \($0)".dim)" } ?? ""
+        lines.append(
+          "  \(target.id.padding(toLength: 7, withPad: " ", startingAt: 0))  "
+            + "\(skillsStatusLabel(target))  "
+            + "\(target.path.dim)\(destination)\(detected)"
+        )
+      }
+      return lines.joined(separator: "\n")
+    }.joined(separator: "\n\n")
+  }
+
+  static func skillsChangeText(_ payload: SkillsChangePayload, removing: Bool) -> String {
+    guard !payload.results.isEmpty else {
+      return removing ? "Nothing to remove." : "Nothing to install."
+    }
+    return payload.results.map { result in
+      let verb: String
+      switch (removing, result.before) {
+      case (true, .notInstalled): verb = skillsColumn("not installed").dim
+      case (true, _): verb = skillsColumn("removed").green
+      case (false, .installed): verb = skillsColumn("unchanged").dim
+      case (false, .broken): verb = skillsColumn("repaired").green
+      case (false, .installedDifferentSource): verb = skillsColumn("replaced").green
+      case (false, .notInstalled): verb = skillsColumn("installed").green
+      }
+      return "\(verb)  \(result.skill.bold) → \(result.target)  \(result.path.dim)"
+    }.joined(separator: "\n")
+  }
+
+  private static func renderSkillsNote(_ payload: SkillsChangePayload) {
+    guard let note = payload.note else { return }
+    FileHandle.standardError.write(Data("note: \(note)\n".utf8))
+  }
+
+  private static func skillsStatusLabel(_ target: SkillsCommandTargetStatus) -> String {
+    switch target.status {
+    case .installed: skillsColumn("installed").green
+    case .notInstalled: skillsColumn("not installed").dim
+    case .installedDifferentSource where target.destination != nil: skillsColumn("linked elsewhere").yellow
+    case .installedDifferentSource: skillsColumn("real file or directory").yellow
+    case .broken: skillsColumn("broken link").red
+    }
+  }
+
+  /// Pads before coloring so ANSI escapes do not skew column alignment.
+  private static func skillsColumn(_ text: String) -> String {
+    text.padding(toLength: 28, withPad: " ", startingAt: 0)
+  }
+
+  private static func renderAgentsRead(_ payload: AgentReadCommandPayload) {
+    if let data = agentReadResultOnlyData(payload) {
+      FileHandle.standardOutput.write(data)
+      return
+    }
+    print(agentReadSnapshotText(payload))
+  }
+
+  static func agentReadResultOnlyData(_ payload: AgentReadCommandPayload) -> Data? {
+    guard payload.outputMode == .resultOnly, let text = payload.result.text else { return nil }
+    return Data(text.utf8)
+  }
+
+  static func agentReadSnapshotText(_ payload: AgentReadCommandPayload) -> String {
+    var lines = [
+      "Agent: \(payload.agent.type)",
+      "Status: \(payload.agent.status.rawValue)",
+    ]
+    if let reason = payload.agent.detectionReason {
+      lines.append("Reason: \(reason)")
+    }
+    lines.append("Changed: \(payload.agent.lastChangedAt)")
+
+    let result = payload.result
+    if let error = result.error {
+      lines.append("Result: \(result.state.rawValue) (\(error.code))")
+    } else {
+      lines.append("Result: \(result.state.rawValue)")
+    }
+
+    if let blocker = payload.blocker {
+      lines.append("")
+      lines.append("## Blocker")
+      lines.append(blocker.text)
+    }
+    if let text = result.text {
+      lines.append("")
+      lines.append("## Latest result")
+      lines.append(text)
+    }
+    return lines.joined(separator: "\n")
+  }
+
   private static func agentStatusLabel(_ status: AgentsCommandStatus) -> String {
     switch status {
     case .blocked:
@@ -285,6 +603,53 @@ enum OutputRenderer {
       lines.append("  \("cwd:".dim) \(cwd)")
     }
     return lines.joined(separator: "\n")
+  }
+
+  private static func renderLifecycleWarnings(_ payload: LifecycleCommandPayload) {
+    guard let warnings = payload.warnings else { return }
+    for warning in warnings {
+      let line = "warning: [\(warning.code.rawValue)] \(warning.runtime): \(warning.message)\n"
+      FileHandle.standardError.write(Data(line.utf8))
+    }
+  }
+
+  private static func renderLifecycle(_ payload: LifecycleCommandPayload, command: String) -> String {
+    let wt = payload.target.worktree
+    let tab = payload.target.tab
+    let pane = payload.target.pane
+    let projectName = projectName(from: wt.path)
+    let verb = command == "create" ? "Created" : "Closed"
+
+    switch payload.resource {
+    case .tab:
+      var lines = [
+        "\(verb) tab \(projectName.cyan.bold)\(":".dim)\(wt.name) → \(tab.title.yellow)"
+          + "  \(tab.id.dim)",
+        "  \("pane:".dim) \(pane.title.green)  \(pane.id.dim)",
+      ]
+      if let launch = payload.launch {
+        lines.append("  \("profile:".dim) \(launch.profileName)  \("agent:".dim) \(launch.agent)")
+      }
+      if let dispatch = payload.dispatch {
+        lines.append("  \("dispatch:".dim) \(dispatch.id)")
+      }
+      return lines.joined(separator: "\n")
+    case .pane:
+      var lines = [
+        "\(verb) pane \(projectName.cyan.bold)\(":".dim)\(wt.name) → \(pane.title.green)"
+          + "  \(pane.id.dim)"
+      ]
+      if let anchor = payload.anchor, let direction = payload.direction {
+        lines.append("  \("anchor:".dim) \(anchor.pane.id.dim)  \("direction:".dim) \(direction.rawValue)")
+      }
+      if let launch = payload.launch {
+        lines.append("  \("profile:".dim) \(launch.profileName)  \("agent:".dim) \(launch.agent)")
+      }
+      if let dispatch = payload.dispatch {
+        lines.append("  \("dispatch:".dim) \(dispatch.id)")
+      }
+      return lines.joined(separator: "\n")
+    }
   }
 
   private static func renderHandoff(_ payload: HandoffCommandPayload) -> String {

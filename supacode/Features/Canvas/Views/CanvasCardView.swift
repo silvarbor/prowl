@@ -35,6 +35,10 @@ struct CanvasCardView: View {
   /// parent resolves it since CanvasCardView has no keybindings context).
   let expandHelp: String
   let canvasScale: CGFloat
+  /// Whether a terminal link is currently hovered while Command is held, so
+  /// the click must reach Ghostty even on non-focused cards (broadcast
+  /// followers) instead of falling through to the selection callbacks.
+  let linkActivationRequested: Bool
   let showsSelectionShield: Bool
   let onTap: () -> Void
   let onSelectionTap: () -> Void
@@ -269,7 +273,13 @@ struct CanvasCardView: View {
     // withAnimation (expand/restore, resize commit, arrange), so the terminal
     // refit stays in lock-step with the card's offset/scale. Without a wrapping
     // animation (live resize drag) the size tracks the gesture 1:1.
-    .allowsHitTesting(isFocused && !showsSelectionShield)
+    .allowsHitTesting(
+      CanvasInteractionPolicy.terminalHitTestingEnabled(
+        isFocused: isFocused,
+        linkActivationRequested: linkActivationRequested,
+        showsSelectionShield: showsSelectionShield
+      )
+    )
   }
 
   private var selectionShield: some View {

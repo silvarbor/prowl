@@ -30,6 +30,294 @@ public struct AgentsInput: Codable, Sendable {
   public init() {}
 }
 
+public enum DispatchCompletionOutcome: String, Codable, CaseIterable, Sendable {
+  case succeeded
+  case failed
+}
+
+public struct DispatchCompleteInput: Codable, Sendable {
+  nonisolated public static let environmentKey = "PROWL_DISPATCH_ID"
+  public static let maximumSummaryBytes = 32 * 1_024
+
+  /// The launch-scoped `PROWL_DISPATCH_ID` when the caller still carries one. The app
+  /// resolves the receipt from the caller pane's current pending dispatch, so this value
+  /// is compatibility diagnostics only: a process launched with an older id still
+  /// completes the pane's current record.
+  public let dispatchID: String?
+  public let outcome: DispatchCompletionOutcome
+  public let summary: String
+
+  enum CodingKeys: String, CodingKey {
+    case dispatchID = "dispatch_id"
+    case outcome
+    case summary
+  }
+
+  public init(dispatchID: String?, outcome: DispatchCompletionOutcome, summary: String) {
+    self.dispatchID = dispatchID
+    self.outcome = outcome
+    self.summary = summary
+  }
+
+  public var validationErrorMessage: String? {
+    dispatchID.flatMap {
+      CLIInputTextValidator.validateDispatchID($0, name: DispatchCompleteInput.environmentKey)
+    }
+      ?? CLIInputTextValidator.validate(
+        summary,
+        name: "--summary",
+        maximumBytes: Self.maximumSummaryBytes
+      )
+  }
+}
+
+/// `prowl agents dispatch <pane> --prompt -`: a new pending dispatch for an agent that
+/// already runs in an existing pane. The prompt reaches the runtime through the pane's
+/// input path as one bracketed paste followed by Enter, so newlines and tabs survive but
+/// every other control character would be stripped or reinterpreted before delivery.
+public struct DispatchInput: Codable, Sendable, Equatable {
+  public static let maximumPromptUTF8ByteCount = CreateLaunchInput.maximumPromptUTF8ByteCount
+
+  public let pane: String
+  public let prompt: String
+
+  public init(pane: String, prompt: String) {
+    self.pane = pane
+    self.prompt = prompt
+  }
+
+  public var validationErrorMessage: String? {
+    guard !pane.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      return "agents dispatch requires a pane handle (pN) or pane UUID."
+    }
+    guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      return "The dispatch prompt is empty."
+    }
+    guard prompt.utf8.count <= Self.maximumPromptUTF8ByteCount else {
+      return "The dispatch prompt exceeds the 256 KiB UTF-8 limit."
+    }
+    guard !prompt.unicodeScalars.contains(where: Self.isDisallowedScalar) else {
+      return "The dispatch prompt must not contain control characters other than newlines and tabs."
+    }
+    return nil
+  }
+
+  private static func isDisallowedScalar(_ scalar: Unicode.Scalar) -> Bool {
+    scalar != "\n" && scalar != "\t" && CharacterSet.controlCharacters.contains(scalar)
+  }
+}
+
+public struct DispatchAbandonInput: Codable, Sendable {
+  public static let maximumReasonBytes = 32 * 1_024
+
+  public let dispatchID: String
+  public let reason: String
+
+  enum CodingKeys: String, CodingKey {
+    case dispatchID = "dispatch_id"
+    case reason
+  }
+
+  public init(dispatchID: String, reason: String) {
+    self.dispatchID = dispatchID
+    self.reason = reason
+  }
+
+  public var validationErrorMessage: String? {
+    CLIInputTextValidator.validateDispatchID(dispatchID, name: "--dispatch")
+      ?? CLIInputTextValidator.validate(
+        reason,
+        name: "--reason",
+        maximumBytes: Self.maximumReasonBytes
+      )
+  }
+}
+
+public enum AgentWaitMode: String, Codable, Sendable {
+  case dispatch
+  case condition
+}
+
+public enum AgentWaitCondition: String, Codable, CaseIterable, Sendable {
+  case idle
+  case blocked
+  case changed
+  case exit
+}
+
+public enum AgentWaitMinimumConfidence: String, Codable, CaseIterable, Sendable {
+  case auto
+  case exact
+  case high
+  case heuristic
+}
+
+public struct AgentWaitInput: Codable, Sendable {
+  public static let defaultTimeoutSeconds = 600
+  public static let maximumTimeoutSeconds = 600
+  public static let maximumScreenLines = 200
+
+  public let mode: AgentWaitMode
+  public let dispatchID: String?
+  public let pane: String?
+  public let condition: AgentWaitCondition?
+  public let timeoutSeconds: Int
+  public let minimumConfidence: AgentWaitMinimumConfidence?
+  public let includeScreenLines: Int?
+
+  enum CodingKeys: String, CodingKey {
+    case mode
+    case dispatchID = "dispatch_id"
+    case pane
+    case condition
+    case timeoutSeconds = "timeout_seconds"
+    case minimumConfidence = "minimum_confidence"
+    case includeScreenLines = "include_screen_lines"
+  }
+
+  public init(
+    mode: AgentWaitMode,
+    dispatchID: String? = nil,
+    pane: String? = nil,
+    condition: AgentWaitCondition? = nil,
+    timeoutSeconds: Int = Self.defaultTimeoutSeconds,
+    minimumConfidence: AgentWaitMinimumConfidence? = nil,
+    includeScreenLines: Int? = nil
+  ) {
+    self.mode = mode
+    self.dispatchID = dispatchID
+    self.pane = pane
+    self.condition = condition
+    self.timeoutSeconds = timeoutSeconds
+    self.minimumConfidence = minimumConfidence
+    self.includeScreenLines = includeScreenLines
+  }
+}
+
+private enum CLIInputTextValidator {
+  static func validateDispatchID(_ value: String, name: String) -> String? {
+    validate(value, name: name, maximumBytes: 256)
+  }
+
+  static func validate(_ value: String, name: String, maximumBytes: Int) -> String? {
+    guard !value.isEmpty else { return "\(name) must not be empty." }
+    guard value.utf8.count <= maximumBytes else {
+      return "\(name) must be at most \(maximumBytes) UTF-8 bytes."
+    }
+    guard !value.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
+      return "\(name) must not contain control characters."
+    }
+    return nil
+  }
+}
+
+nonisolated public enum AgentSignalEvent: String, Codable, CaseIterable, Hashable, Sendable {
+  case turnEnded = "turn-ended"
+  case needsInput = "needs-input"
+  case sessionStart = "session-start"
+  case sessionEnd = "session-end"
+  case progress
+}
+
+nonisolated public struct AgentSignalInput: Codable, Sendable {
+  public static let maximumSessionIDBytes = 256
+  public static let maximumOriginBytes = 256
+  public static let maximumDetailBytes = 32 * 1_024
+
+  public let event: AgentSignalEvent
+  public let progress: Int?
+  public let origin: String?
+  public let sessionID: String?
+  public let detail: String?
+
+  enum CodingKeys: String, CodingKey {
+    case event
+    case progress
+    case origin
+    case sessionID = "session_id"
+    case detail
+  }
+
+  public init(
+    event: AgentSignalEvent,
+    progress: Int? = nil,
+    origin: String? = nil,
+    sessionID: String? = nil,
+    detail: String? = nil
+  ) {
+    self.event = event
+    self.progress = progress
+    self.origin = origin
+    self.sessionID = sessionID
+    self.detail = detail
+  }
+
+  public var validationErrorMessage: String? {
+    if event != .progress, progress != nil {
+      return "--progress is only valid with the 'progress' event."
+    }
+    if let progress, !(0...100).contains(progress) {
+      return "--progress must be between 0 and 100."
+    }
+    if let message = Self.validateText(
+      sessionID,
+      name: "--session",
+      maximumBytes: Self.maximumSessionIDBytes
+    ) {
+      return message
+    }
+    if let message = Self.validateText(
+      origin,
+      name: "--origin",
+      maximumBytes: Self.maximumOriginBytes
+    ) {
+      return message
+    }
+    return Self.validateText(
+      detail,
+      name: "--detail",
+      maximumBytes: Self.maximumDetailBytes
+    )
+  }
+
+  private static func validateText(_ value: String?, name: String, maximumBytes: Int) -> String? {
+    guard let value else { return nil }
+    guard !value.isEmpty else { return "\(name) must not be empty." }
+    guard value.utf8.count <= maximumBytes else {
+      return "\(name) must be at most \(maximumBytes) UTF-8 bytes."
+    }
+    guard !value.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
+      return "\(name) must not contain control characters."
+    }
+    return nil
+  }
+}
+
+public struct ProfilesInput: Codable, Sendable {
+  public init() {}
+}
+
+public struct AgentReadInput: Codable, Sendable {
+  public static let defaultMaxBytes = 1_024 * 1_024
+  public static let maximumMaxBytes = 4 * 1_024 * 1_024
+
+  public let pane: String
+  public let maxBytes: Int
+  public let resultOnly: Bool
+
+  enum CodingKeys: String, CodingKey {
+    case pane
+    case maxBytes = "max_bytes"
+    case resultOnly = "result_only"
+  }
+
+  public init(pane: String, maxBytes: Int = Self.defaultMaxBytes, resultOnly: Bool = false) {
+    self.pane = pane
+    self.maxBytes = maxBytes
+    self.resultOnly = resultOnly
+  }
+}
+
 public struct FocusInput: Codable, Sendable {
   public let selector: TargetSelector
 
@@ -179,6 +467,86 @@ public struct ReadInput: Codable, Sendable {
   }
 }
 
+public enum LifecycleResource: String, Codable, Sendable, Equatable {
+  case tab
+  case pane
+}
+
+public enum CreatePaneDirection: String, Codable, CaseIterable, Sendable, Equatable {
+  case right
+  case left
+  case upward = "up"
+  case down
+}
+
+public struct CreateLaunchInput: Codable, Sendable, Equatable {
+  /// Keeps the surface-shell spawn and prompted child exec comfortably below
+  /// macOS ARG_MAX, including the inherited environment and configured argv.
+  public static let maximumPromptUTF8ByteCount = 256 * 1_024
+
+  public let profile: String
+  public let prompt: String?
+
+  public init(profile: String, prompt: String? = nil) {
+    self.profile = profile
+    self.prompt = prompt
+  }
+}
+
+public struct CreateInput: Codable, Sendable {
+  public let resource: LifecycleResource
+  public let selector: TargetSelector
+  public let path: String?
+  public let direction: CreatePaneDirection?
+  public let launch: CreateLaunchInput?
+  public let background: Bool
+
+  enum CodingKeys: String, CodingKey {
+    case resource
+    case selector
+    case path
+    case direction
+    case launch
+    case background
+  }
+
+  public init(
+    resource: LifecycleResource,
+    selector: TargetSelector,
+    path: String? = nil,
+    direction: CreatePaneDirection? = nil,
+    launch: CreateLaunchInput? = nil,
+    background: Bool = false
+  ) {
+    self.resource = resource
+    self.selector = selector
+    self.path = path
+    self.direction = direction
+    self.launch = launch
+    self.background = background
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    resource = try container.decode(LifecycleResource.self, forKey: .resource)
+    selector = try container.decode(TargetSelector.self, forKey: .selector)
+    path = try container.decodeIfPresent(String.self, forKey: .path)
+    direction = try container.decodeIfPresent(CreatePaneDirection.self, forKey: .direction)
+    launch = try container.decodeIfPresent(CreateLaunchInput.self, forKey: .launch)
+    background = try container.decodeIfPresent(Bool.self, forKey: .background) ?? false
+  }
+}
+
+public struct CloseInput: Codable, Sendable {
+  public let selector: TargetSelector
+  public let force: Bool
+
+  public init(selector: TargetSelector, force: Bool = false) {
+    self.selector = selector
+    self.force = force
+  }
+}
+
 public enum TabAction: String, Codable, Sendable {
   case create
   case close
@@ -315,5 +683,70 @@ public struct PaneInput: Codable, Sendable {
     self.action = try container.decode(PaneAction.self, forKey: .action)
     self.selector = try container.decode(TargetSelector.self, forKey: .selector)
     self.force = try container.decodeIfPresent(Bool.self, forKey: .force) ?? false
+  }
+}
+
+// MARK: - Workflow
+
+nonisolated public enum WorkflowInputAction: String, Codable, Sendable {
+  case list
+  case run
+  case status
+  case done
+  case cancel
+}
+
+/// The wire request for the workflow command family (docs-ai 063 B1/B3). Fields are
+/// action-specific; the app handler ignores the ones that do not belong to `action`.
+nonisolated public struct WorkflowInput: Codable, Sendable {
+  public let action: WorkflowInputAction
+  /// `list`: the worktree whose repo source is searched. `run`: the source pane (a workflow with a
+  /// `current` role) or worktree. `.none` = the caller's pane, then the focused worktree (`list`).
+  public let target: TargetSelector
+  /// `run`: workflow id or unique name.
+  public let workflow: String?
+  /// `run`: `<role>=<binding>` overrides (dsl-spec §9).
+  public let roleBindings: [String]
+  /// `run`: `<name>=<value>` inputs.
+  public let inputValues: [String]
+  /// `run`: step ids skipped at start.
+  public let skippedSteps: [String]
+  /// `status` / `cancel`: the run; `done`: the manual target together with `stepID`.
+  public let runID: String?
+  public let stepID: String?
+  /// `done`: the delivered output body (already read by the CLI).
+  public let body: String?
+  public let verdict: String?
+  /// `done`: `--token` or `$PROWL_WORKFLOW_TOKEN`; correlation only, never authentication.
+  public let token: String?
+  /// `done`: deliver to the explicit target even when the caller pane belongs to another step.
+  public let force: Bool
+
+  public init(
+    action: WorkflowInputAction = .list,
+    target: TargetSelector = .none,
+    workflow: String? = nil,
+    roleBindings: [String] = [],
+    inputValues: [String] = [],
+    skippedSteps: [String] = [],
+    runID: String? = nil,
+    stepID: String? = nil,
+    body: String? = nil,
+    verdict: String? = nil,
+    token: String? = nil,
+    force: Bool = false
+  ) {
+    self.action = action
+    self.target = target
+    self.workflow = workflow
+    self.roleBindings = roleBindings
+    self.inputValues = inputValues
+    self.skippedSteps = skippedSteps
+    self.runID = runID
+    self.stepID = stepID
+    self.body = body
+    self.verdict = verdict
+    self.token = token
+    self.force = force
   }
 }

@@ -55,6 +55,44 @@ final class TargetResolver {
     }
   }
 
+  /// Resolves an explicit pane-or-tab lifecycle target without allowing worktree fallback.
+  func resolveLifecycleTarget(_ selector: TargetSelector) -> Result<LifecycleResolvedTarget, TargetResolverError> {
+    let snapshot = snapshotProvider()
+    switch selector {
+    case .pane(let value):
+      return resolvePane(value, snapshot).map {
+        LifecycleResolvedTarget(resource: .pane, target: TabResolvedTarget(from: $0))
+      }
+    case .tab(let value):
+      return resolveTab(value, snapshot).map {
+        LifecycleResolvedTarget(resource: .tab, target: TabResolvedTarget(from: $0))
+      }
+    case .auto(let value):
+      if isPrefixedShortHandle(value, prefix: "p") {
+        return resolvePane(value, snapshot).map {
+          LifecycleResolvedTarget(resource: .pane, target: TabResolvedTarget(from: $0))
+        }
+      }
+      if isPrefixedShortHandle(value, prefix: "t") {
+        return resolveTab(value, snapshot).map {
+          LifecycleResolvedTarget(resource: .tab, target: TabResolvedTarget(from: $0))
+        }
+      }
+      guard UUID(uuidString: value) != nil else {
+        return .failure(.notFound("Lifecycle target '\(value)' must be a pane/tab UUID or prefixed handle."))
+      }
+      if case .success(let target) = resolvePane(value, snapshot) {
+        return .success(LifecycleResolvedTarget(resource: .pane, target: TabResolvedTarget(from: target)))
+      }
+      if case .success(let target) = resolveTab(value, snapshot) {
+        return .success(LifecycleResolvedTarget(resource: .tab, target: TabResolvedTarget(from: target)))
+      }
+      return .failure(.notFound("Pane or tab '\(value)' not found."))
+    case .none, .worktree:
+      return .failure(.notFound("Lifecycle commands require an explicit pane or tab target."))
+    }
+  }
+
   // MARK: - .none: focused worktree → selected tab → focused pane
 
   private func resolveNone(_ snapshot: TargetResolutionSnapshot) -> Result<ResolvedTarget, TargetResolverError> {
@@ -143,12 +181,19 @@ final class TargetResolver {
     return .failure(.notFound("Pane '\(value)' not found."))
   }
 
-  // MARK: - .auto: try pane → tab → worktree
+  // MARK: - .auto: typed handle → UUID → worktree
 
   private func resolveAuto(
     _ value: String,
     _ snapshot: TargetResolutionSnapshot
   ) -> Result<ResolvedTarget, TargetResolverError> {
+    if isPrefixedShortHandle(value, prefix: "p") {
+      return resolvePane(value, snapshot)
+    }
+    if isPrefixedShortHandle(value, prefix: "t") {
+      return resolveTab(value, snapshot)
+    }
+
     // Try as pane UUID first (most specific)
     if UUID(uuidString: value) != nil {
       if case .success(let target) = resolvePane(value, snapshot) {
@@ -179,6 +224,10 @@ final class TargetResolver {
       return UUID(uuidString: selector) == pane.id
     }
     return pane.handle == handle
+  }
+
+  private func isPrefixedShortHandle(_ selector: String, prefix: Character) -> Bool {
+    selector.lowercased().first == prefix && shortHandle(in: selector, prefix: prefix) != nil
   }
 
   private func shortHandle(in selector: String, prefix: Character) -> Int? {

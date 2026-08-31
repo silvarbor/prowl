@@ -8,6 +8,19 @@ enum CancelID {
   static let periodicRefresh = "app.periodicRefresh"
 }
 
+/// Every directory a workflow run directory can live under (docs-ai 063 B3): each worktree, and
+/// the root of a plain repository, which the CLI resolves as its own worktree.
+func workflowRunRoots(of repositories: [Repository]) -> [String] {
+  var roots: [String] = []
+  for repository in repositories {
+    if repository.capabilities.supportsRunnableFolderActions, !repository.capabilities.supportsWorktrees {
+      roots.append(repository.rootURL.path(percentEncoded: false))
+    }
+    roots += repository.worktrees.map { $0.workingDirectory.path(percentEncoded: false) }
+  }
+  return roots
+}
+
 func makeTerminalRestorableWorktrees(from repositories: [Repository]) -> [Worktree] {
   var worktrees: [Worktree] = []
   worktrees.reserveCapacity(repositories.reduce(0) { $0 + max(1, $1.worktrees.count) })

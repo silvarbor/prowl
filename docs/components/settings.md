@@ -3,7 +3,7 @@
 > The Settings window (`⌘,`): what each tab controls. For the exhaustive
 > field-by-field list, see [`reference/settings-fields.md`](../reference/settings-fields.md).
 
-**Keywords:** settings, preferences, ⌘comma, general, notifications, shortcuts, worktree, updates, advanced, github, repo settings, appearance
+**Keywords:** settings, preferences, ⌘comma, general, notifications, shortcuts, worktree, updates, advanced, github, agents, agent profiles, cli & skills, command line tool, cli, agent skills, skills install, repo settings, appearance
 
 **Related:** [reference/settings-fields](../reference/settings-fields.md) · [custom-actions](custom-actions.md) · [updates](updates.md) · [notifications](notifications.md)
 
@@ -16,10 +16,10 @@ Settings brings the existing Settings window forward rather than creating
 another one. `⌘W` closes it.
 
 Most sections are roots in the detail pane. A section can drill in without
-losing the sidebar; for example, **Agents** → a profile pushes its editor and
-macOS shows the standard Back control beside the editor title. Back returns to
-the Agents list, while selecting another sidebar item leaves the drill-in and
-opens that section's root.
+losing the sidebar; for example, **Agents → Profiles** → a profile pushes its
+editor and macOS shows the standard Back control beside the editor title. Back
+returns to Profiles, while selecting another sidebar item leaves the drill-in
+and opens that section's root.
 
 ## Sections
 
@@ -30,10 +30,11 @@ opens that section's root.
 | **Shortcuts** | Remap app keyboard shortcuts; view defaults; resolve conflicts. → [keyboard-shortcuts](../reference/keyboard-shortcuts.md) |
 | **Worktree** | Worktree creation/deletion defaults: prompt on create, fetch before create, base directory, copy ignored/untracked files, automatic local-branch cleanup, merged-worktree action, archived auto-delete period. |
 | **Updates** | Auto-check toggle, "Check for Updates Now". → [updates](updates.md) |
-| **Advanced** | Analytics, crash reports, restore terminal layout on launch (experimental) + clear saved layout, and the **Install Command Line Tool** (`prowl` CLI) action. |
 | **GitHub** | Enable GitHub integration (uses the `gh` CLI). → [github-pull-requests](github-pull-requests.md) |
 | **Commands** | Global Custom Commands. Enabled commands appear in the window toolbar; each repo can independently hide a Global command. → [custom-actions](custom-actions.md) |
-| **Agents** | Agent Profiles: named launch presets for Claude Code/Codex (model, effort, execution mode, tab/split placement, extra arguments, opt-in dedicated home for a separate account) with a live launch preview. List order is the recommendation fallback. → [agent-profiles](agent-profiles.md) |
+| **Advanced** | Analytics, crash reports, restore terminal layout on launch (experimental) + clear saved layout. |
+| **Agents → Profiles** | Named launch presets for supported agent runtimes (model, effort, execution mode, tab/split placement, extra arguments, opt-in dedicated home for a separate account) with a live launch preview. List order is the recommendation fallback. → [agent-profiles](agent-profiles.md) |
+| **Agents → CLI & Skills** | Install/status for the bundled `prowl` CLI, the local socket path it uses to reach the app, and the **Agent Skills** section that links the bundled skills into your agents' skill folders. → [cli](cli.md) |
 | **Repositories / Repo Settings** | Per-repository: setup/archive/run scripts, **Custom Commands**, Global-command visibility, **Default Agent Profile**, default base ref & directory, copy-files overrides, open-with app, custom title, icon & color, PR merge strategy, line-diff & PR-state fetching. Reached from the sidebar context menu → "Repo Settings". → [custom-actions](custom-actions.md), [repositories-and-worktrees](repositories-and-worktrees.md) |
 
 ## Where settings live on disk
@@ -48,9 +49,46 @@ Legacy `~/.supacode` is migrated to `~/.prowl` on first launch.
 
 ## Install the CLI from here
 
-**Advanced → Install Command Line Tool** symlinks `prowl` into `/usr/local/bin`
+**Agents → CLI & Skills → Install** symlinks `prowl` into `/usr/local/bin`
 (prompting for admin rights if needed). Also available via Command Palette →
 "Install Command Line Tool". See [cli](cli.md).
+
+## Agent Skills
+
+**Agents → CLI & Skills → Agent Skills** lists the user-installable skills bundled in
+the app (`Prowl.app/Contents/Resources/skills/`, today `prowl-cli`) and links them into
+your agents' skill folders so every agent reads the version that matches the installed
+app. It is the GUI for [`prowl skills`](cli.md#prowl-skills) in user scope and shows the
+same status as `prowl skills list`.
+
+- **Rows** — one per bundled `user` skill: name, a short summary (the skill's
+  `metadata.prowl-summary`; the agent-facing `description` is shown only when a skill has no
+  summary), and **Reveal** (shows the bundled skill folder in Finder). Workflow-only skills are
+  not listed.
+- **Target lines** — one per *detected* target under each skill: `Claude Code`
+  (`~/.claude/skills`), `Codex` (`~/.codex/skills`), and `Shared agents directory`
+  (`~/.agents/skills`), each showing the link's folder (`~/.claude/skills/prowl-cli`), its
+  status, and one action. A target is detected when its parent folder (`~/.claude`, `~/.codex`,
+  `~/.agents`) exists. With no detected target the section says so and points at
+  `prowl skills install --target <claude|codex|agents>`, which creates the folder.
+- **Statuses and actions** — one explicit action per skill × target link:
+
+  | Status | Meaning | Button |
+  |---|---|---|
+  | Installed | Symlink → this app's bundled skill | **Remove** (deletes the link only) |
+  | Not installed | Nothing in the slot | **Install** (creates the skills folder if needed) |
+  | Linked elsewhere `→ path` | Symlink to another Prowl build (for example a Debug build) | **Replace** |
+  | Broken link `→ path` | Dangling symlink — the app moved or was removed | **Repair** |
+  | Real file or directory | Something that is not a symlink occupies the slot | none — Prowl never deletes it; remove it manually |
+
+- **Aliased targets** — if `~/.claude/skills` and `~/.codex/skills` are symlinks to one
+  synced folder, both lines describe the same link: installing or removing through one
+  updates the other immediately.
+- Results show as a toast; a failure (for example a real directory in the way) also shows
+  an alert. Nothing is auto-linked after an update: a newly bundled skill simply appears
+  as Not installed. Project-scope links are CLI-only (`prowl skills install --scope project`).
+- A Debug build that was not built with `make build-app` has no staged skills; the section
+  then reports that the bundled skills are unavailable.
 
 ## Gotchas for agents
 

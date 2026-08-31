@@ -30,13 +30,14 @@ enum TerminalTabBarColors {
 
   /// Resolves to `dark` under Dark Aqua and `light` otherwise, wrapped in a
   /// dynamic `NSColor` so callers stay appearance-agnostic.
-  private static func adaptiveFill(
-    dark: @escaping () -> NSColor,
-    light: @escaping () -> NSColor
+  private nonisolated static func adaptiveFill(
+    dark: @escaping @MainActor () -> NSColor,
+    light: @escaping @MainActor () -> NSColor
   ) -> Color {
-    Color(
+    let resolver = TerminalTabBarAdaptiveFillResolver(dark: dark, light: light)
+    return Color(
       nsColor: NSColor(name: nil) { appearance in
-        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark() : light()
+        resolver.resolve(for: appearance)
       }
     )
   }
@@ -59,5 +60,50 @@ enum TerminalTabBarColors {
 
   static var dirtyIndicator: Color {
     Color(nsColor: .labelColor).opacity(0.6)
+  }
+}
+
+// `NSAppearance` is read-only here and lives only through the synchronous main-queue handoff.
+private nonisolated struct TerminalTabBarAppearanceBox: @unchecked Sendable {
+  let appearance: NSAppearance
+}
+
+// The stored closures are immutable and invoked only from `resolvedColor(for:)` on the main actor.
+private nonisolated final class TerminalTabBarAdaptiveFillResolver: @unchecked Sendable {
+  private let dark: @MainActor () -> NSColor
+  private let light: @MainActor () -> NSColor
+
+  init(
+    dark: @escaping @MainActor () -> NSColor,
+    light: @escaping @MainActor () -> NSColor
+  ) {
+    self.dark = dark
+    self.light = light
+  }
+
+  func resolve(for appearance: NSAppearance) -> NSColor {
+    let appearanceBox = TerminalTabBarAppearanceBox(appearance: appearance)
+    if Thread.isMainThread {
+      return MainActor.assumeIsolated {
+        resolvedColor(for: appearanceBox.appearance)
+      }
+    }
+    return DispatchQueue.main.sync {
+      MainActor.assumeIsolated {
+        resolvedColor(for: appearanceBox.appearance)
+      }
+    }
+  }
+
+  @MainActor
+  private func resolvedColor(for appearance: NSAppearance) -> NSColor {
+    var color: NSColor?
+    appearance.performAsCurrentDrawingAppearance {
+      color = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark() : light()
+    }
+    guard let color else {
+      preconditionFailure("NSAppearance did not resolve a terminal tab bar color")
+    }
+    return color
   }
 }

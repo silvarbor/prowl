@@ -3,7 +3,7 @@ import Foundation
 import Sharing
 import SwiftUI
 
-/// Settings → Agents → drill-in editor for one profile (docs-ai 053). Owns
+/// Settings → Agents → Profiles → drill-in editor for one profile (docs-ai 053). Owns
 /// every profile-scoped mutation gate (unrestricted confirmation, removal
 /// confirmation) and its own alert: the presentation state lives inside the
 /// pushed page's state, so an alert can only ever fire while the page that

@@ -2,13 +2,27 @@ import SwiftUI
 
 struct ToolbarStatusView: View {
   let toast: RepositoriesFeature.StatusToast?
+  let workflow: WorkflowStatusCenterPresentation
   let pullRequest: GithubPullRequest?
   let codeHost: CodeHost
+  let onWorkflowIntent: (WorkflowRunPanelIntent) -> Void
 
   var body: some View {
-    Group {
-      switch toast {
-      case .inProgress(let message):
+    let selection = ToolbarStatusSelection(
+      toast: toast,
+      workflow: workflow,
+      pullRequest: pullRequest
+    )
+    ZStack {
+      // Keep this mounted across the last-run transition so its local popover state observes the
+      // empty run list and resets before a later run appears.
+      WorkflowStatusPopoverButton(
+        presentation: workflow,
+        isToolbarVisible: selection.isWorkflow,
+        onIntent: onWorkflowIntent
+      )
+      switch selection {
+      case .toast(.inProgress(let message)):
         HStack(spacing: 6) {
           ProgressView()
             .controlSize(.small)
@@ -17,7 +31,7 @@ struct ToolbarStatusView: View {
             .foregroundStyle(.secondary)
         }
         .transition(.opacity)
-      case .success(let message):
+      case .toast(.success(let message)):
         HStack(spacing: 6) {
           Image(systemName: "checkmark.circle.fill")
             .foregroundStyle(.green)
@@ -27,7 +41,7 @@ struct ToolbarStatusView: View {
             .foregroundStyle(.secondary)
         }
         .transition(.opacity)
-      case .warning(let message):
+      case .toast(.warning(let message)):
         HStack(spacing: 6) {
           Image(systemName: "exclamationmark.triangle.fill")
             .foregroundStyle(.orange)
@@ -37,17 +51,47 @@ struct ToolbarStatusView: View {
             .foregroundStyle(.secondary)
         }
         .transition(.opacity)
-      case nil:
-        if let model = PullRequestStatusModel(pullRequest: pullRequest) {
-          PullRequestStatusButton(model: model, codeHost: codeHost)
-            .transition(.opacity)
-        } else {
-          MotivationalStatusView()
-            .transition(.opacity)
-        }
+      case .workflow:
+        EmptyView()
+      case .pullRequest(let model):
+        PullRequestStatusButton(model: model, codeHost: codeHost)
+          .transition(.opacity)
+      case .motivational:
+        MotivationalStatusView()
+          .transition(.opacity)
       }
     }
     .animation(.easeInOut(duration: 0.2), value: toast)
+    .animation(.easeInOut(duration: 0.2), value: workflow.runs.map(\.id))
+  }
+}
+
+@MainActor
+enum ToolbarStatusSelection: Equatable {
+  case toast(RepositoriesFeature.StatusToast)
+  case workflow(WorkflowStatusCenterPresentation)
+  case pullRequest(PullRequestStatusModel)
+  case motivational
+
+  var isWorkflow: Bool {
+    if case .workflow = self { return true }
+    return false
+  }
+
+  init(
+    toast: RepositoriesFeature.StatusToast?,
+    workflow: WorkflowStatusCenterPresentation,
+    pullRequest: GithubPullRequest?
+  ) {
+    if let toast {
+      self = .toast(toast)
+    } else if !workflow.runs.isEmpty {
+      self = .workflow(workflow)
+    } else if let pullRequest = PullRequestStatusModel(pullRequest: pullRequest) {
+      self = .pullRequest(pullRequest)
+    } else {
+      self = .motivational
+    }
   }
 }
 

@@ -10,7 +10,7 @@ public struct TabCommandPayload: Codable, Sendable, Equatable {
   }
 }
 
-public struct TabTarget: Codable, Sendable, Equatable {
+nonisolated public struct TabTarget: Codable, Sendable, Equatable {
   public let worktree: TabTargetWorktree
   public let tab: TabTargetTab
   public let pane: TabTargetPane
@@ -22,7 +22,7 @@ public struct TabTarget: Codable, Sendable, Equatable {
   }
 }
 
-public struct TabTargetWorktree: Codable, Sendable, Equatable {
+nonisolated public struct TabTargetWorktree: Codable, Sendable, Equatable {
   public let id: String
   public let name: String
   public let path: String
@@ -46,7 +46,7 @@ public struct TabTargetWorktree: Codable, Sendable, Equatable {
   }
 }
 
-public struct TabTargetTab: Codable, Sendable, Equatable {
+nonisolated public struct TabTargetTab: Codable, Sendable, Equatable {
   public let id: String
   public let title: String
   public let selected: Bool
@@ -58,7 +58,7 @@ public struct TabTargetTab: Codable, Sendable, Equatable {
   }
 }
 
-public struct TabTargetPane: Codable, Sendable, Equatable {
+nonisolated public struct TabTargetPane: Codable, Sendable, Equatable {
   public let id: String
   public let title: String
   public let cwd: String?

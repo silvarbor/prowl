@@ -16,16 +16,19 @@ This file defines the **JSON output contract** for:
 
 ## Supported targeting
 
-- `--worktree <id|name|path>`
-- `--tab <id>`
-- `--pane <id>`
-- no selector, meaning current focused pane
+`send` uses the shared generic target grammar in [targeting.md](targeting.md),
+including `pN` / `tN` in `--target` and target-first positional forms. With one
+positional argument, `send p12` remains text for the focused pane; target-first
+send requires `send p12 'text'`.
 
 ## Supported input forms
 
 - positional text argument
 - stdin text
-- `--no-enter`
+- `--no-enter`, `--no-wait`, `--capture`, and `--timeout <1...300>`
+
+`--capture` is shipped behavior. It requires shell integration, sends Enter, and
+cannot combine with `--no-wait` or `--no-enter`.
 
 ## Wait behavior
 
@@ -42,11 +45,11 @@ By default, `send` waits for the delivered command to finish before returning. T
 - `"argv"`
   - means the payload came from the positional text argument of `prowl send`
   - typical trigger: `prowl send "echo hello"`
-  - planned use: short, explicit, human-authored inline sends
+  - use for short, explicit, human-authored inline sends
 - `"stdin"`
   - means the payload came from process stdin, usually via a pipe or redirection
   - typical trigger: `printf 'echo hello\n' | prowl send`
-  - planned use: multiline text, generated text, file/pipe input, or payloads you do not want to expose inline in shell history
+  - use for multiline text, generated text, file/pipe input, or payloads you do not want to expose inline in shell history
 
 ## Success payload
 
@@ -176,6 +179,7 @@ By default, `send` waits for the delivered command to finish before returning. T
 - `EMPTY_INPUT`
 - `SEND_FAILED`
 - `WAIT_TIMEOUT`
+- `CAPTURE_UNSUPPORTED`
 
 ## Notes
 
@@ -184,7 +188,9 @@ By default, `send` waits for the delivered command to finish before returning. T
 - A future implementation may add optional debug echo flags, but v1 default JSON must stay redaction-friendly.
 - Wait behavior depends on shell integration (OSC 133). Without it, `onCommandFinished` never fires and the wait will time out. The `WAIT_TIMEOUT` error message should hint at this possible cause.
 - `--no-wait` combined with `--no-enter` is the purest "paste text" mode — no Enter, no waiting.
-- A future `--capture` flag may return the command's output text alongside `wait`, pending upstream support for reading semantic zone data via the Ghostty C API.
+- `--capture` returns `capture` with `text`, `line_count`, `source: "screen_diff"`,
+  and `truncated`; it is omitted when capture was not requested. Capture requires
+  shell integration and fails with `CAPTURE_UNSUPPORTED` when unavailable.
 
 ## Example: stdin + `--no-enter`
 

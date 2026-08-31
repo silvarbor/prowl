@@ -15,7 +15,7 @@ import Sharing
 import SwiftUI
 
 @MainActor
-private final class SupacodeAppStoreBox {
+final class SupacodeAppStoreBox {
   weak var store: StoreOf<AppFeature>?
 }
 
@@ -198,11 +198,13 @@ struct SupacodeApp: App {
       runtime: runtime,
       preferredFontSize: initialSettings.terminalFontSize
     )
+    terminalManager.startAgentHookRuntimeMaintenance()
     _terminalManager = State(initialValue: terminalManager)
     let worktreeInfoWatcher = WorktreeInfoWatcherManager()
     _worktreeInfoWatcher = State(initialValue: worktreeInfoWatcher)
     let storeBox = SupacodeAppStoreBox()
     let handoffRequestRegistry = HandoffRequestRegistry()
+    let workflowRuntime = Self.makeWorkflowRuntime(terminalManager: terminalManager, storeBox: storeBox)
 
     let coordinator = Self.makePullRequestRefreshCoordinator(storeBox: storeBox)
     _pullRequestRefreshCoordinator = State(initialValue: coordinator)
@@ -241,6 +243,7 @@ struct SupacodeApp: App {
           handoffRequestRegistry.supersede(requestID)
         }
       )
+      workflowRuntime.install(into: &values)
       values.outgoingChangesClient = Self.makeOutgoingChangesClient(storeBox: storeBox)
 
     }
@@ -251,7 +254,9 @@ struct SupacodeApp: App {
     let cliServer = Self.makeCLISocketServer(
       appStore: appStore,
       terminalManager: terminalManager,
-      handoffRequestRegistry: handoffRequestRegistry
+      handoffRequestRegistry: handoffRequestRegistry,
+      workflowCoordinatorBox: workflowRuntime.coordinatorBox,
+      workflowReservations: workflowRuntime.reservations
     )
 
     _cliSocketServer = State(initialValue: cliServer)
@@ -280,8 +285,8 @@ struct SupacodeApp: App {
     storeBox: SupacodeAppStoreBox
   ) -> OutgoingChangesClient {
     .live(
-      pullRequestInfo: { worktreeID in
-        storeBox.store?.withState { $0.repositories.worktreeInfo(for: worktreeID)?.pullRequest } ?? nil
+      pullRequestInfo: { targetID in
+        storeBox.store?.withState { $0.repositories.pullRequest(for: targetID) } ?? nil
       }
     )
   }
@@ -352,8 +357,19 @@ struct SupacodeApp: App {
       createTabInDirectory: { worktree, directory in
         terminalManager.createTabInDirectory(worktree, directory: directory)
       },
+      launchAgentProfile: { worktree, request in
+        switch await terminalManager.prepareAgentProfileLaunch(request, in: worktree) {
+        case .success(let preparation):
+          terminalManager.launchPreparedAgentProfile(preparation, in: worktree)
+        case .failure(let error):
+          .failure(error)
+        }
+      },
       events: {
         terminalManager.eventStream()
+      },
+      observeAgentState: { surfaceID in
+        terminalManager.observeAgentState(surfaceID: surfaceID)
       },
       canvasFocusedWorktreeID: {
         terminalManager.canvasFocusedWorktreeID
@@ -514,7 +530,7 @@ struct SupacodeApp: App {
     )
   }
 
-  private static func makeTargetResolver(
+  static func makeTargetResolver(
     appStore: StoreOf<AppFeature>,
     terminalManager: WorktreeTerminalManager
   ) -> TargetResolver {
@@ -550,11 +566,131 @@ struct SupacodeApp: App {
     }
   }
 
-  // swiftlint:disable:next function_body_length
+  private static func makeAgentReadRuntimeSnapshot(
+    pane: String,
+    appStore: StoreOf<AppFeature>,
+    terminalManager: WorktreeTerminalManager
+  ) async -> Result<AgentReadRuntimeSnapshot, AgentReadSnapshotError> {
+    let resolver = makeTargetResolver(appStore: appStore, terminalManager: terminalManager)
+    let resolved: ResolvedTarget
+    switch resolver.resolve(.pane(pane)) {
+    case .success(let target):
+      resolved = target
+    case .failure(let error):
+      let message =
+        switch error {
+        case .notFound(let message), .notUnique(let message): message
+        }
+      return .failure(.targetNotFound(message))
+    }
+
+    guard let state = terminalManager.stateIfExists(for: resolved.worktreeID),
+      let surface = state.surfaceView(for: resolved.paneID),
+      let tabID = state.tabId(containing: resolved.paneID)
+    else {
+      return .failure(.targetNotFound("Pane '\(pane)' is no longer available."))
+    }
+
+    _ = await state.detectAgentState(for: surface, tabId: tabID)
+    guard let agentState = state.surfaceAgentStates[resolved.paneID],
+      let detectedAgent = agentState.detectedAgent
+    else {
+      return .failure(.agentNotFound("Pane '\(pane)' does not host an active agent."))
+    }
+    guard detectedAgent == .codex || detectedAgent == .claude else {
+      return .failure(.unsupportedAgent("Agent '\(detectedAgent.rawValue)' is not supported by agents read."))
+    }
+    guard let activeText = surface.readActiveContentsForCLI() else {
+      return .failure(.activeScreenUnreadable)
+    }
+
+    let detection = detectedAgent.detectScreen(in: activeText)
+    let detectorScreen = detectedAgent.detectionSnapshot(from: activeText)
+    let blockerText: String? =
+      switch detectedAgent {
+      case .codex: CodexScreenProfile.blockerText(in: detectorScreen)
+      case .claude: ClaudeScreenProfile.blockerText(in: detectorScreen)
+      default: nil
+      }
+    if detection.state == .blocked, blockerText == nil {
+      return .failure(.blockerUnreadable)
+    }
+
+    let job = await AgentProcessProbe.shared.foregroundJob(
+      processGroupID: surface.bridge.foregroundProcessGroupID(),
+      childPID: surface.bridge.childPID()
+    )
+    guard let identified = job.flatMap(identifyAgentInJob), identified.agent == detectedAgent else {
+      return .failure(.agentNotFound("Pane '\(pane)' no longer hosts the selected agent."))
+    }
+
+    let freshResolution = await AgentSessionResolver.shared.resolveFresh(
+      identified: identified,
+      workingDirectory: state.activeAgentWorkingDirectory(surfaceID: resolved.paneID),
+      activeText: activeText,
+      configRoot: state.launchProfilesBySurface[resolved.paneID]?.configRoot(forDetected: detectedAgent)
+    )
+    let transcriptSession = freshResolution.session.flatMap { session -> AgentSession? in
+      guard session.confidence == .exact || session.confidence == .high,
+        session.transcriptPath != nil
+      else {
+        return nil
+      }
+      return session
+    }
+
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime]
+    formatter.timeZone = TimeZone(secondsFromGMT: 0)
+    let status = AgentsCommandStatus(rawValue: agentState.displayState.rawValue) ?? .idle
+    return .success(
+      AgentReadRuntimeSnapshot(
+        target: agentReadTarget(from: resolved),
+        agent: detectedAgent,
+        status: status,
+        rawState: detection.state.rawValue,
+        detectionReason: detection.reason.identifier,
+        lastChangedAt: formatter.string(from: agentState.lastChangedAt),
+        blockerText: blockerText,
+        transcriptSession: transcriptSession
+      )
+    )
+  }
+
+  private static func agentReadTarget(from target: ResolvedTarget) -> ReadTarget {
+    ReadTarget(
+      worktree: ReadTargetWorktree(
+        id: target.worktreeID,
+        name: target.worktreeName,
+        path: target.worktreePath,
+        rootPath: target.worktreeRootPath,
+        kind: target.worktreeKind.rawValue
+      ),
+      tab: ReadTargetTab(id: target.tabID.uuidString, title: target.tabTitle, selected: target.tabSelected),
+      pane: ReadTargetPane(
+        id: target.paneID.uuidString,
+        title: target.paneTitle,
+        cwd: target.paneCWD,
+        focused: target.paneFocused
+      )
+    )
+  }
+
+  private static func dispatchDateFormatter() -> ISO8601DateFormatter {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    formatter.timeZone = TimeZone(secondsFromGMT: 0)
+    return formatter
+  }
+
+  // swiftlint:disable:next function_body_length cyclomatic_complexity
   static func makeCLICommandRouter(
     appStore: StoreOf<AppFeature>,
     terminalManager: WorktreeTerminalManager,
-    handoffRequestRegistry: HandoffRequestRegistry = HandoffRequestRegistry()
+    handoffRequestRegistry: HandoffRequestRegistry = HandoffRequestRegistry(),
+    workflowCoordinatorBox: WorkflowCoordinatorBox = WorkflowCoordinatorBox(),
+    workflowReservations: WorkflowPaneReservations = WorkflowPaneReservations(),
+    agentSignalCallerResolver: AgentSignalCommandHandler.ResolveCaller? = nil
   ) -> CLICommandRouter {
 
     let listHandler = ListCommandHandler {
@@ -563,11 +699,26 @@ struct SupacodeApp: App {
         terminalManager: terminalManager
       )
     }
+    let profilesHandler = ProfilesCommandHandler {
+      @Shared(.userGlobalSettings) var settings
+      @Shared(.agentRuntimeAvailabilityProbeResults) var probeResults
+      return ProfilesRuntimeSnapshot(
+        profiles: settings.agentProfiles,
+        probeResults: probeResults
+      )
+    }
     let agentsHandler = AgentsCommandHandler {
       var screenDetectionsBySurfaceID: [UUID: AgentScreenDetection] = [:]
+      var signalsBySurfaceID: [UUID: AgentSignalsPayload] = [:]
       for terminalState in terminalManager.activeWorktreeStates {
         for (surfaceID, scan) in terminalState.lastAgentScreenScanBySurface {
           screenDetectionsBySurfaceID[surfaceID] = scan.detection
+        }
+        for surfaceID in terminalState.surfaceAgentStates.keys {
+          signalsBySurfaceID[surfaceID] = terminalManager.agentSignalsPayload(
+            surfaceID: surfaceID,
+            includeDiagnosticLast: false
+          )
         }
       }
       return AgentsRuntimeSnapshot(
@@ -576,9 +727,84 @@ struct SupacodeApp: App {
           repositoriesState: appStore.state.repositories,
           terminalManager: terminalManager
         ),
-        screenDetectionsBySurfaceID: screenDetectionsBySurfaceID
+        screenDetectionsBySurfaceID: screenDetectionsBySurfaceID,
+        signalsBySurfaceID: signalsBySurfaceID
       )
     }
+    let resolveAgentSignalCaller: AgentSignalCommandHandler.ResolveCaller =
+      agentSignalCallerResolver ?? { callerProcessID in
+        CallerPaneResolver.pane(
+          forCallerProcess: callerProcessID,
+          paneByShellPID: terminalManager.paneByShellPID()
+        )
+      }
+    let agentSignalHandler = AgentSignalCommandHandler(
+      resolveCaller: resolveAgentSignalCaller,
+      recordSignal: { caller, signal in
+        terminalManager.recordAgentSignal(signal, caller: caller)
+      }
+    )
+    let agentHookHandler = AgentNativeHookCommandHandler(
+      resolveCaller: { context in
+        if !context.callerProcessAncestry.isEmpty {
+          return CallerPaneResolver.pane(
+            forCallerProcessAncestry: context.callerProcessAncestry,
+            paneByShellPID: terminalManager.paneByShellPID()
+          )
+        }
+        guard let processID = context.callerProcessID else { return nil }
+        return resolveAgentSignalCaller(processID)
+      },
+      recordHook: { caller, input in
+        terminalManager.recordAgentNativeHook(input, caller: caller)
+      }
+    )
+    let dispatchCompleteHandler = AgentDispatchCompleteCommandHandler(
+      resolveCaller: resolveAgentSignalCaller,
+      complete: { surfaceID, outcome, summary in
+        do {
+          return .success(
+            try terminalManager.completeAgentDispatch(
+              surfaceID: surfaceID,
+              outcome: outcome,
+              summary: summary
+            ))
+        } catch let error as AgentDispatchStoreError {
+          return .failure(error)
+        } catch {
+          return .failure(.notFound)
+        }
+      },
+      intercept: { surfaceID in
+        Self.workflowDeliveryRefusal(surfaceID: surfaceID, appStore: appStore, terminalManager: terminalManager)
+      }
+    )
+    let dispatchAbandonHandler = AgentDispatchAbandonCommandHandler(
+      abandon: { dispatchID, reason in
+        do {
+          return .success(
+            try terminalManager.abandonAgentDispatch(dispatchID: dispatchID, reason: reason))
+        } catch let error as AgentDispatchStoreError {
+          return .failure(error)
+        } catch {
+          return .failure(.notFound)
+        }
+      }
+    )
+    let agentReadHandler = AgentReadCommandHandler(
+      snapshotProvider: { pane in
+        await Self.makeAgentReadRuntimeSnapshot(
+          pane: pane,
+          appStore: appStore,
+          terminalManager: terminalManager
+        )
+      },
+      resultProvider: { agent, path, maxBytes in
+        await Task.detached(priority: .userInitiated) {
+          AgentTranscriptResultReader.read(agent: agent, at: path, maxBytes: maxBytes)
+        }.value
+      }
+    )
     let sendHandler = SendCommandHandler(
       resolveProvider: { selector in
         let resolver = TargetResolver {
@@ -678,72 +904,227 @@ struct SupacodeApp: App {
         return KeyDeliveryResult(attempted: repeatCount, delivered: delivered)
       }
     )
-    let tabHandler = TabCommandHandler(
-      resolveProvider: { selector in
-        let resolver = TargetResolver {
-          TargetResolutionSnapshotBuilder.makeSnapshot(
-            repositoriesState: appStore.state.repositories,
-            terminalManager: terminalManager
-          )
+    let resolveTabTarget: TabCommandHandler.ResolveProvider = { selector in
+      let resolver = TargetResolver {
+        TargetResolutionSnapshotBuilder.makeSnapshot(
+          repositoriesState: appStore.state.repositories,
+          terminalManager: terminalManager
+        )
+      }
+      return resolver.resolve(selector).map { TabResolvedTarget(from: $0) }
+    }
+    let resolveLifecycleTarget: LifecycleCommandHandler.ResolveCloseTargetProvider = { selector in
+      let resolver = TargetResolver {
+        TargetResolutionSnapshotBuilder.makeSnapshot(
+          repositoriesState: appStore.state.repositories,
+          terminalManager: terminalManager
+        )
+      }
+      return resolver.resolveLifecycleTarget(selector)
+    }
+    let agentConditionSnapshot: @MainActor (TabResolvedTarget) -> AgentConditionSnapshot = { target in
+      guard let surfaceID = UUID(uuidString: target.paneID) else {
+        return .init(agent: nil, signal: nil, revision: 0, isLive: false, signals: .empty)
+      }
+      let observed = terminalManager.agentObservationSnapshot(surfaceID: surfaceID)
+      let agent = appStore.state.repositories.activeAgents.entries.first {
+        $0.surfaceID == surfaceID
+      }
+      let signalEvidence = terminalManager.currentAgentSignalEvidence(surfaceID: surfaceID)
+      return .init(
+        agent: agent,
+        signal: signalEvidence.activeTerminal,
+        changedSignal: signalEvidence.latest,
+        revision: observed?.revision ?? 0,
+        isLive: terminalManager.isSurfaceLive(surfaceID),
+        signals: terminalManager.agentSignalsPayload(surfaceID: surfaceID)
+      )
+    }
+    let agentWaitHandler = AgentWaitCommandHandler(
+      observeDispatch: { dispatchID in
+        do {
+          return .success(try terminalManager.observeAgentDispatch(dispatchID: dispatchID))
+        } catch let error as AgentDispatchStoreError {
+          return .failure(error)
+        } catch {
+          return .failure(.notFound)
         }
-        return resolver.resolve(selector).map { TabResolvedTarget(from: $0) }
       },
-      createTab: { target, path in
-        let repositories = Array(appStore.state.repositories.repositories)
-        guard let worktree = resolveCLITerminalWorktree(id: target.worktreeID, repositories: repositories) else {
+      observeCondition: { surfaceID in
+        terminalManager.observeAgentState(surfaceID: surfaceID)
+      },
+      resolveConditionTarget: { pane in
+        resolveTabTarget(.pane(pane))
+      },
+      conditionSnapshot: agentConditionSnapshot,
+      signalsProvider: { target in
+        guard let surfaceID = UUID(uuidString: target.pane.id) else { return .empty }
+        return terminalManager.agentSignalsPayload(surfaceID: surfaceID)
+      },
+      screenProvider: { target in
+        guard let surfaceID = UUID(uuidString: target.pane.id),
+          let state = terminalManager.stateIfExists(for: target.worktree.id),
+          let surface = state.surfaceView(for: surfaceID)
+        else {
           return nil
         }
-        selectCLIWorktreeContext(
-          worktreeID: target.worktreeID,
+        return surface.readActiveContentsForCLI()
+      }
+    )
+    let dispatchHandler = AgentDispatchCommandHandler(
+      resolveTarget: { pane in
+        resolveTabTarget(.pane(pane))
+      },
+      pendingDispatch: { target in
+        UUID(uuidString: target.paneID).flatMap { terminalManager.pendingAgentDispatchSnapshot(surfaceID: $0) }
+      },
+      conditionSnapshot: agentConditionSnapshot,
+      issueDispatch: { target in
+        do {
+          return .success(try terminalManager.issueAgentDispatch(boundTo: target))
+        } catch let error as AgentDispatchStoreError {
+          return .failure(error)
+        } catch {
+          return .failure(.bindingMissing)
+        }
+      },
+      deliverPrompt: { target, text in
+        // The same input path as `prowl send`: one committed-text paste, then Enter.
+        guard let surfaceID = UUID(uuidString: target.paneID),
+          let state = terminalManager.stateIfExists(for: target.worktreeID),
+          state.insertCommittedText(text, in: surfaceID)
+        else {
+          return false
+        }
+        return state.submitLine(in: surfaceID)
+      },
+      cancelDispatch: { dispatchID in
+        terminalManager.cancelAgentDispatchIssuance(dispatchID: dispatchID)
+      }
+    )
+    let createTab: TabCommandHandler.CreateTabProvider = { target, path in
+      let repositories = Array(appStore.state.repositories.repositories)
+      guard let worktree = resolveCLITerminalWorktree(id: target.worktreeID, repositories: repositories) else {
+        return nil
+      }
+      selectCLIWorktreeContext(
+        worktreeID: target.worktreeID,
+        appStore: appStore,
+        terminalManager: terminalManager
+      )
+      let state = terminalManager.state(for: worktree)
+      let directory = path.map { URL(fileURLWithPath: $0, isDirectory: true) }
+      guard let tabID = state.createTab(workingDirectoryOverride: directory) else {
+        return nil
+      }
+      let resolver = makeTargetResolver(appStore: appStore, terminalManager: terminalManager)
+      switch resolver.resolve(.tab(tabID.rawValue.uuidString)) {
+      case .success(let resolved):
+        return TabResolvedTarget(from: resolved)
+      case .failure:
+        return nil
+      }
+    }
+    let createPane: LifecycleCommandHandler.CreatePaneProvider = { anchor, direction in
+      createCLIPane(
+        anchor: anchor,
+        direction: direction,
+        appStore: appStore,
+        terminalManager: terminalManager
+      )
+    }
+    let closeTab: TabCommandHandler.CloseTabProvider = { target, force in
+      guard let tabUUID = UUID(uuidString: target.tabID),
+        let state = terminalManager.stateIfExists(for: target.worktreeID)
+      else {
+        return false
+      }
+      return state.closeTab(
+        TerminalTabID(rawValue: tabUUID),
+        confirmation: force ? .skip : .prompt(.tab)
+      )
+    }
+    let closePane: PaneCommandHandler.ClosePaneProvider = { target, force in
+      guard let paneID = UUID(uuidString: target.paneID),
+        let state = terminalManager.stateIfExists(for: target.worktreeID)
+      else {
+        return false
+      }
+      return state.closeSurface(
+        id: paneID,
+        confirmation: force ? .skip : .prompt(.pane)
+      )
+    }
+    let lifecycleHandler = LifecycleCommandHandler(
+      resolveCreateTarget: resolveTabTarget,
+      resolveCloseTarget: resolveLifecycleTarget,
+      createTab: createTab,
+      createPane: createPane,
+      profiles: {
+        @Shared(.userGlobalSettings) var settings
+        return settings.agentProfiles
+      },
+      prepareAgentProfile: { request in
+        await prepareCLIProfileLaunch(
+          request,
           appStore: appStore,
           terminalManager: terminalManager
         )
-        let state = terminalManager.state(for: worktree)
-        let directory = path.map { URL(fileURLWithPath: $0, isDirectory: true) }
-        guard let tabID = state.createTab(workingDirectoryOverride: directory) else {
-          return nil
-        }
-        let resolver = makeTargetResolver(appStore: appStore, terminalManager: terminalManager)
-        switch resolver.resolve(.tab(tabID.rawValue.uuidString)) {
-        case .success(let resolved):
-          return TabResolvedTarget(from: resolved)
-        case .failure:
-          return nil
+      },
+      launchAgentProfile: { request in
+        launchCLIProfile(
+          request,
+          appStore: appStore,
+          terminalManager: terminalManager
+        )
+      },
+      cancelProfilePreparation: { request in
+        guard let preparation = request.preparedLaunch else { return }
+        terminalManager.discardPreparedAgentProfileLaunch(preparation)
+      },
+      issueDispatch: {
+        do {
+          let snapshot = try terminalManager.issueAgentDispatch()
+          guard case .pending(let record) = snapshot.payload(using: Self.dispatchDateFormatter()) else {
+            return .failure(.capacityExceeded)
+          }
+          return .success(record)
+        } catch let error as AgentDispatchStoreError {
+          return .failure(error)
+        } catch {
+          return .failure(.capacityExceeded)
         }
       },
-      closeTab: { target, force in
-        guard let tabUUID = UUID(uuidString: target.tabID),
-          let state = terminalManager.stateIfExists(for: target.worktreeID)
-        else {
-          return false
+      bindDispatch: { dispatchID, target in
+        do {
+          try terminalManager.bindAgentDispatch(dispatchID: dispatchID, target: target)
+          return .success(())
+        } catch let error as AgentDispatchStoreError {
+          return .failure(error)
+        } catch {
+          return .failure(.notFound)
         }
-        return state.closeTab(
-          TerminalTabID(rawValue: tabUUID),
-          confirmation: force ? .skip : .prompt(.tab)
-        )
-      }
+      },
+      cancelDispatch: { dispatchID in
+        terminalManager.cancelAgentDispatchIssuance(dispatchID: dispatchID)
+      },
+      rollbackProfileLaunch: { resource, target in
+        switch resource {
+        case .tab: _ = closeTab(target, true)
+        case .pane: _ = closePane(target, true)
+        }
+      },
+      closeTab: closeTab,
+      closePane: closePane
+    )
+    let tabHandler = TabCommandHandler(
+      resolveProvider: resolveTabTarget,
+      createTab: createTab,
+      closeTab: closeTab
     )
     let paneHandler = PaneCommandHandler(
-      resolveProvider: { selector in
-        let resolver = TargetResolver {
-          TargetResolutionSnapshotBuilder.makeSnapshot(
-            repositoriesState: appStore.state.repositories,
-            terminalManager: terminalManager
-          )
-        }
-        return resolver.resolve(selector).map { TabResolvedTarget(from: $0) }
-      },
-      closePane: { target, force in
-        guard let paneID = UUID(uuidString: target.paneID),
-          let state = terminalManager.stateIfExists(for: target.worktreeID)
-        else {
-          return false
-        }
-        return state.closeSurface(
-          id: paneID,
-          confirmation: force ? .skip : .prompt(.pane)
-        )
-      }
+      resolveProvider: resolveTabTarget,
+      closePane: closePane
     )
     let handoffHandler = HandoffCommandHandler(
       resolveProvider: { selector, callerPID in
@@ -815,17 +1196,39 @@ struct SupacodeApp: App {
       }
 
     )
+    let workflowCoordinator = Self.makeWorkflowCoordinator(
+      appStore: appStore,
+      terminalManager: terminalManager,
+      rendezvous: WorkflowCLIRendezvous(),
+      reservations: workflowReservations
+    )
+    workflowCoordinatorBox.coordinator = workflowCoordinator
+    let workflowHandler = WorkflowCommandHandler(
+      snapshotProvider: { Self.makeWorkflowRuntimeSnapshot(appStore: appStore, terminalManager: terminalManager) },
+      runtime: workflowCoordinator
+    )
     return CLICommandRouter(
       openHandler: openHandler,
       listHandler: listHandler,
       agentsHandler: agentsHandler,
+      agentsReadHandler: agentReadHandler,
+      agentsSignalHandler: agentSignalHandler,
+      agentsHookHandler: agentHookHandler,
+      agentsDispatchHandler: dispatchHandler,
+      agentsDispatchCompleteHandler: dispatchCompleteHandler,
+      agentsDispatchAbandonHandler: dispatchAbandonHandler,
+      agentsWaitHandler: agentWaitHandler,
+      profilesHandler: profilesHandler,
       focusHandler: focusHandler,
       sendHandler: sendHandler,
       keyHandler: keyHandler,
       readHandler: readHandler,
+      createHandler: lifecycleHandler,
+      closeHandler: lifecycleHandler,
       tabHandler: tabHandler,
       paneHandler: paneHandler,
-      handoffHandler: handoffHandler
+      handoffHandler: handoffHandler,
+      workflowHandler: workflowHandler
     )
   }
 
@@ -895,16 +1298,56 @@ struct SupacodeApp: App {
     )
   }
 
+  @MainActor
+  static func makeWorkflowRuntimeSnapshot(
+    appStore: StoreOf<AppFeature>,
+    terminalManager: WorktreeTerminalManager
+  ) -> WorkflowRuntimeSnapshot {
+    @Shared(.userGlobalSettings) var settings
+    @Shared(.agentRuntimeAvailabilityProbeResults) var probeResults
+    let bundledSkills = Bundle.main.resourceURL.flatMap { try? ProwlSkills.bundled(resourcesURL: $0) }
+    let installedAgents =
+      probeResults.isEmpty
+      ? nil
+      : Set(probeResults.filter { $0.value.isAvailable }.keys.map { $0.agent.rawValue })
+    return WorkflowRuntimeSnapshot(
+      resolution: TargetResolutionSnapshotBuilder.makeSnapshot(
+        repositoriesState: appStore.state.repositories,
+        terminalManager: terminalManager
+      ),
+      paneByShellPID: terminalManager.paneByShellPID(),
+      bundleWorkflowsURL: SupacodePaths.bundledWorkflowsURL,
+      userWorkflowsURL: WorkflowSources.userDirectory(home: FileManager.default.homeDirectoryForCurrentUser),
+      disabledWorkflowIDs: Set(settings.disabledWorkflowIDs),
+      bundledSkillIDs: bundledSkills.map { Set($0.map(\.id)) },
+      knownAgents: Set(DetectedAgent.allCases.map(\.rawValue)),
+      installedAgents: installedAgents,
+      enabledProfiles: settings.agentProfiles.filter(\.isEnabled).map { profile in
+        WorkflowProfileSuggestion(
+          agent: profile.runtime.agent.rawValue,
+          model: profile.model,
+          reasoningEffort: profile.reasoningEffort,
+          executionMode: profile.executionMode.rawValue
+        )
+      }
+    )
+
+  }
+
   private static func makeCLISocketServer(
     appStore: StoreOf<AppFeature>,
     terminalManager: WorktreeTerminalManager,
-    handoffRequestRegistry: HandoffRequestRegistry
+    handoffRequestRegistry: HandoffRequestRegistry,
+    workflowCoordinatorBox: WorkflowCoordinatorBox,
+    workflowReservations: WorkflowPaneReservations
   ) -> CLISocketServer {
 
     let cliRouter = makeCLICommandRouter(
       appStore: appStore,
       terminalManager: terminalManager,
-      handoffRequestRegistry: handoffRequestRegistry
+      handoffRequestRegistry: handoffRequestRegistry,
+      workflowCoordinatorBox: workflowCoordinatorBox,
+      workflowReservations: workflowReservations
     )
     let cliServer = CLISocketServer(router: cliRouter)
     let logger = SupaLogger("CLIService")
@@ -1077,7 +1520,191 @@ struct SupacodeApp: App {
     return nil
   }
 
-  private static func selectCLIWorktreeContext(
+  private static func prepareCLIProfileLaunch(
+    _ request: CLIProfileLaunchRequest,
+    appStore: StoreOf<AppFeature>,
+    terminalManager: WorktreeTerminalManager
+  ) async -> Result<CLIProfileLaunchRequest, CLIProfileLaunchFailure> {
+    let repositories = Array(appStore.state.repositories.repositories)
+    guard
+      let worktree = resolveCLITerminalWorktree(
+        id: request.target.worktreeID,
+        repositories: repositories
+      )
+    else {
+      return .failure(.createFailed("The resolved worktree is no longer available."))
+    }
+    let intent = request.prompt.map(AgentStartIntent.prompt) ?? .interactive
+    let plan: AgentProfileLaunchPlan
+    do {
+      plan = try AgentProfileLaunchPlanner.plan(
+        for: request.profile,
+        intent: intent,
+        homeBaseDirectory: SupacodePaths.agentProfileHomesDirectory
+      )
+    } catch {
+      return .failure(.planning(error, profile: request.profile))
+    }
+    let placement: AgentProfileLaunchRequest.Placement
+    switch request.resource {
+    case .tab:
+      placement = .tab(background: request.background)
+    case .pane:
+      guard let anchor = UUID(uuidString: request.target.paneID),
+        let direction = request.direction
+      else {
+        return .failure(.createFailed("The resolved split anchor is invalid."))
+      }
+      placement = .split(
+        anchor: anchor,
+        direction: direction.terminalSplitDirection,
+        background: request.background
+      )
+    }
+    let launchRequest = AgentProfileLaunchRequest(
+      plan: plan,
+      placement: placement,
+      workingDirectoryOverride: request.path.map { URL(fileURLWithPath: $0, isDirectory: true) },
+      title: request.profile.name
+    )
+    switch await terminalManager.prepareAgentProfileLaunch(launchRequest, in: worktree) {
+    case .failure(let error):
+      return .failure(.creation(error, profile: request.profile))
+    case .success(let preparation):
+      return .success(
+        CLIProfileLaunchRequest(
+          resource: request.resource,
+          target: request.target,
+          profile: request.profile,
+          prompt: request.prompt,
+          path: request.path,
+          direction: request.direction,
+          background: request.background,
+          dispatchID: nil,
+          preparedLaunch: preparation
+        )
+      )
+    }
+  }
+
+  private static func launchCLIProfile(
+    _ request: CLIProfileLaunchRequest,
+    appStore: StoreOf<AppFeature>,
+    terminalManager: WorktreeTerminalManager
+  ) -> Result<TabResolvedTarget, CLIProfileLaunchFailure> {
+    let repositories = Array(appStore.state.repositories.repositories)
+    guard
+      let worktree = resolveCLITerminalWorktree(
+        id: request.target.worktreeID,
+        repositories: repositories
+      ),
+      var preparation = request.preparedLaunch
+    else {
+      return .failure(.createFailed("The prepared Agent Profile launch is no longer available."))
+    }
+    if let dispatchID = request.dispatchID, let prompt = request.prompt {
+      do {
+        let pairedPlan = try preparation.context.request.plan.attachingDispatch(
+          id: dispatchID,
+          userPrompt: prompt
+        )
+        preparation = PreparedAgentProfileLaunch(
+          context: FrozenAgentProfileLaunchContext(
+            request: AgentProfileLaunchRequest(
+              plan: pairedPlan,
+              placement: preparation.context.request.placement,
+              workingDirectoryOverride: preparation.context.request.workingDirectoryOverride,
+              inheritanceAnchor: preparation.context.request.inheritanceAnchor,
+              title: preparation.context.request.title
+            ),
+            inheritedCWD: preparation.context.inheritedCWD,
+            anchorSurfaceID: preparation.context.anchorSurfaceID,
+            tracksFocusedAnchor: preparation.context.tracksFocusedAnchor,
+            tracksInheritedCWD: preparation.context.tracksInheritedCWD
+          ),
+          warnings: preparation.warnings
+        )
+      } catch {
+        return .failure(.planning(error, profile: request.profile))
+      }
+    }
+    let launched: LaunchedSurface
+    switch terminalManager.launchPreparedAgentProfile(preparation, in: worktree) {
+    case .success(let surface):
+      launched = surface
+    case .failure(let error):
+      return .failure(.creation(error, profile: request.profile))
+    }
+
+    if !request.background {
+      selectCLIWorktreeContext(
+        worktreeID: request.target.worktreeID,
+        appStore: appStore,
+        terminalManager: terminalManager
+      )
+      terminalManager.state(for: worktree).selectTab(launched.tabID)
+    }
+    let resolver = makeTargetResolver(appStore: appStore, terminalManager: terminalManager)
+    switch resolver.resolve(.pane(launched.surfaceID.uuidString)) {
+    case .success(let resolved):
+      return .success(TabResolvedTarget(from: resolved))
+    case .failure:
+      let state = terminalManager.state(for: worktree)
+      switch request.resource {
+      case .tab:
+        _ = state.closeTab(launched.tabID, confirmation: .skip)
+      case .pane:
+        _ = state.closeSurface(id: launched.surfaceID, confirmation: .skip)
+      }
+      return .failure(.createFailed("The launched Profile pane could not be resolved."))
+    }
+  }
+
+  private static func createCLIPane(
+    anchor: TabResolvedTarget,
+    direction: CreatePaneDirection,
+    appStore: StoreOf<AppFeature>,
+    terminalManager: WorktreeTerminalManager
+  ) -> TabResolvedTarget? {
+    guard let anchorPaneID = UUID(uuidString: anchor.paneID),
+      let state = terminalManager.stateIfExists(for: anchor.worktreeID)
+    else {
+      return nil
+    }
+    let createdPaneID: UUID
+    switch state.createSplit(
+      of: anchorPaneID,
+      direction: direction.terminalSplitDirection,
+      initialInput: nil,
+      additionalEnvironment: [:],
+      focusing: true
+    ) {
+    case .success(let paneID):
+      createdPaneID = paneID
+    case .failure:
+      return nil
+    }
+
+    // Resolve and split the explicit anchor before changing any UI focus.
+    // Selection happens only after creation so mutable focus can never retarget the split.
+    selectCLIWorktreeContext(
+      worktreeID: anchor.worktreeID,
+      appStore: appStore,
+      terminalManager: terminalManager
+    )
+    if let tabID = state.tabId(containing: createdPaneID) {
+      state.selectTab(tabID)
+    }
+    let resolver = makeTargetResolver(appStore: appStore, terminalManager: terminalManager)
+    switch resolver.resolve(.pane(createdPaneID.uuidString)) {
+    case .success(let resolved):
+      return TabResolvedTarget(from: resolved)
+    case .failure:
+      return nil
+    }
+  }
+
+  static func selectCLIWorktreeContext(
     worktreeID: Worktree.ID,
     appStore: StoreOf<AppFeature>,
     terminalManager: WorktreeTerminalManager

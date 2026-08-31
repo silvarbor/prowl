@@ -170,3 +170,5 @@ and final PR, then commit in reviewable layers and submit a non-draft PR to
 - Amp supports bare interactive Profiles and headless execution, but not a
   seeded interactive prompt through argv. The adapter rejects that intent
   explicitly instead of silently changing the requested interaction mode.
+- Updated 2026-08-22: the "profile-based handoff, cross-review, and other cross-agent orchestration" follow-up waves are planned as [063-agent-workflows](../063-agent-workflows/000-plan.md), consuming the launch intent and capability model established here.
+- Updated 2026-08-22: 063-A2 implemented that consumption in PR #714: CLI Profile launches compile through each runtime adapter, preserve unsupported-intent errors, and return exact pane identity. Runtime capability ownership remains here; completion-hook rendering is deferred to 064-S3.

@@ -83,6 +83,9 @@ Phase-1 commands are **remote-control actions on running app state**.
   - `SendCommandHandler`
   - `KeyCommandHandler`
   - `ReadCommandHandler`
+  - `LifecycleCommandHandler` (`create`, `close`)
+  - legacy `TabCommandHandler` / `PaneCommandHandler` during deprecation
+  - `AgentsCommandHandler`, `AgentReadCommandHandler`, `AgentSignalCommandHandler`, and `HandoffCommandHandler`
 - Shared services
   - `TargetResolver`
   - `TerminalCommandBridge`
@@ -140,18 +143,14 @@ Resolution belongs to app runtime (state-aware), with CLI only enforcing selecto
 
 ## 7) Mapping to existing contracts
 
-- Input normalization rules: `input.md`
-- Output contracts:
-  - `open.md`
-  - `list.md`
-  - `focus.md`
-  - `send.md`
-  - `key.md`
-  - `read.md`
-- JSON schema validation source:
-  - `schema.md`
+- Input normalization rules: `input.md` and `targeting.md`
+- Output contracts: one document per wire command, including `create.md`, `close.md`,
+  deprecated `tab.md` / `pane.md`, `agents.md`, `agents-signal.md`, and `handoff.md`.
+- JSON schema validation source: the machine-readable bundle linked by `schema.md`.
 
-Implementation MUST be validated against `schema.md` for `--json` mode.
+Every payload-bearing mock socket response is validated against that Draft 2020-12
+bundle in `ProwlCLIIntegrationTests`; typed model tests are supplementary, not a
+replacement for schema validation.
 
 ---
 
@@ -181,7 +180,7 @@ Implementation MUST be validated against `schema.md` for `--json` mode.
 ## M4 — test and harden
 
 - parser unit tests (argv matrix)
-- contract tests (`--json` payload schema validation)
+- contract tests (Draft 2020-12 validation of raw socket-response bytes)
 - integration tests for `list->focus->send/key->read` loops
 
 ---
@@ -194,7 +193,7 @@ Implementation MUST be validated against `schema.md` for `--json` mode.
   - stdin/argv source rules for `send`
   - `--last` and `--repeat` constraints
 - Contract tests:
-  - validate JSON against `schema.md` refs per subcommand
+  - validate every payload-bearing socket response against the executable schema bundle
 - Runtime integration tests:
   - open exact-root / inside-root / new-root
   - key alias normalization and repeat delivery counters

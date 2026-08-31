@@ -12,6 +12,7 @@ struct AppFeature {
     var settings: SettingsFeature.State
     var updates = UpdatesFeature.State()
     var commandPalette = CommandPaletteFeature.State()
+    var workflowRuns = WorkflowRunsFeature.State()
     var openActionSelection: OpenWorktreeAction = .finder
     /// Whether the selected worktree's repository resolves its open action
     /// automatically (project-aware) rather than a user-pinned app. Drives the
@@ -53,6 +54,7 @@ struct AppFeature {
     case settings(SettingsFeature.Action)
     case updates(UpdatesFeature.Action)
     case commandPalette(CommandPaletteFeature.Action)
+    case workflowRuns(WorkflowRunsFeature.Action)
     case openActionSelectionChanged(OpenWorktreeAction)
     case openActionResetToAutomatic
     case worktreeSettingsLoaded(RepositorySettings, worktreeID: Worktree.ID)
@@ -114,6 +116,8 @@ struct AppFeature {
   @Dependency(CustomShortcutRegistryClient.self) var customShortcutRegistryClient
   @Dependency(ExternalDiffToolClient.self) var externalDiffToolClient
   @Dependency(OutgoingChangesClient.self) var outgoingChangesClient
+  @Dependency(GitClientDependency.self) var gitClient
+  @Dependency(WorkflowRuntimeClient.self) var workflowRuntimeClient
 
   var body: some Reducer<State, Action> {
     let core = Reduce<State, Action> { state, action in
@@ -296,7 +300,10 @@ struct AppFeature {
         state.runScriptStatusByWorktreeID = state.runScriptStatusByWorktreeID.filter { ids.contains($0.key) }
         let restorableWorktrees = makeTerminalRestorableWorktrees(from: Array(repositories))
         appLogger.info("[LayoutRestore] restorableWorktrees count=\(restorableWorktrees.count)")
-        var allEffects: [Effect<Action>] = []
+        var allEffects: [Effect<Action>] = [
+          // Runs a previous app instance left behind are marked interrupted (dsl-spec §10 Restart).
+          .send(.workflowRuns(.markInterruptedRuns(worktreeRoots: workflowRunRoots(of: Array(repositories)))))
+        ]
         if !shouldDeferDefaultView {
           allEffects.append(applyDefaultViewMode(into: &state))
         }
@@ -363,14 +370,14 @@ struct AppFeature {
         let selection = SettingsSection.repository(repositoryID)
         return openSettingsEffect(selecting: selection)
 
-      case .repositories(.delegate(.showDiff(let worktreeID))):
-        guard let worktree = state.repositories.worktree(for: worktreeID) else {
+      case .repositories(.delegate(.showDiff(let targetID))):
+        guard let target = state.repositories.diffTarget(for: targetID) else {
           return .none
         }
-        return openDiffEffect(worktree: worktree, resolvedKeybindings: state.resolvedKeybindings)
+        return openDiffEffect(target: target, resolvedKeybindings: state.resolvedKeybindings)
 
-      case .repositories(.delegate(.showOutgoingChanges(let worktreeID))):
-        return openOutgoingChangesEffect(worktreeID: worktreeID, state: state)
+      case .repositories(.delegate(.showOutgoingChanges(let targetID))):
+        return openOutgoingChangesEffect(targetID: targetID, state: state)
 
       case .settings(.setSelection(let selection)):
         let resolvedSelection = selection ?? .general
@@ -379,7 +386,7 @@ struct AppFeature {
           state.settings.repositorySettings = nil
           state.settings.globalCustomCommands = .init()
           state.settings.agentProfiles = nil
-        case .agents:
+        case .profiles:
           state.settings.repositorySettings = nil
           state.settings.globalCustomCommands = nil
           state.settings.agentProfiles = .init()
@@ -406,7 +413,8 @@ struct AppFeature {
           state.settings.repositorySettings = repoSettingsState
           state.settings.globalCustomCommands = nil
           state.settings.agentProfiles = nil
-        case .general, .notifications, .shortcuts, .worktree, .updates, .advanced, .github:
+        case .general, .notifications, .shortcuts, .worktree, .updates, .advanced, .github, .commandLineTool:
+          // `settings.agentSkills` is owned by SettingsFeature.setSelection.
           state.settings.repositorySettings = nil
           state.settings.globalCustomCommands = nil
           state.settings.agentProfiles = nil
@@ -534,6 +542,16 @@ struct AppFeature {
           return .send(.repositories(.showToast(.success("prowl command line tool removed"))))
         case .failed(let message):
           return .send(.repositories(.showToast(.warning("CLI install failed: \(message)"))))
+        }
+
+      case .settings(.agentSkills(.delegate(.linkChanged(let result)))):
+        switch result {
+        case .installed(let skill, let target):
+          return .send(.repositories(.showToast(.success("\(skill) skill linked for \(target)"))))
+        case .removed(let skill, let target):
+          return .send(.repositories(.showToast(.success("\(skill) skill link removed for \(target)"))))
+        case .failed(let message):
+          return .send(.repositories(.showToast(.warning("Skill link failed: \(message)"))))
         }
 
       case .settings(.delegate(.terminalLayoutSnapshotCleared(let success))):
@@ -714,7 +732,7 @@ struct AppFeature {
         return launchAgentProfile(profileID, state: &state)
 
       case .openAgentProfilesSettings:
-        return openSettingsEffect(selecting: .agents)
+        return openSettingsEffect(selecting: .profiles)
 
       case .runCustomCommand(let commandID):
         guard let worktree = actionTargetWorktree(repositories: state.repositories) else {
@@ -999,6 +1017,42 @@ struct AppFeature {
       case .commandPalette(let action):
         return reduceCommandPaletteAction(action, state: &state)
 
+      case .workflowRuns(.delegate(.notice(let notice))):
+        guard let worktree = state.repositories.worktree(for: notice.worktreeID) else {
+          return .none
+        }
+        var effects: [Effect<Action>] = []
+        if notice.postsNotification {
+          effects.append(
+            .run { @MainActor _ in
+              workflowRuntimeClient.notify(
+                worktree,
+                WorkflowRuntimeNotification(
+                  title: notice.title,
+                  body: notice.body,
+                  targetSurfaceID: notice.targetSurfaceID
+                )
+              )
+            }
+          )
+        }
+        if state.repositories.selectedWorktreeID == notice.worktreeID {
+          switch notice.kind {
+          case .completed:
+            effects.append(
+              .send(.repositories(.showToast(.success("\(notice.workflowName) completed"))))
+            )
+          case .skipped, .maxRoundsReached:
+            effects.append(.send(.repositories(.showToast(.warning(notice.title)))))
+          case .needsAttention:
+            break
+          }
+        }
+        return .merge(effects)
+
+      case .workflowRuns:
+        return .none
+
       case .openHandoffHud:
         return openHandoffHud(state: &state)
 
@@ -1049,6 +1103,9 @@ struct AppFeature {
     }
     Scope(state: \.commandPalette, action: \.commandPalette) {
       CommandPaletteFeature()
+    }
+    Scope(state: \.workflowRuns, action: \.workflowRuns) {
+      WorkflowRunsFeature()
     }
   }
 }

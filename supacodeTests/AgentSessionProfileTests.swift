@@ -886,13 +886,17 @@ struct AgentSessionProfileTests {
     var database: OpaquePointer?
     #expect(sqlite3_open(databaseURL.path, &database) == SQLITE_OK)
     defer { sqlite3_close(database) }
-    let schema = "CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT, time_updated INTEGER);"
+    let schema =
+      "CREATE TABLE session (id TEXT PRIMARY KEY, parent_id TEXT, directory TEXT, time_updated INTEGER);"
     #expect(sqlite3_exec(database, schema, nil, nil, nil) == SQLITE_OK)
     let threshold = Date(timeIntervalSince1970: 1_783_700_000)
+    // A sub-agent session (`parent_id` set) updates more often than the session the user is
+    // talking to and must never displace it (docs-ai 064.010).
     let rows = [
-      "('ses_current', '/tmp/project', \(Int64((threshold.timeIntervalSince1970 + 60) * 1_000)))",
-      "('ses_stale', '/tmp/project', \(Int64((threshold.timeIntervalSince1970 - 60) * 1_000)))",
-      "('ses_other', '/tmp/other', \(Int64((threshold.timeIntervalSince1970 + 60) * 1_000)))",
+      "('ses_current', NULL, '/tmp/project', \(Int64((threshold.timeIntervalSince1970 + 60) * 1_000)))",
+      "('ses_child', 'ses_current', '/tmp/project', \(Int64((threshold.timeIntervalSince1970 + 120) * 1_000)))",
+      "('ses_stale', NULL, '/tmp/project', \(Int64((threshold.timeIntervalSince1970 - 60) * 1_000)))",
+      "('ses_other', NULL, '/tmp/other', \(Int64((threshold.timeIntervalSince1970 + 60) * 1_000)))",
     ]
     for row in rows {
       #expect(sqlite3_exec(database, "INSERT INTO session VALUES \(row);", nil, nil, nil) == SQLITE_OK)

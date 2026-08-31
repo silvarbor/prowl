@@ -46,6 +46,9 @@ non-qualifying task. When in doubt, do not write one.
    `- Updated 2026-MM-DD: <one line> — see [002-<topic>.md](002-<topic>.md)`.
 3. If the follow-up invalidates part of the plan or action text, correct that text in
    place (keep it truthful) and note the correction in the amendment.
+4. Multi-PR entries (a plan with a slice table, e.g. `063`): each slice ships its own
+   `00N-<slice>.md` amendment in the slice's PR, starting at `002`; write `001-action.md`
+   once, when the last slice lands (or the entry is superseded), summarizing the slices.
 
 ### 3. Large pivot / redesign
 

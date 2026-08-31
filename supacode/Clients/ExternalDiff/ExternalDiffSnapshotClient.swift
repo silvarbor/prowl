@@ -7,12 +7,12 @@ nonisolated struct ExternalDiffSnapshotPair: Equatable, Sendable {
 }
 
 nonisolated struct ExternalDiffSnapshotClient: Sendable {
-  var makeSnapshotPair: @Sendable (Worktree) async throws -> ExternalDiffSnapshotPair
+  var makeSnapshotPair: @Sendable (_ workingDirectory: URL) async throws -> ExternalDiffSnapshotPair
 }
 
 extension ExternalDiffSnapshotClient: DependencyKey {
-  static let liveValue = ExternalDiffSnapshotClient { worktree in
-    try await ExternalDiffSnapshotBuilder().makeSnapshotPair(for: worktree)
+  static let liveValue = ExternalDiffSnapshotClient { workingDirectory in
+    try await ExternalDiffSnapshotBuilder().makeSnapshotPair(at: workingDirectory)
   }
 
   static let testValue = ExternalDiffSnapshotClient { _ in
@@ -31,10 +31,10 @@ extension DependencyValues {
 }
 
 private nonisolated struct ExternalDiffSnapshotBuilder {
-  func makeSnapshotPair(for worktree: Worktree) async throws -> ExternalDiffSnapshotPair {
+  func makeSnapshotPair(at workingDirectory: URL) async throws -> ExternalDiffSnapshotPair {
     let gitClient = GitClient()
-    async let trackedOutput = gitClient.diffNameStatus(at: worktree.workingDirectory)
-    async let untrackedPaths = gitClient.untrackedFilePaths(at: worktree.workingDirectory)
+    async let trackedOutput = gitClient.diffNameStatus(at: workingDirectory)
+    async let untrackedPaths = gitClient.untrackedFilePaths(at: workingDirectory)
     let trackedFiles = DiffChangedFile.parseNameStatus(await trackedOutput)
     let untrackedFiles = await untrackedPaths.map {
       DiffChangedFile(status: .added, oldPath: nil, newPath: $0)
@@ -51,7 +51,7 @@ private nonisolated struct ExternalDiffSnapshotBuilder {
       try FileManager.default.createDirectory(at: rightURL, withIntermediateDirectories: true)
 
       for file in files {
-        try copySnapshotFile(file, from: worktree.workingDirectory, leftURL: leftURL, rightURL: rightURL)
+        try copySnapshotFile(file, from: workingDirectory, leftURL: leftURL, rightURL: rightURL)
       }
 
       return ExternalDiffSnapshotPair(leftURL: leftURL, rightURL: rightURL)

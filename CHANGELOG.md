@@ -1,5 +1,49 @@
 # Changelog
 
+## [2026.8.29](https://github.com/onevcat/Prowl/releases/tag/v2026.8.29)
+
+This release focuses on letting Prowl and your agents know what other agents are actually doing, plus new CLI and Settings tooling for skills and panes.
+
+### New
+- Agent coordination from the CLI: `prowl create tab|pane --profile <name> --prompt -` launches an Agent Profile with a kickoff prompt and returns a dispatch receipt; `prowl agents wait --dispatch <id>` blocks until the worker reports `prowl agents dispatch-complete`, and `prowl agents wait <pane> --until idle|blocked|changed|exit` waits on an observed pane state. Agents can report their own events with `prowl agents signal`, and `prowl profiles list` shows the configured Profiles with their runtime availability.
+- Native completion-signal hooks for all eight supported runtimes (Claude Code, Codex, GitHub Copilot, Droid, Qoder, Pi, Oh My Pi, OpenCode) when launched from a Profile, so `agents wait` knows precisely when a turn ends or an agent needs input instead of guessing from the screen. Nothing is written to your runtime configuration; the hooks live only for that launch.
+- Prowl's bundled skills (`prowl-cli`) can be installed with `prowl skills install`, or from the Agent Skills section on the new Settings → Agents → CLI & Skills page. Both link the bundled skills into your Claude, Codex, or shared `~/.agents` skill folders and show the same per-target status.
+- `prowl create pane <anchor> --direction right|left|up|down` opens a split against an explicit anchor pane, and every pane now exports `PROWL_PANE_ID` so an agent or script can address its own pane without guessing from focus.
+
+### Improved
+- Settings now has an Agents group: Profiles moved there, and the new CLI & Skills page takes over the `prowl` CLI install from Advanced.
+
+### Fixed
+- Claude Code's periodic idle-prompt notification was misread as "needs input", which could make `agents wait` hang on an already-idle pane; freshly launched Profile agents are also detected as idle promptly instead of timing out.
+- Pi's background sub-agent activity is now recognized as Working instead of appearing idle.
+- A Claude pane with an active spinner above a queued multi-line message was incorrectly reported as idle.
+
+## [2026.8.20](https://github.com/onevcat/Prowl/releases/tag/v2026.8.20)
+
+This release adds per-repository diffing for workspace children and unifies the Prowl CLI's target syntax.
+
+### New
+- Workspace child rows now support diffs: click their `+N/-M` badge or use the context menu's Show Diff / Show Outgoing Changes. Diff shortcuts (⌘⇧Y, ⌥⌘⇧Y), the View menu, and Command Palette now follow the selected workspace child, not just worktrees.
+- The Prowl CLI accepts `pN`/`tN` pane and tab handles directly in any target position, and adds action-first `prowl create tab` and `prowl close` commands. The older `tab`/`pane` lifecycle commands still work but print a deprecation warning.
+
+### Fixed
+- Fixed terminal tab colors occasionally resolving incorrectly when SwiftUI rendered them asynchronously off the main thread.
+
+### Improved
+- Notification and update controls in the toolbar are now grouped together for a cleaner layout.
+
+## [2026.8.15](https://github.com/onevcat/Prowl/releases/tag/v2026.8.15)
+
+Improved detection accuracy for Claude Code sessions, plus a new CLI command for reading agent results.
+
+### New
+- `prowl agents read <pane>` (CLI): get an immediate, read-only snapshot of a Codex or Claude Code pane's current status and completed result text. Use `--result-only` to pull just the trusted final output, e.g. for piping into scripts.
+
+### Fixed
+- Claude Code panes with a long todo list no longer flash to Idle while a spinner is still actively running.
+- Claude Code panes waiting on a background agent, or showing multi-word elapsed-time status text, are now correctly detected as working instead of Idle.
+- Cmd-clicking a terminal link in Canvas no longer requires repeated clicks or misfires on the wrong link.
+
 ## [2026.8.9](https://github.com/onevcat/Prowl/releases/tag/v2026.8.9)
 
 This release streamlines the toolbar layout and improves the accuracy of agent status detection for Claude and Codex.

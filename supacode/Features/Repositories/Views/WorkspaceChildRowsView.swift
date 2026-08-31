@@ -9,6 +9,8 @@ struct WorkspaceChildRowsView: View {
   let rows: [WorkspaceChildRowModel]
   let selectedID: String?
   let onSelect: (String) -> Void
+  let onShowDiff: (String) -> Void
+  let onShowOutgoingChanges: (String) -> Void
 
   var body: some View {
     ForEach(rows) { row in
@@ -33,7 +35,7 @@ struct WorkspaceChildRowsView: View {
         pinAction: nil,
         isSelected: isSelected,
         archiveAction: nil,
-        onDiffTap: nil,
+        onDiffTap: { onShowDiff(row.id) },
         onStopRunScript: nil,
       )
       .padding(.leading, 14)
@@ -61,6 +63,15 @@ struct WorkspaceChildRowsView: View {
         Button("Reveal in Finder") {
           NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: row.workingDirectory.path)
         }
+        Divider()
+        Button("Show Diff") {
+          onShowDiff(row.id)
+        }
+        .help("Show uncommitted changes in \(row.repositoryName)")
+        Button("Show Outgoing Changes") {
+          onShowOutgoingChanges(row.id)
+        }
+        .help("Show committed changes relative to this repository's base")
       }
       .id(row.id)
     }

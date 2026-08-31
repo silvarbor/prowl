@@ -181,7 +181,7 @@ extension RepositoriesFeature {
         clearAllPullRequestRefreshTracking(state: &state)
         return .run { send in
           while !Task.isCancelled {
-            try? await ContinuousClock().sleep(for: githubIntegrationRecoveryInterval)
+            try? await clock.sleep(for: githubIntegrationRecoveryInterval)
             guard !Task.isCancelled else {
               return
             }

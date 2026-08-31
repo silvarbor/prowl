@@ -1,6 +1,6 @@
 import Foundation
 
-struct TerminalTabID: Hashable, Identifiable, Sendable {
+nonisolated struct TerminalTabID: Hashable, Identifiable, Sendable {
   let rawValue: UUID
 
   init() {

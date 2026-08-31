@@ -27,7 +27,7 @@ why Prowl is fully native and CJK-correct.
 
 | Operation | How |
 |-----------|-----|
-| New tab | Terminal menu → **New Terminal** (Ghostty `new_tab`, typically `⌘T`); the **+** on a Shelf spine; the [`prowl tab create`](cli.md) CLI |
+| New tab | Terminal menu → **New Terminal** (Ghostty `new_tab`, typically `⌘T`); the **+** on a Shelf spine; the [`prowl create tab`](cli.md) CLI |
 | Select tab 1–9 | `⌘1`–`⌘9` |
 | Previous / Next tab | `⌘⇧[` / `⌘⇧]` |
 | Close focused tab | Terminal menu → **Close Terminal Tab** (Ghostty `close_tab`) |

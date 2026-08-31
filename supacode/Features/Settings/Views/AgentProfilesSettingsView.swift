@@ -1,7 +1,7 @@
 import ComposableArchitecture
 import SwiftUI
 
-/// Settings → Agents: the profile list, with a native drill-in editor page per
+/// Settings → Agents → Profiles: the profile list, with a native drill-in editor page per
 /// profile. `NavigationStack` is driven by TCA's `StackState`, so the system
 /// Back control writes its pop directly to the reducer-owned route.
 /// List order is the recommendation fallback order.
@@ -14,7 +14,7 @@ struct AgentProfilesSettingsView: View {
         profileListSection
       }
       .formStyle(.grouped)
-      .navigationTitle("Agents")
+      .navigationTitle("Agent Profiles")
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
       .task { store.send(.task) }
     } destination: { editorStore in

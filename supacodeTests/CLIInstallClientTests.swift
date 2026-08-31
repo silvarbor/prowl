@@ -42,17 +42,10 @@ struct CLIInstallClientTests {
     let client = CLIInstallClient(
       bundledCLIURL: { fakeBundledBinary },
       installationStatus: { path in
-        let fileManager = FileManager.default
-        let filePath = path.path(percentEncoded: false)
-        guard fileManager.fileExists(atPath: filePath) else { return .notInstalled }
-        guard let attrs = try? fileManager.attributesOfItem(atPath: filePath),
-          attrs[.type] as? FileAttributeType == .typeSymbolicLink,
-          let destination = try? fileManager.destinationOfSymbolicLink(atPath: filePath)
-        else { return .installedDifferentSource(path: filePath) }
-        if destination == fakeBundledBinary.path(percentEncoded: false) {
-          return .installed(path: filePath)
-        }
-        return .installedDifferentSource(path: filePath)
+        SymlinkInstaller.status(
+          linkPath: path.path(percentEncoded: false),
+          source: fakeBundledBinary.path(percentEncoded: false)
+        )
       },
       install: { _ in },
       uninstall: { _ in }
@@ -78,7 +71,7 @@ struct CLIInstallClientTests {
     let client = CLIInstallClient.liveValue
     let status = client.installationStatus(installPath)
 
-    #expect(status == .installedDifferentSource(path: installPath.path))
+    #expect(status == .installedDifferentSource(path: installPath.path, destination: otherBinary.path))
   }
 
   @Test func statusDifferentSourceWhenRegularFileExists() throws {
@@ -91,7 +84,57 @@ struct CLIInstallClientTests {
     let client = CLIInstallClient.liveValue
     let status = client.installationStatus(installPath)
 
-    #expect(status == .installedDifferentSource(path: installPath.path))
+    #expect(status == .installedDifferentSource(path: installPath.path, destination: nil))
+  }
+
+  @Test func statusBrokenWhenSymlinkIsDangling() throws {
+    let tmp = try makeTempDir()
+    defer { cleanup(tmp) }
+
+    let installPath = tmp.appendingPathComponent("prowl")
+    try FileManager.default.createSymbolicLink(
+      atPath: installPath.path,
+      withDestinationPath: tmp.appendingPathComponent("moved-away").path
+    )
+
+    let client = CLIInstallClient.liveValue
+    let status = client.installationStatus(installPath)
+
+    #expect(status == .broken(path: installPath.path, destination: tmp.appendingPathComponent("moved-away").path))
+  }
+
+  @Test func liveInstallReplacesDanglingSymlinkWithBundledCLI() async throws {
+    let tmp = try makeTempDir()
+    defer { cleanup(tmp) }
+
+    let installPath = tmp.appendingPathComponent("prowl")
+    try FileManager.default.createSymbolicLink(
+      atPath: installPath.path,
+      withDestinationPath: tmp.appendingPathComponent("moved-away").path
+    )
+
+    let client = CLIInstallClient.liveValue
+    let bundled = try #require(client.bundledCLIURL())
+    try await client.install(installPath)
+
+    let target = try FileManager.default.destinationOfSymbolicLink(atPath: installPath.path)
+    #expect(target == bundled.path(percentEncoded: false))
+    #expect(client.installationStatus(installPath) == .installed(path: installPath.path))
+  }
+
+  @Test func liveUninstallRemovesDanglingSymlink() async throws {
+    let tmp = try makeTempDir()
+    defer { cleanup(tmp) }
+
+    let installPath = tmp.appendingPathComponent("prowl")
+    try FileManager.default.createSymbolicLink(
+      atPath: installPath.path,
+      withDestinationPath: tmp.appendingPathComponent("moved-away").path
+    )
+
+    try await CLIInstallClient.liveValue.uninstall(installPath)
+
+    #expect((try? FileManager.default.attributesOfItem(atPath: installPath.path)) == nil)
   }
 
   @Test func installCreatesSymlink() async throws {

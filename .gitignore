@@ -69,6 +69,7 @@ Frameworks/GhosttyKit.xcframework
 Resources/ghostty
 Resources/terminfo
 Resources/docs
+Resources/skills
 .ghostty_hash
 .ghostty_build_stamp
 .build_settings_cache.json
@@ -86,3 +87,4 @@ build/
 # Release-only credentials (analytics, crash reporting)
 Config/Secrets.env
 .build-benchmark/
+scripts/__pycache__/

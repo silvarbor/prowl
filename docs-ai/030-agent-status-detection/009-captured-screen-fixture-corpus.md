@@ -1,5 +1,9 @@
 # 030.009 — Captured Screen Fixture Corpus and Baseline
 
+> Amended by [014-claude-full-screen-live-block.md](014-claude-full-screen-live-block.md):
+> the canonical-tail reduction below now applies to non-Claude fixtures only. Claude
+> fixtures are committed as full active screens, bounded by the captured terminal rows.
+
 | | |
 | --- | --- |
 | **Status** | Implemented |

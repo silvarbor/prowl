@@ -54,6 +54,7 @@ struct CLIAgentsCommandHandlerTests {
     #expect(agent.session?.path == "/tmp/omp-session.jsonl")
     #expect(agent.session?.confidence == "high")
     #expect(agent.session?.source == "transcript_match")
+    #expect(agent.signals?.channels == [])
 
     let idleAgent = payload.agents[1]
     #expect(idleAgent.status == .idle)

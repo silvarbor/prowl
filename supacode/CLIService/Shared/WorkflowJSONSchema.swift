@@ -1,0 +1,266 @@
+// ProwlShared/WorkflowJSONSchema.swift
+// Draft 2020-12 JSON Schema of a `prowl.workflow/v1` file, printed by `prowl workflow schema`.
+// The same document is checked in as ProwlCLIContracts/Resources/workflow-definition-schema.json;
+// a test pins the two together. Structural shape only — cross-reference rules are the validator's.
+
+import Foundation
+
+nonisolated public enum WorkflowJSONSchema {
+  public static let identifier = "https://prowl.onev.cat/contracts/workflow/v1/workflow-definition.json"
+
+  public static func definitionSchemaObject() throws -> [String: Any] {
+    let object = try JSONSerialization.jsonObject(with: Data(definitionSchemaJSON.utf8))
+    guard let dictionary = object as? [String: Any] else {
+      throw CocoaError(.coderInvalidValue)
+    }
+    return dictionary
+  }
+
+  public static let definitionSchemaJSON = #"""
+    {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "https://prowl.onev.cat/contracts/workflow/v1/workflow-definition.json",
+      "title": "Prowl Agent Workflow (prowl.workflow/v1)",
+      "description": "Declarative multi-agent workflow run by Prowl (docs-ai 063 dsl-spec.md).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "id", "name", "steps"],
+      "properties": {
+        "schema": { "const": "prowl.workflow/v1" },
+        "id": { "$ref": "#/$defs/workflowId" },
+        "name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "icon": { "type": "string", "description": "SF Symbol name" },
+        "inputs": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/slug" },
+          "additionalProperties": { "$ref": "#/$defs/input" }
+        },
+        "roles": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/slug" },
+          "additionalProperties": { "$ref": "#/$defs/role" }
+        },
+        "steps": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/step" } }
+      },
+      "$defs": {
+        "slug": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$" },
+        "workflowId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{0,63}$" },
+        "template": { "type": "string" },
+        "input": {
+          "oneOf": [
+            { "$ref": "#/$defs/integerInput" },
+            { "$ref": "#/$defs/stringInput" },
+            { "$ref": "#/$defs/enumInput" }
+          ]
+        },
+        "integerInput": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": {
+            "type": { "const": "integer" },
+            "default": { "type": "integer" },
+            "min": { "type": "integer" },
+            "max": { "type": "integer" },
+            "prompt": { "type": "string" }
+          }
+        },
+        "stringInput": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": {
+            "type": { "const": "string" },
+            "default": { "type": "string" },
+            "prompt": { "type": "string" }
+          }
+        },
+        "enumInput": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "values"],
+          "properties": {
+            "type": { "const": "enum" },
+            "values": {
+              "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 }
+            },
+            "default": { "type": "string" },
+            "prompt": { "type": "string" }
+          }
+        },
+        "role": {
+          "oneOf": [
+            { "$ref": "#/$defs/currentRole" },
+            { "$ref": "#/$defs/pickRole" },
+            { "$ref": "#/$defs/launchRole" }
+          ]
+        },
+        "currentRole": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source"],
+          "properties": { "source": { "const": "current" } }
+        },
+        "pickRole": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source"],
+          "properties": { "source": { "const": "pick" } }
+        },
+        "launchRole": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source"],
+          "properties": {
+            "source": { "const": "launch" },
+            "kind": { "const": "interactive" },
+            "agents": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "suggest": { "$ref": "#/$defs/suggest" },
+            "bind": { "enum": ["ask", "auto"] },
+            "placement": { "enum": ["split", "tab"] },
+            "direction": { "enum": ["right", "left", "up", "down"] },
+            "background": { "type": "boolean" }
+          }
+        },
+        "suggest": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "agent": { "type": "string" },
+            "model": { "type": "string" },
+            "reasoning_effort": { "type": "string" },
+            "execution_mode": { "type": "string" }
+          }
+        },
+        "step": {
+          "oneOf": [
+            { "$ref": "#/$defs/messageStep" },
+            { "$ref": "#/$defs/launchStep" },
+            { "$ref": "#/$defs/actionStep" },
+            { "$ref": "#/$defs/notifyStep" },
+            { "$ref": "#/$defs/closeStep" },
+            { "$ref": "#/$defs/repeatStep" }
+          ]
+        },
+        "loopStep": {
+          "oneOf": [
+            { "$ref": "#/$defs/messageStep" },
+            { "$ref": "#/$defs/actionStep" },
+            { "$ref": "#/$defs/notifyStep" },
+            { "$ref": "#/$defs/closeStep" }
+          ]
+        },
+        "messageStep": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "message"],
+          "properties": {
+            "id": { "$ref": "#/$defs/slug" },
+            "title": { "$ref": "#/$defs/template" },
+            "message": { "$ref": "#/$defs/slug" },
+            "text": { "$ref": "#/$defs/template" },
+            "instruction": { "$ref": "#/$defs/template" },
+            "expect": { "$ref": "#/$defs/expect" }
+          },
+          "oneOf": [{ "required": ["text"] }, { "required": ["instruction"] }]
+        },
+        "launchStep": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "launch", "prompt"],
+          "properties": {
+            "id": { "$ref": "#/$defs/slug" },
+            "title": { "$ref": "#/$defs/template" },
+            "launch": { "$ref": "#/$defs/slug" },
+            "prompt": { "$ref": "#/$defs/template" },
+            "skill": { "$ref": "#/$defs/workflowId" },
+            "expect": { "$ref": "#/$defs/expect" }
+          }
+        },
+        "actionStep": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "action"],
+          "properties": {
+            "id": { "$ref": "#/$defs/slug" },
+            "title": { "$ref": "#/$defs/template" },
+            "action": { "enum": ["handoff.transition", "handoff.checkpoint", "git.context"] },
+            "with": {
+              "type": "object",
+              "propertyNames": { "$ref": "#/$defs/slug" },
+              "additionalProperties": { "type": ["string", "number", "boolean"] }
+            }
+          }
+        },
+        "notifyStep": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "notify"],
+          "properties": {
+            "id": { "$ref": "#/$defs/slug" },
+            "title": { "$ref": "#/$defs/template" },
+            "notify": { "$ref": "#/$defs/template" }
+          }
+        },
+        "closeStep": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "close"],
+          "properties": {
+            "id": { "$ref": "#/$defs/slug" },
+            "title": { "$ref": "#/$defs/template" },
+            "close": { "$ref": "#/$defs/slug" }
+          }
+        },
+        "repeatStep": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "repeat", "steps"],
+          "properties": {
+            "id": { "$ref": "#/$defs/slug" },
+            "title": { "$ref": "#/$defs/template" },
+            "repeat": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["max"],
+              "properties": {
+                "max": {
+                  "oneOf": [
+                    { "type": "integer", "minimum": 1, "maximum": 20 },
+                    {
+                      "type": "string",
+                      "pattern": "^\\s*\\{\\{\\s*inputs\\.[a-z0-9_-]+\\s*\\}\\}\\s*$"
+                    }
+                  ]
+                },
+                "until": {
+                  "type": "string",
+                  "pattern":
+                    "^outputs\\.[a-z0-9_-]+\\.verdict\\s*(==\\s*[a-z0-9_-]+|in\\s*\\[[^\\]]*\\])$"
+                }
+              }
+            },
+            "steps": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/loopStep" } }
+          }
+        },
+        "expect": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "output": { "$ref": "#/$defs/slug" },
+            "format": { "enum": ["markdown", "text", "json"] },
+            "sections": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "verdict": {
+              "type": "array", "minItems": 2, "maxItems": 4, "uniqueItems": true, "items": { "$ref": "#/$defs/slug" }
+            },
+            "timeout": { "type": "string", "pattern": "^\\d+\\s*[smh]$" },
+            "on_timeout": { "enum": ["attention", "skip", "cancel"] },
+            "strict": { "type": "boolean" }
+          },
+          "dependentRequired": { "on_timeout": ["timeout"] }
+        }
+      }
+    }
+    """#
+}

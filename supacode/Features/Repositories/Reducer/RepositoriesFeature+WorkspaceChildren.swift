@@ -9,6 +9,12 @@ struct ResolvedWorkspaceChild: Equatable, Sendable, Identifiable {
   let repositoryName: String
   let metadataBranch: String?
   let workingDirectory: URL
+  /// The child's canonical repository root: the recorded local source for
+  /// linked and worktree checkouts, else the working directory itself (remote
+  /// clones, metadata without a source location). Keys `repositorySettings`
+  /// and fills `{repoPath}`, matching how `Worktree.repositoryRootURL` points
+  /// at the registered repository rather than the checkout.
+  let repositoryRootURL: URL
 }
 
 extension RepositoriesFeature {
@@ -24,7 +30,9 @@ extension RepositoriesFeature {
   func refreshWorkspaceChildrenEffect(state: State) -> Effect<Action> {
     let children = state.allResolvedWorkspaceChildren()
     guard !children.isEmpty else {
-      return .none
+      // A reload that removed the last child must also stop an in-flight
+      // refresh, or its late result would repopulate the just-pruned maps.
+      return .cancel(id: CancelID.workspaceChildrenRefresh)
     }
     let gitClient = self.gitClient
     let githubCLI = self.githubCLI
@@ -128,9 +136,18 @@ func pruneWorkspaceChildInfo(state: inout RepositoriesFeature.State) {
   let validIDs = Set(state.allResolvedWorkspaceChildren().map(\.id))
   state.workspaceChildInfoByID = state.workspaceChildInfoByID.filter { validIDs.contains($0.key) }
   state.workspaceChildBranchByID = state.workspaceChildBranchByID.filter { validIDs.contains($0.key) }
-  if let selectedWorkspaceChildID = state.selectedWorkspaceChildID,
-    !validIDs.contains(selectedWorkspaceChildID)
-  {
-    state.selectedWorkspaceChildID = nil
+  // The selection is validated against the selected workspace's own children,
+  // not the global path set: another workspace referencing the same path must
+  // not keep a removed child selected here.
+  if let selectedWorkspaceChildID = state.selectedWorkspaceChildID {
+    let selectionIsValid =
+      state.selectedRepository.map { repository in
+        repository.isWorkspace
+          && state.resolvedWorkspaceChildren(in: repository)
+            .contains { $0.id == selectedWorkspaceChildID }
+      } ?? false
+    if !selectionIsValid {
+      state.selectedWorkspaceChildID = nil
+    }
   }
 }

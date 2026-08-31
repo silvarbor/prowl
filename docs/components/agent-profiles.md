@@ -32,28 +32,71 @@ respawn.
   row shows the profile name with the runtime name trailing. Rows for runtimes
   that look unavailable are dimmed with a warning but stay clickable —
   availability signals can be wrong, so they never block a launch. "Manage
-  Agent Profiles…" opens Settings → Agents. When launch rows exist the capsule
+  Agent Profiles…" opens Settings → Agents → Profiles. When launch rows exist
+  the capsule
   carries a trailing **quick-launch segment** (a `play.circle` split button):
   one click launches the Recommended profile directly, skipping the popover.
 - **Command Palette** (`⌘P`) — "Launch Agent: <name>" rows dispatch the exact
   same action, and carry the same availability warning in their subtitle.
+- **CLI** — `prowl profiles list` returns enabled and disabled Profiles with their
+  runtime and shell-probe availability. Launch into a deterministic new tab or anchored
+  split with `prowl create tab|pane … --profile <name|uuid>`; add `--prompt -` to read a
+  kickoff prompt from stdin and `--background` to preserve the current selection/focus.
+  Disabled Profiles cannot launch; availability warnings never block an attempt.
 
-A launch creates a **new** tab (or split, per placement) in the current
-worktree, running the agent interactively with no initial prompt. Prowl never
-types into an existing shell. The new pane records its profile identity at
+Every launch creates a **new** tab or split; Prowl never types the invocation into an
+existing shell. Toolbar and Command Palette launches use the Profile's saved placement in
+the current worktree and start interactively with no initial prompt; if a saved split cannot
+be created, these interactive launchers fall back to a foreground tab. CLI launches override
+placement from the `create tab|pane` command, remain strict about pane placement, and may
+supply the kickoff prompt. A prompted
+CLI launch is also an atomic dispatch: its create response includes a pending opaque receipt,
+the launched child alone receives `PROWL_DISPATCH_ID`, and the effective prompt tells the
+agent to finish with `prowl agents dispatch-complete --outcome … --summary …`; the required
+summary is a control-free single line. Unprompted launches do not create a receipt. Failure to
+launch or bind rolls back the new surface and cancels the unpublished dispatch; a new CLI also
+rejects an old app response that omits the
+required dispatch metadata.
+
+The new pane records its profile identity at
 creation: the Active Agents rows and the capsule show the profile's display
 name (frozen at launch — later renames don't relabel live panes). The identity
 lives exactly as long as the launched agent: once it exits, any agent started
 manually in that pane shows its own name and runs with your default
 environment and account.
-A launch that fails before its surface exists (e.g. home provisioning) shows a
-warning toast, and only a successful launch updates the per-repo "last
-launched" memory behind the Recommended resolution.
+Claude Code, Codex, GitHub Copilot, Droid, Qoder, Pi, Oh My Pi, and OpenCode Profile launches
+automatically prepare launch-scoped native signal bridges. Prowl writes no hook configuration
+to runtime homes or repositories. Claude merges an explicit final `--settings` JSON/file
+source in memory while preserving unknown fields and existing hook arrays; Codex preserves an
+effective user notifier through a private transparent dispatcher; Copilot, Pi, and Oh My Pi
+load a read-only file shipped inside Prowl through an additive flag; Droid and Qoder receive a
+merged settings object; OpenCode receives a launch-scoped `OPENCODE_CONFIG_CONTENT` whose
+plugin list is appended to whatever the Profile or your shell already exports. Hook JSON,
+channel tokens, socket paths, and notifier argv ride in child-only carriers rather than
+terminal input, shell history, preview values, logs, or durable Profile state. A manual
+runtime started later in the same pane inherits none of this coverage. See
+[Agent detection](agent-detection.md#managed-native-completion-signals) for each runtime's
+events and the cases that run unchanged.
+
+Preparation is bounded and occurs before a prompted dispatch is issued. If Prowl cannot
+safely merge settings or content, resolve a configuration or shell environment, preserve a
+notifier, or find its bundled resource — or the runtime's own flags disable hooks
+(`--setting-sources`, `--pure`) — the Profile still launches with its original argv and no
+exact managed channel. Toolbar and
+Command Palette show one non-blocking warning toast. CLI JSON adds one optional
+`warnings: [{code: "managed_hook_degraded", runtime, message}]`; text output writes the
+warning once to stderr. Receipt behavior is unchanged.
+
+A Toolbar or Command Palette launch that fails before its surface exists (e.g.
+home provisioning) shows a warning toast, and only a successful launch from
+those UI surfaces updates the per-repo "last launched" memory behind the
+Recommended resolution. CLI launches instead return a structured error and do
+not update Recommended memory.
 
 ## Managing profiles
 
-Open **Settings → Agents** to see the ordered profile list. Click a profile to
-push its editor; the native Back control returns to the list while the Settings
+Open **Settings → Agents → Profiles** to see the ordered profile list. Click a
+profile to push its editor; the native Back control returns to the list while the Settings
 sidebar remains available. Adding a profile opens the same editor immediately.
 Changing another Settings sidebar section leaves the editor and opens that
 section's root.
@@ -141,8 +184,9 @@ later Extra Arguments may override the generated flags: Advanced arguments
 are authoritative, and Prowl does not attempt to interpret every runtime's
 full, evolving option and configuration surface.
 The editor opens with a **Profile** section (name, agent, icon), followed by
-**Launch Preview** — the exact rendered invocation, including the env prefix
-for bound profiles, using the same rendering as the real launch — then a
+**Launch Preview** — the deterministic base invocation, including the env prefix
+for bound profiles. Execution-only managed-signal settings, tokens, socket paths, and
+forwarding locators are prepared later and remain redacted from the preview — then a
 **Details** section with the remaining launch options (model, reasoning
 effort, execution mode, placement).
 
@@ -186,9 +230,8 @@ control; Extra Arguments stay available for expert overrides.
 
 Amp has one additional limitation: it supports bare interactive Profile launch
 and `--execute` headless launch, but has no argv form that seeds a prompt and
-then remains interactive. Current Agent Profiles always launch bare, so this
-does not block the shipped UI; it does prevent treating Amp as an interactive
-prompt receiver in a future handoff workflow without another transport.
+then remains interactive. Toolbar/Command Palette and CLI launches without `--prompt`
+still work; `create … --profile <amp-profile> --prompt -` fails without creating a pane.
 
 ## Where things live on disk
 

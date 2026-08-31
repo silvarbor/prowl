@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "bash": "\"$COPILOT_PLUGIN_ROOT/../../prowl-cli/prowl\" agents _hook copilot SessionStart",
+        "timeoutSec": 10
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "bash": "\"$COPILOT_PLUGIN_ROOT/../../prowl-cli/prowl\" agents _hook copilot Stop",
+        "timeoutSec": 10
+      }
+    ],
+    "SessionEnd": [
+      {
+        "type": "command",
+        "bash": "\"$COPILOT_PLUGIN_ROOT/../../prowl-cli/prowl\" agents _hook copilot SessionEnd",
+        "timeoutSec": 10
+      }
+    ],
+    "Notification": [
+      {
+        "type": "command",
+        "bash": "\"$COPILOT_PLUGIN_ROOT/../../prowl-cli/prowl\" agents _hook copilot Notification",
+        "timeoutSec": 10,
+        "matcher": "permission_prompt|elicitation_dialog"
+      }
+    ]
+  }
+}

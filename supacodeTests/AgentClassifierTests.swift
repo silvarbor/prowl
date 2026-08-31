@@ -281,4 +281,61 @@ struct AgentClassifierTests {
     #expect(result.name == "claude")
     #expect(result.process.pid == 101)
   }
+
+  @Test func launchProcessIsTheTopmostJobAncestorOfTheIdentifiedProcess() throws {
+    // Droid ≥ 0.202 forks its engine as a second `droid` process; `proc_listpids`
+    // lists the newest member first, so the child is scanned before the launcher.
+    let job = ForegroundJob(
+      processGroupID: 100,
+      processes: [
+        ForegroundProcess(
+          pid: 101,
+          parentProcessID: 100,
+          name: "droid",
+          argv0: "droid",
+          cmdline: "droid exec --input-format stream-jsonrpc --output-format stream-jsonrpc"
+        ),
+        ForegroundProcess(
+          pid: 100,
+          parentProcessID: 50,
+          name: "droid",
+          argv0: "droid",
+          cmdline: "droid --settings /tmp/settings.json"
+        ),
+      ]
+    )
+
+    let result = try #require(identifyAgentInJob(job))
+    #expect(result.agent == .droid)
+    #expect(result.launchProcessID == 100)
+  }
+
+  @Test func launchProcessIsTheIdentifiedProcessWhenItsParentIsOutsideTheJob() throws {
+    let shellChild = ForegroundJob(
+      processGroupID: 100,
+      processes: [
+        ForegroundProcess(pid: 100, parentProcessID: 50, name: "claude", argv0: "claude", cmdline: "claude")
+      ]
+    )
+    #expect(try #require(identifyAgentInJob(shellChild)).launchProcessID == 100)
+
+    let unknownParent = ForegroundJob(
+      processGroupID: 100,
+      processes: [
+        ForegroundProcess(pid: 100, name: "codex", argv0: "codex", cmdline: "codex")
+      ]
+    )
+    #expect(try #require(identifyAgentInJob(unknownParent)).launchProcessID == 100)
+  }
+
+  @Test func launchProcessWalkStopsOnACorruptParentCycle() {
+    let job = ForegroundJob(
+      processGroupID: 100,
+      processes: [
+        ForegroundProcess(pid: 101, parentProcessID: 100, name: "droid", argv0: "droid", cmdline: "droid"),
+        ForegroundProcess(pid: 100, parentProcessID: 101, name: "droid", argv0: "droid", cmdline: "droid"),
+      ]
+    )
+    #expect([100, 101].contains(job.launchProcessID(of: 101)))
+  }
 }

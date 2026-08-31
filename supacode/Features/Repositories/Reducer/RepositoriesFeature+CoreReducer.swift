@@ -1004,7 +1004,10 @@ extension RepositoriesFeature {
       return .none
 
     case .workspaceChildrenInfoLoaded(let updates):
-      applyWorkspaceChildrenInfo(updates, state: &state)
+      // An in-flight refresh can land after a reload changed the child set;
+      // only merge updates that still belong to a current workspace child.
+      let validIDs = Set(state.allResolvedWorkspaceChildren().map(\.id))
+      applyWorkspaceChildrenInfo(updates.filter { validIDs.contains($0.id) }, state: &state)
       return .none
 
     case .alert(.dismiss):

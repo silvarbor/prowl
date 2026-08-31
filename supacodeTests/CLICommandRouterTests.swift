@@ -68,6 +68,48 @@ struct CLICommandRouterTests {
   }
 
   @MainActor
+  @Test func routerDispatchesAgentsSignalWithCallerContext() async {
+    let handler = ContextRecordingCommandHandler(command: "agents.signal")
+    let router = CLICommandRouter(agentsSignalHandler: handler)
+    let envelope = CommandEnvelope(
+      output: .json,
+      command: .agentsSignal(AgentSignalInput(event: .turnEnded))
+    )
+
+    let response = await router.route(
+      envelope,
+      context: CLICommandContext(callerProcessID: 42)
+    )
+
+    #expect(response.command == "agents.signal")
+    #expect(handler.callerProcessID == 42)
+  }
+
+  @MainActor
+  @Test func routerDispatchesProfilesToProfilesHandler() async {
+    let router = CLICommandRouter()
+    let envelope = CommandEnvelope(
+      output: .json,
+      command: .profiles(ProfilesInput())
+    )
+    let response = await router.route(envelope)
+    #expect(response.command == "profiles")
+    #expect(response.error?.code == "NOT_IMPLEMENTED")
+  }
+
+  @MainActor
+  @Test func routerDispatchesAgentsReadToAgentsReadHandler() async {
+    let router = CLICommandRouter()
+    let envelope = CommandEnvelope(
+      output: .json,
+      command: .agentsRead(AgentReadInput(pane: "p7"))
+    )
+    let response = await router.route(envelope)
+    #expect(response.command == "agents.read")
+    #expect(response.error?.code == "NOT_IMPLEMENTED")
+  }
+
+  @MainActor
   @Test func routerDispatchesKeyToKeyHandler() async {
     let router = CLICommandRouter()
     let envelope = CommandEnvelope(
@@ -137,6 +179,9 @@ struct CLICommandRouterTests {
       .open(OpenInput()),
       .list(ListInput()),
       .agents(AgentsInput()),
+      .agentsRead(AgentReadInput(pane: "p7")),
+      .agentsSignal(AgentSignalInput(event: .turnEnded)),
+      .profiles(ProfilesInput()),
       .focus(FocusInput()),
       .send(SendInput(text: "x")),
       .key(KeyInput(rawToken: "tab", token: "tab")),
@@ -162,5 +207,29 @@ private struct MockCommandHandler: CommandHandler {
   // swiftlint:disable:next async_without_await
   func handle(envelope: CommandEnvelope) async -> CommandResponse {
     response
+  }
+}
+
+@MainActor
+private final class ContextRecordingCommandHandler: CommandHandler {
+  let command: String
+  var callerProcessID: pid_t?
+
+  init(command: String) {
+    self.command = command
+  }
+
+  func handle(envelope: CommandEnvelope) async -> CommandResponse {
+    await handle(envelope: envelope, context: CLICommandContext())
+  }
+
+  // swiftlint:disable:next async_without_await
+  func handle(envelope: CommandEnvelope, context: CLICommandContext) async -> CommandResponse {
+    callerProcessID = context.callerProcessID
+    return CommandResponse(
+      ok: true,
+      command: command,
+      schemaVersion: "prowl.cli.\(command).v1"
+    )
   }
 }

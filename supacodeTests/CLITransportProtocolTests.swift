@@ -83,8 +83,8 @@ struct CLITransportProtocolTests {
   }
 
   @Test func maxReasonablePayloadLengthEncodes() {
-    // 10MB is the max accepted by both client and server
-    let maxLength: UInt32 = 9_999_999
+    // 32 MiB is the max accepted by both client and server.
+    let maxLength: UInt32 = 32 * 1_024 * 1_024
     var encoded = UInt32(maxLength).bigEndian
     var data = Data()
     withUnsafeBytes(of: &encoded) { data.append(contentsOf: $0) }

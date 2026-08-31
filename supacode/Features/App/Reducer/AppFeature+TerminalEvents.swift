@@ -164,6 +164,13 @@ extension AppFeature {
       $userRepositorySettings.withLock { $0.lastLaunchedAgentProfileID = profileID }
       return .none
 
+    case .agentProfileLaunchWarning(_, let profileName, let message):
+      return .send(
+        .repositories(
+          .showToast(.warning("“\(profileName)” launched without managed signals. \(message)"))
+        )
+      )
+
     case .agentProfileLaunchFailed(_, let profileName):
       return .send(.repositories(.showToast(.warning("Couldn't launch “\(profileName)”"))))
 

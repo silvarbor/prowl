@@ -11,45 +11,46 @@ typealias OutgoingComparisonResolver = @Sendable () async throws -> GitOutgoingC
 nonisolated struct OutgoingChangesClient: Sendable {
   var open:
     @MainActor @Sendable (
-      _ worktree: Worktree,
+      _ target: DiffTarget,
       _ resolvedKeybindings: ResolvedKeybindingMap,
       _ onError: @escaping @MainActor @Sendable (OpenActionError) -> Void
     ) async -> Void
-  var makeResolver: @MainActor @Sendable (_ worktree: Worktree) -> OutgoingComparisonResolver
+  var makeResolver: @MainActor @Sendable (_ target: DiffTarget) -> OutgoingComparisonResolver
 }
 
 extension OutgoingChangesClient {
-  /// `pullRequestInfo` reads the currently cached pull request for a worktree;
-  /// the app wires it to live store state so resolvers observe pull request
-  /// changes that happen after the diff window was opened.
+  /// `pullRequestInfo` reads the currently cached pull request for a diff
+  /// target (a worktree or a workspace child); the app wires it to live store
+  /// state so resolvers observe pull request changes that happen after the
+  /// diff window was opened.
   static func live(
-    pullRequestInfo: @escaping @MainActor @Sendable (Worktree.ID) -> GithubPullRequest?
+    pullRequestInfo: @escaping @MainActor @Sendable (DiffTargetID) -> GithubPullRequest?
   ) -> Self {
-    let makeResolver: @MainActor @Sendable (Worktree) -> OutgoingComparisonResolver = { worktree in
+    let makeResolver: @MainActor @Sendable (DiffTarget) -> OutgoingComparisonResolver = { target in
       {
-        let pullRequest = await pullRequestInfo(worktree.id)
+        let pullRequest = await pullRequestInfo(target.id)
         let pullRequestBase = pullRequest.map {
           GitPullRequestBase(url: $0.url, baseRefName: $0.baseRefName ?? "")
         }
-        @Shared(.repositorySettings(worktree.repositoryRootURL)) var repositorySettings
+        @Shared(.repositorySettings(target.repositoryRootURL)) var repositorySettings
         let gitClient = GitClient()
         let base = try await gitClient.outgoingBaseResolution(
           pullRequest: pullRequestBase,
           configuredBaseRef: repositorySettings.worktreeBaseRef,
-          in: worktree.workingDirectory
+          in: target.workingDirectory
         )
-        return try await gitClient.outgoingChangesComparison(base: base, at: worktree.workingDirectory)
+        return try await gitClient.outgoingChangesComparison(base: base, at: target.workingDirectory)
       }
     }
     return OutgoingChangesClient(
-      open: { worktree, resolvedKeybindings, onError in
-        let resolver = makeResolver(worktree)
+      open: { target, resolvedKeybindings, onError in
+        let resolver = makeResolver(target)
         do {
           let comparison = try await resolver()
           @Shared(.settingsFile) var settingsFile
           DiffWindowManager.shared.show(
-            worktreeURL: worktree.workingDirectory,
-            branchName: worktree.name,
+            worktreeURL: target.workingDirectory,
+            branchName: target.branchName,
             comparison: .outgoing(comparison),
             outgoingResolver: resolver,
             resolvedKeybindings: resolvedKeybindings,

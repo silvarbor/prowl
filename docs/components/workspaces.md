@@ -14,7 +14,8 @@ When you open a workspace in Prowl:
 - The `prowl` CLI reports the runnable target's `worktree.kind` as `workspace`.
 - Git worktree, branch, diff, and PR controls remain per-repository features; a
   workspace is intentionally a multi-repo working directory rather than a single
-  git repository.
+  git repository. Diff opens per child repository from its sidebar row (see
+  below).
 
 ## Folder layout
 
@@ -110,7 +111,14 @@ current branch, uncommitted line counts, and pull request badge when available,
 including immediately after a newly created workspace is opened. Click a child
 row to select it and focus its terminal tab rooted at that repository folder
 inside the workspace, creating that tab the first time it is selected.
-Right-click a child row for **Copy Path** / **Reveal in Finder**.
+Right-click a child row for **Copy Path** / **Reveal in Finder** /
+**Show Diff** / **Show Outgoing Changes**.
+
+Diff works per child repository: click the child's `+N/-M` badge to open the
+diff for that repository, or, with a child selected, use `⌘⇧Y` (Show Diff),
+`⌘⌥⇧Y` (Show Outgoing Changes), or the matching Command Palette items. All
+configured diff tools apply; the Hunk tool opens a workspace terminal tab
+rooted at the child folder. See [diff-view](diff-view.md).
 
 ## Removing a workspace
 

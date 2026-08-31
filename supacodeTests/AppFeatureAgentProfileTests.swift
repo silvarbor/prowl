@@ -83,6 +83,40 @@ struct AppFeatureAgentProfileTests {
     #expect(repoSettings.wrappedValue.lastLaunchedAgentProfileID == nil)
   }
 
+  @Test(.dependencies) func degradedHookEventShowsOneNonBlockingWarningToast() async {
+    let worktree = makeWorktree()
+    let repositories = makeRepositoriesState(worktree: worktree)
+    let storage = SettingsTestStorage()
+    let store = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      TestStore(
+        initialState: AppFeature.State(
+          repositories: repositories,
+          settings: SettingsFeature.State()
+        )
+      ) {
+        AppFeature()
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .terminalEvent(
+        .agentProfileLaunchWarning(
+          worktreeID: worktree.id,
+          profileName: "Codex",
+          message: "Notifier resolver unavailable."
+        )
+      )
+    )
+    await store.receive(\.repositories.showToast)
+    #expect(
+      store.state.repositories.statusToast
+        == .warning("“Codex” launched without managed signals. Notifier resolver unavailable.")
+    )
+  }
+
   @Test(.dependencies) func launchIgnoresDisabledOrUnknownProfiles() async {
     let worktree = makeWorktree()
     let repositories = makeRepositoriesState(worktree: worktree)

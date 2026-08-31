@@ -66,10 +66,24 @@ struct AgentScreenFixtureCorpusTests {
 
     #expect(!fixtures.isEmpty, "The captured screen corpus must not be empty.")
     for fixture in fixtures {
-      #expect(
-        fixture.text == AgentScreenFixtureCorpus.canonicalTail(fixture.text),
-        "Fixture is not the canonical 24-non-empty-line detector tail: \(fixture.relativePath)"
-      )
+      // The corpus must hold exact production detector inputs. For agents
+      // that consume the bounded tail this is checkable directly; for Claude
+      // the tail check is x == x, so the enforceable invariant is that a
+      // full-active-screen capture cannot exceed the captured viewport.
+      if fixture.agent == .claude {
+        let lineCount = fixture.text
+          .split(separator: "\n", omittingEmptySubsequences: false)
+          .count
+        #expect(
+          lineCount <= fixture.metadata.terminal.rows,
+          "Claude fixtures are full screens and cannot exceed the captured terminal rows: \(fixture.relativePath)"
+        )
+      } else {
+        #expect(
+          fixture.text == fixture.agent.detectionScreenText(from: fixture.text),
+          "Fixture is not the exact detector input for its agent: \(fixture.relativePath)"
+        )
+      }
 
       let actualState = fixture.agent.detectState(in: fixture.text)
       let mismatchMessage =
@@ -146,10 +160,6 @@ enum AgentScreenFixtureCorpus {
       )
     }
     return fixtures
-  }
-
-  static func canonicalTail(_ content: String) -> String {
-    agentDetectionRecentText(content)
   }
 
   private static func loadFixture(at screenURL: URL, root: URL) throws -> AgentScreenFixture {

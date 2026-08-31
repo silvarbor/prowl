@@ -1,5 +1,10 @@
 # 030.012 — Claude Screen Profile: Action
 
+> Amended by [014-claude-full-screen-live-block.md](014-claude-full-screen-live-block.md):
+> Claude now consumes the full active screen and the live status region is bounded by
+> row shape instead of `suffix(3)`; the canonical-tail contract and the Debug
+> canonical-tail assert described below no longer apply to Claude.
+
 | | |
 | --- | --- |
 | **Status** | Implemented |

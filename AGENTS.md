@@ -18,12 +18,16 @@ make bench                       # Run performance benchmarks with -O; append ab
 make measure-cpu                 # Steady-state CPU + per-symbol attribution of the running Prowl Debug app
 make capture-spike               # Sample the running Prowl Debug app when CPU crosses a threshold
 make measure-titles              # Black-box check that animated tab titles stay coalesced (~1 change/s)
+make agent-versions              # Compare installed tier-A agent CLI versions with the managed-hook attestation (docs-ai 064)
 make log-stream                  # Stream app logs (subsystem: com.onevcat.prowl)
 make build-cli                   # Build CLI (prowl) via SwiftPM
-make test-cli-smoke              # Run CLI smoke tests (unit-level)
+make test-cli-smoke              # Run CLI executable smoke tests
+make test-cli-unit               # Run CLI unit tests
 make test-cli-integration        # Run CLI integration tests (socket round-trip)
 make bump-version                # Bump version (date-based YYYY.M.DD) and create git tag; used by release.sh
 ```
+
+Debug builds are ad-hoc signed by default, so building needs no certificate. An ad-hoc signature's designated requirement is its cdhash, which changes on every rebuild, so macOS re-asks for Desktop/Documents/Downloads access from Prowl Debug — and from the commands running in its panes — after each build. If your worktrees live in those folders, set `PROWL_DEVELOPMENT_TEAM=<Team ID>` (environment or `Config/Secrets.env`) and `make build-app` / `make test` sign the Debug app and test host with your Apple Development identity instead; the Team ID is the certificate's OU, not the ID in parentheses after your name. With it set, replace the `CODE_SIGNING_*` settings in ad-hoc `xcodebuild test` invocations like the one below with `DEVELOPMENT_TEAM=<Team ID>` so the test host keeps the same signature.
 
 Run a single test class or method:
 
@@ -106,6 +110,7 @@ Reducer ← .terminalEvent(Event) ← AsyncStream<Event>
 - Use `@ObservableState` for TCA feature state; use `@Observable` for non-TCA shared stores; never `ObservableObject`
 - Always mark `@Observable` classes with `@MainActor`
 - Modern SwiftUI only: `foregroundStyle()`, `NavigationStack`, `Button` over `onTapGesture()`
+- Before changing a window toolbar control, its grouping, or Liquid Glass, read `docs-ai/061-native-toolbar-controls/toolbar-controls.md` and perform a Debug visual verification.
 - When a new logic changes in the Reducer, always add tests
 - In unit tests, never use `Task.sleep`; use `TestClock` (or an injected clock) and drive time with `advance`.
 - Prefer Swift-native APIs over Foundation where they exist (e.g., `replacing()` not `replacingOccurrences()`)
@@ -141,7 +146,7 @@ Reducer ← .terminalEvent(Event) ← AsyncStream<Event>
 ## Rules
 
 - After a task, ensure the app builds: `make build-app`
-- When working on CLI code (`ProwlCLI/`, `ProwlCLITests/`, `Package.swift`), run `make build-cli`, `make test-cli-smoke`, and `make test-cli-integration` before committing.
+- When working on CLI code (`ProwlCLI/`, `ProwlCLITests/`, `Package.swift`), run `make build-cli`, `make test-cli-smoke`, `make test-cli-unit`, and `make test-cli-integration` before committing.
 - When you change user-facing behavior (keyboard shortcuts, settings, the `prowl` CLI, or a feature's UX), update the matching file under `docs/` in the same change. For a full audit, run the `sync-docs` skill.
 - `docs-ai/` is curated, durable product/design documentation — never a working-note archive. Use the `write-ai-doc` skill only for a substantial feature or a non-trivial fix whose design and result must guide future implementation. Do not create entries for reviews, audits, routine research or investigations, status reports, test runs, or docs-only work unless onevcat explicitly asks for a `docs-ai/` record. When uncertain, do not create an entry. For qualifying work, create `docs-ai/NNN-<slug>/000-plan.md` before coding and complete `001-action.md` after implementation. Follow-up work on the same topic amends the existing entry (see `docs-ai/README.md`).
 - When implementing a new feature or fixing a bug that is unrelated to the current branch's active work, first create a dedicated branch from the latest `origin/main`; then work, commit, push, and open a PR from that branch.

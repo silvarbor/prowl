@@ -38,6 +38,65 @@ struct SplitTreeTests {
     #expect(emissions == [first.id, second.id])
   }
 
+  @Test func explicitAnchorSplitDoesNotUseTheFocusedSurface() throws {
+    let state = makeWorktreeTerminalState()
+    let tabID = try #require(state.createTab())
+    let anchorID = try #require(state.focusedSurfaceId(in: tabID))
+
+    #expect(state.performSplitAction(.newSplit(direction: .right), for: anchorID))
+    let previouslyFocusedID = try #require(state.focusedSurfaceId(in: tabID))
+    #expect(previouslyFocusedID != anchorID)
+
+    let createdID = try state.createSplit(
+      of: anchorID,
+      direction: .left,
+      initialInput: nil,
+      additionalEnvironment: [:],
+      focusing: true
+    ).get()
+
+    #expect(state.trees[tabID]?.leaves().map(\.id) == [createdID, anchorID, previouslyFocusedID])
+    #expect(state.focusedSurfaceId(in: tabID) == createdID)
+  }
+
+  @Test func explicitAnchorSplitCanPreserveFocus() throws {
+    let state = makeWorktreeTerminalState()
+    let tabID = try #require(state.createTab())
+    let anchorID = try #require(state.focusedSurfaceId(in: tabID))
+
+    #expect(state.performSplitAction(.newSplit(direction: .right), for: anchorID))
+    let focusedID = try #require(state.focusedSurfaceId(in: tabID))
+
+    _ = try state.createSplit(
+      of: anchorID,
+      direction: .left,
+      initialInput: nil,
+      additionalEnvironment: [:],
+      focusing: false
+    ).get()
+
+    #expect(state.focusedSurfaceId(in: tabID) == focusedID)
+  }
+
+  @Test func explicitAnchorSplitReportsMissingAnchor() throws {
+    let state = makeWorktreeTerminalState()
+    _ = try #require(state.createTab())
+    let missingID = UUID()
+
+    switch state.createSplit(
+      of: missingID,
+      direction: .right,
+      initialInput: nil,
+      additionalEnvironment: [:],
+      focusing: true
+    ) {
+    case .success:
+      Issue.record("Expected the split to reject an unknown anchor")
+    case .failure(let error):
+      #expect(error == .anchorNotFound(missingID))
+    }
+  }
+
   @Test func focusTargetAfterClosingUsesNextForLeftmostLeaf() throws {
     let first = SplitTreeTestView()
     let second = SplitTreeTestView()

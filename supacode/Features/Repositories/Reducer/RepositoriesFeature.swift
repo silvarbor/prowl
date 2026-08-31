@@ -541,8 +541,8 @@ struct RepositoriesFeature {
     case selectedWorktreeChanged(Worktree?)
     case repositoriesChanged(IdentifiedArrayOf<Repository>)
     case openRepositorySettings(Repository.ID)
-    case showDiff(Worktree.ID)
-    case showOutgoingChanges(Worktree.ID)
+    case showDiff(DiffTargetID)
+    case showOutgoingChanges(DiffTargetID)
     case worktreeCreated(Worktree)
   }
 
@@ -556,6 +556,7 @@ struct RepositoriesFeature {
   @Dependency(RepositoryPersistenceClient.self) var repositoryPersistence
   @Dependency(ShellClient.self) var shellClient
   @Dependency(\.date.now) var now
+  @Dependency(\.continuousClock) var clock
   @Dependency(BranchNameSuggestionClient.self) var branchNameSuggestionClient
   @Dependency(\.uuid) var uuid
   @Dependency(\.repositoryIconDetector) var repositoryIconDetector

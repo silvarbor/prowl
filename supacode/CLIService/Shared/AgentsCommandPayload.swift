@@ -23,6 +23,7 @@ public struct AgentsCommandAgent: Codable, Equatable {
   public let tab: AgentsCommandTab
   public let pane: AgentsCommandPane
   public let session: AgentsCommandSession?
+  public let signals: AgentSignalsPayload?
 
   enum CodingKeys: String, CodingKey {
     case id
@@ -37,6 +38,7 @@ public struct AgentsCommandAgent: Codable, Equatable {
     case tab
     case pane
     case session
+    case signals
   }
 
   public init(
@@ -51,7 +53,8 @@ public struct AgentsCommandAgent: Codable, Equatable {
     worktree: AgentsCommandWorktree,
     tab: AgentsCommandTab,
     pane: AgentsCommandPane,
-    session: AgentsCommandSession? = nil
+    session: AgentsCommandSession? = nil,
+    signals: AgentSignalsPayload? = nil
   ) {
     self.id = id
     self.type = type
@@ -65,6 +68,7 @@ public struct AgentsCommandAgent: Codable, Equatable {
     self.tab = tab
     self.pane = pane
     self.session = session
+    self.signals = signals
   }
 }
 
@@ -82,7 +86,7 @@ public struct AgentsCommandSession: Codable, Equatable {
   }
 }
 
-public enum AgentsCommandStatus: String, Codable, Equatable {
+public enum AgentsCommandStatus: String, Codable, Equatable, Sendable {
   case blocked
   case working
   case done

@@ -362,6 +362,13 @@ nonisolated struct ProjectWorkspaceRepositoryEntry: Codable, Equatable, Hashable
     }
     return workspaceRootURL.appending(path: trimmedPath).standardizedFileURL
   }
+
+  /// The local repository this entry was materialized from, when recorded.
+  /// Nil for remote clones and for metadata written without a source location.
+  var localSourceURL: URL? {
+    guard let sourceLocation else { return nil }
+    return sourceKind.localSourceURL(from: sourceLocation)
+  }
 }
 
 nonisolated struct ProjectWorkspace: Codable, Equatable, Hashable, Sendable {

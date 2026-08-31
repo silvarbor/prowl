@@ -47,10 +47,12 @@ public struct CommandResponse: Codable, Sendable {
 public struct CommandError: Codable, Sendable {
   public let code: String
   public let message: String
+  public let details: RawJSON?
 
-  public init(code: String, message: String) {
+  public init(code: String, message: String, details: RawJSON? = nil) {
     self.code = code
     self.message = message
+    self.details = details
   }
 }
 

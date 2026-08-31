@@ -15,14 +15,16 @@ onevcat explicitly asks for a `docs-ai/` record.
 docs-ai/NNN-<slug>/
   000-plan.md      # plan before implementation (RFC-like)
   001-action.md    # what was actually done, verified against the code
-  002-<topic>.md   # amendments: follow-up waves, corrections (indexed in 000-plan.md)
+  002-<topic>.md   # amendments: follow-up waves, corrections, or one record per slice of a multi-PR entry (indexed in 000-plan.md)
   <living>.md      # non-numbered = living doc (runbook/ledger/reference), updated in place
 ```
 
 Rules for writing new entries live in the `write-ai-doc` skill
 (`.claude/skills/write-ai-doc/SKILL.md`). In short: select only qualifying product work,
 then plan first, act second, amend in place for in-frame follow-ups, and open a new numbered
-entry for large pivots. Numbered files are immutable history; non-numbered files are living
+entry for large pivots. An entry delivered across several PRs records each slice as an
+amendment (`002+`, shipped with its PR) and writes `001-action.md` once, when the last slice
+lands, summarizing them. Numbered files are immutable history; non-numbered files are living
 documents.
 
 Entries `001`–`045` were backfilled on 2026-07-12 from PRs, commits, and the former
@@ -39,6 +41,9 @@ Living documents hosted here:
 - `013-prowl-cli/contracts/` — normative CLI contracts
 - `017-upstream-sync-process/upstream-ledger.md` — upstream review ledger (baseline + decisions)
 - `020-observability/runbook.md` — observability/diagnostics runbook
+- `063-agent-workflows/dsl-spec.md` — Agent Workflow DSL (`prowl.workflow/v1`) normative spec
+- `063-agent-workflows/release-plan.md` — release/order plan shared by 063 and 064
+- `064-agent-completion-signals/research-agent-completion-signals.md` — per-runtime completion-signal matrix
 
 Some entries also host verbatim historical attachments migrated from doc-onevcat (e.g.
 `023-shelf-mode/jank-investigation.md`, `017-.../batch-2026-07-06-post-v0.10.5.md`,
@@ -110,3 +115,10 @@ agent-facing manual for that).
 | 056 | [performance-optimization-2026-08](056-performance-optimization-2026-08/000-plan.md) | 2026-08-01 | August performance review series: exact cached line counts, opt-in Debug TCA logging, and agent screen-scan memoization |
 | 057 | [performance-benchmark-suite](057-performance-benchmark-suite/000-plan.md) | 2026-08-02 | Ratio-assertion benchmarks pinning the #644–#665 hot paths, `make bench` absolute-number reporting, and live measurement wrappers |
 | 058 | [unified-toolbar-layout](058-unified-toolbar-layout/000-plan.md) | 2026-08-07 | Remove redundant branch/title toolbar items and align the Agents + notifications cluster across Normal, Shelf, and Canvas |
+| 059 | [agent-transcript-snapshots](059-agent-transcript-snapshots/000-plan.md) | 2026-08-11 | Immediate Codex/Claude agent snapshots with trustworthy transcript results and actionable blocker text |
+| 060 | [prowl-cli-targeting-and-contract-governance](060-prowl-cli-targeting-and-contract-governance/000-plan.md) | 2026-08-16 | Unified target grammar, CLI contract rebaseline, and durable documentation governance |
+| 061 | [native-toolbar-controls](061-native-toolbar-controls/000-plan.md) | 2026-08-17 | Native macOS toolbar grouping, Liquid Glass ownership, and review standards |
+| 062 | [workspace-child-diff](062-workspace-child-diff/000-plan.md) | 2026-08-19 | Per-repository diff for workspace children via unified DiffTarget routing |
+| 063 | [agent-workflows](063-agent-workflows/000-plan.md) | 2026-08-21 | Agent Workflows: YAML-declared, profile-bound multi-agent orchestration (runner, `prowl workflow` CLI, status center, built-in handoff/adversarial review); successor to 047's fixed handoff flow |
+| 064 | [agent-completion-signals](064-agent-completion-signals/000-plan.md) | 2026-08-22 | Layered agent signal bus (cooperative / launch-scoped hooks / transcript+process+OSC / heuristic), `prowl agents signal` + `agents wait` with source/confidence, per-runtime hook research |
+| 065 | [bundled-agent-skills](065-bundled-agent-skills/000-plan.md) | 2026-08-22 | Bundle Prowl's official agent skills into the app, `prowl skills` install/uninstall via symlinks into agent skill folders, Agent Skills section on Settings › CLI & Skills, shared registry for 063 |

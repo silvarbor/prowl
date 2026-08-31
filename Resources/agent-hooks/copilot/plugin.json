@@ -1,0 +1,5 @@
+{
+  "name": "prowl-hooks",
+  "version": "1.0.0",
+  "description": "Reports Copilot session and turn lifecycle events to the Prowl app that launched this session."
+}

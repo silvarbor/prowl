@@ -6,7 +6,7 @@ import ProwlCLIShared
 struct PaneCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "pane",
-    abstract: "Manage terminal panes.",
+    abstract: "[Deprecated] Manage terminal panes. Use `prowl close`.",
     subcommands: [
       PaneCloseCommand.self,
     ]
@@ -16,7 +16,7 @@ struct PaneCommand: ParsableCommand {
 struct PaneCloseCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "close",
-    abstract: "Close a terminal pane."
+    abstract: "[Deprecated] Close a terminal pane. Use `prowl close <pane>`."
   )
 
   @OptionGroup var selector: SelectorOptions
@@ -26,6 +26,7 @@ struct PaneCloseCommand: ParsableCommand {
   var force = false
 
   mutating func run() throws {
+    emitDeprecationWarning(command: "pane close", replacement: "close <pane>")
     try CLIExecution.run(command: "pane", output: options.outputMode, colorEnabled: options.colorEnabled) {
       let resolvedSelector = try selector.resolve()
       guard !resolvedSelector.isNone else {

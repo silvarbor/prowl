@@ -1,0 +1,10 @@
+{
+  "session_id": "fixture-claude-session",
+  "transcript_path": "/tmp/Prowl Fixtures/界/transcript.jsonl",
+  "cwd": "/tmp/Prowl Fixtures/界",
+  "hook_event_name": "SessionStart",
+  "source": "startup",
+  "future_field": {
+    "ignored": true
+  }
+}

@@ -204,7 +204,8 @@ extension RepositoriesFeature.State {
         workspaceID: repository.id,
         repositoryName: entry.name,
         metadataBranch: entry.branchName,
-        workingDirectory: url
+        workingDirectory: url,
+        repositoryRootURL: entry.localSourceURL ?? url
       )
     }
   }
@@ -225,6 +226,62 @@ extension RepositoriesFeature.State {
         info: workspaceChildInfoByID[child.id],
         workingDirectory: child.workingDirectory
       )
+    }
+  }
+
+  /// Resolves a diff entry-point reference to a concrete request. Worktrees
+  /// diff their own directory and host Hunk themselves; workspace children
+  /// diff the child repository while hosting Hunk in their own workspace's
+  /// terminal with the child directory as cwd. Child branch falls back live
+  /// branch → metadata branch → repository name.
+  func diffTarget(for id: DiffTargetID) -> DiffTarget? {
+    switch id {
+    case .worktree(let worktreeID):
+      return worktree(for: worktreeID).map(DiffTarget.init(worktree:))
+    case .workspaceChild(let workspaceID, let path):
+      guard let workspaceRepository = repositories[id: workspaceID],
+        let child = resolvedWorkspaceChildren(in: workspaceRepository).first(where: { $0.id == path })
+      else {
+        return nil
+      }
+      // The metadata-derived root is a synchronous approximation; the diff
+      // effects canonicalize it through `gitClient.repoRoot` when the action
+      // runs (`AppFeature.canonicalizedDiffTarget`).
+      return DiffTarget(
+        id: id,
+        workingDirectory: child.workingDirectory,
+        branchName: workspaceChildBranchByID[child.id] ?? child.metadataBranch ?? child.repositoryName,
+        repositoryRootURL: child.repositoryRootURL,
+        terminalHost: Self.plainFolderWorktree(for: workspaceRepository),
+        terminalWorkingDirectory: child.workingDirectory
+      )
+    }
+  }
+
+  /// The diff target that ⌘⇧Y, the View menu, and the Command Palette act on:
+  /// the selected worktree, else the selected workspace child.
+  var selectedDiffTargetID: DiffTargetID? {
+    if let selectedWorktreeID {
+      return .worktree(selectedWorktreeID)
+    }
+    if let selectedWorkspaceChildID,
+      let repository = selectedRepository, repository.isWorkspace
+    {
+      return .workspaceChild(workspaceID: repository.id, path: selectedWorkspaceChildID)
+    }
+    return nil
+  }
+
+  /// The cached pull request for a diff target. Worktrees read the worktree
+  /// info cache; workspace children read the per-child cache, which is keyed
+  /// by child path. The app wires the outgoing-changes resolver through this
+  /// so an open diff window observes pull request changes.
+  func pullRequest(for targetID: DiffTargetID) -> GithubPullRequest? {
+    switch targetID {
+    case .worktree(let worktreeID):
+      return worktreeInfo(for: worktreeID)?.pullRequest
+    case .workspaceChild(_, let path):
+      return workspaceChildInfoByID[path]?.pullRequest
     }
   }
 

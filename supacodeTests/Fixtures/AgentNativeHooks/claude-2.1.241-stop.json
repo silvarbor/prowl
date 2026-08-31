@@ -1,0 +1,10 @@
+{
+  "session_id": "fixture-claude-session",
+  "transcript_path": "/tmp/Prowl Fixtures/界/transcript.jsonl",
+  "cwd": "/tmp/Prowl Fixtures/界",
+  "permission_mode": "manual",
+  "hook_event_name": "Stop",
+  "stop_hook_active": false,
+  "last_assistant_message": "This fixture field must never cross the Prowl hook bridge.",
+  "future_optional": null
+}

@@ -120,3 +120,7 @@ package manager:
 
 - Updated 2026-06-14: read-only `prowl agents` command exposing the Active Agents
   roster over the CLI — see [002-agents-command.md](002-agents-command.md)
+- Updated 2026-08-22: CLI governance was rebaselined by 060 (#700), then extended through
+  the same four-layer contract with deterministic `create pane` (#710), per-pane identity
+  (#713), and typed Profile launch plus `profiles list` (#714). The living contracts under
+  `contracts/` and `docs/components/cli.md` remain the current truth.

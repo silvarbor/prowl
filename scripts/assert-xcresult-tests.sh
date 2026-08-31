@@ -2,12 +2,17 @@
 
 set -euo pipefail
 
-if [[ "$#" -ne 1 ]]; then
-  echo "usage: $0 <xcresult-path>" >&2
+if [[ "$#" -lt 1 || "$#" -gt 2 ]]; then
+  echo "usage: $0 <xcresult-path> [expected-test-count]" >&2
   exit 2
 fi
 
 result_bundle="$1"
+expected_test_count="${2:-}"
+if [[ -n "$expected_test_count" && ! "$expected_test_count" =~ ^[1-9][0-9]*$ ]]; then
+  echo "error: expected test count must be a positive integer: $expected_test_count" >&2
+  exit 2
+fi
 
 if [[ ! -d "$result_bundle" ]]; then
   echo "error: xcresult bundle not found: $result_bundle" >&2
@@ -57,6 +62,11 @@ fi
 
 if (( total_tests <= 0 )); then
   echo "error: xcresult reports zero tests; refusing a false-success test run" >&2
+  exit 1
+fi
+
+if [[ -n "$expected_test_count" ]] && (( total_tests != expected_test_count )); then
+  echo "error: expected $expected_test_count tests, found $total_tests" >&2
   exit 1
 fi
 

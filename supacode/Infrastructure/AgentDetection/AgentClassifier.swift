@@ -48,6 +48,17 @@ struct IdentifiedAgentProcess: Equatable, Sendable {
   let agent: DetectedAgent
   let name: String
   let process: ForegroundProcess
+  /// The process the shell launched for this agent (`ForegroundJob.launchProcessID(of:)`).
+  /// `process` is what state and sessions are read from; this is what a launch is
+  /// identified by, so an engine child taking over `process` is not a replacement.
+  let launchProcessID: pid_t
+
+  init(agent: DetectedAgent, name: String, process: ForegroundProcess, launchProcessID: pid_t? = nil) {
+    self.agent = agent
+    self.name = name
+    self.process = process
+    self.launchProcessID = launchProcessID ?? process.pid
+  }
 
   /// Icon token for `CommandIconMap`. The shared `agent` entrypoint name maps
   /// to the Cursor icon there, so alias-identified agents resolve through the
@@ -69,7 +80,14 @@ func identifyAgentInJob(_ job: ForegroundJob) -> IdentifiedAgentProcess? {
     }
   }
 
-  return best.map { IdentifiedAgentProcess(agent: $0.agent, name: $0.name, process: $0.process) }
+  return best.map {
+    IdentifiedAgentProcess(
+      agent: $0.agent,
+      name: $0.name,
+      process: $0.process,
+      launchProcessID: job.launchProcessID(of: $0.process.pid)
+    )
+  }
 }
 
 private func agentCandidates(for process: ForegroundProcess) -> [(name: String, score: Int)] {

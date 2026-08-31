@@ -32,7 +32,7 @@ JSON is pretty-printed with sorted keys. Legacy `~/.supacode` is migrated to
 | `inAppNotificationsEnabled` | Bool | `true` | In-app alerts / bell indicators. |
 | `notificationSound` | enum (`never` / system sound raw values like `hero` / `supacodeClassic`) | `supacodeClassic` | Sound played for notifications when system banners are off; `never` disables it. Migrates the legacy `notificationSoundEnabled` Bool (`true` → `supacodeClassic`, `false` → `never`); unknown raw values fall back to the default. |
 | `systemNotificationsEnabled` | Bool | `false` | macOS system banners. |
-| `muteNotificationsForActiveSurface` | Bool | `true` | Suppress the banner, sound, and dock bounce when the notification's pane is the one you're actively viewing (selected worktree, focused pane, key + visible window). |
+| `muteNotificationsForActiveSurface` | Bool | `true` | Suppress the banner, sound, and dock bounce when the notification's pane is the one you're actively viewing (selected worktree, focused pane, key + visible window). Workflow status-edge notices use selected-worktree visibility because their status is worktree-level. |
 | `moveNotifiedWorktreeToTop` | Bool | `true` | Float a notified worktree to top. |
 | `commandFinishedNotificationEnabled` | Bool | `true` | Notify when a long command finishes. |
 | `commandFinishedNotificationThreshold` | Int (seconds) | `10` | Minimum duration before that notification fires. |

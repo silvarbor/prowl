@@ -16,6 +16,11 @@ fast way to review before committing or merging.
 **Open:** click a worktree's diff badge, press `⌘⇧Y` (`show_diff`), use
 Command Palette → "Show Diff", or right-click a worktree row → "Show Diff".
 
+The same entry points work for **workspace child repositories**: the child
+row's diff badge, its context menu, and — with a child selected — `⌘⇧Y`,
+`⌘⌥⇧Y`, and the Command Palette all target that child's repository. The Hunk
+tool opens its tab in the workspace's terminal, rooted at the child folder.
+
 ## Outgoing Changes
 
 **Outgoing Changes** is the second mode of the same window: the committed
@@ -105,6 +110,8 @@ every changed file. Tracked additions and deletions remain exact.
 ## Availability
 
 Diff is a **git-only** feature — it's unavailable for plain (non-git) folders.
+A workspace root is a plain folder, so it has no diff of its own; diff is
+available per child repository inside it.
 
 ## Gotchas for agents
 

@@ -115,6 +115,71 @@ struct CommandFinishedNotificationTests {
     #expect(state.notifications.count == 1)
   }
 
+  @Test func workflowNotificationIsReadAndMarkedViewedWhenItsWorktreeIsVisible() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    manager.handleCommand(.setNotificationsEnabled(true))
+    manager.handleCommand(.setSelectedWorktreeID(worktree.id))
+    state.syncFocus(windowIsKey: true, windowIsVisible: true)
+    var viewed: [Bool] = []
+    state.onNotificationReceived = { _, _, _, isViewed in viewed.append(isViewed) }
+
+    state.appendNotification(
+      title: "Workflow needs attention",
+      body: "Reviewer is waiting",
+      surfaceId: surfaceId,
+      treatAsViewedWhenWorktreeIsVisible: true
+    )
+
+    #expect(state.notifications.count == 1)
+    #expect(state.notifications.first?.isRead == true)
+    #expect(viewed == [true])
+  }
+
+  @Test func selectedWorkflowNotificationRemainsUnreadWhenTheAppIsInTheBackground() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    manager.handleCommand(.setNotificationsEnabled(true))
+    manager.handleCommand(.setSelectedWorktreeID(worktree.id))
+    state.syncFocus(windowIsKey: false, windowIsVisible: true)
+    var viewed: [Bool] = []
+    state.onNotificationReceived = { _, _, _, isViewed in viewed.append(isViewed) }
+
+    state.appendNotification(
+      title: "Workflow needs attention",
+      body: "Reviewer is waiting",
+      surfaceId: surfaceId,
+      treatAsViewedWhenWorktreeIsVisible: true
+    )
+
+    #expect(state.notifications.count == 1)
+    #expect(state.notifications.first?.isRead == false)
+    #expect(viewed == [false])
+  }
+
+  @Test func workflowNotificationRemainsUnreadAndPropagatesForABackgroundWorktree() {
+    let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let worktree = makeWorktree()
+    let state = manager.state(for: worktree)
+    manager.handleCommand(.setNotificationsEnabled(true))
+    manager.handleCommand(.setSelectedWorktreeID("another-worktree"))
+    var received = 0
+    state.onNotificationReceived = { _, _, _, _ in received += 1 }
+
+    state.appendNotification(
+      title: "Workflow needs attention",
+      body: "Reviewer is waiting",
+      surfaceId: surfaceId,
+      treatAsViewedWhenWorktreeIsVisible: true
+    )
+
+    #expect(state.notifications.count == 1)
+    #expect(state.notifications.first?.isRead == false)
+    #expect(received == 1)
+  }
+
   // MARK: - Duration Formatting
 
   @Test func formatDurationSeconds() {

@@ -3,6 +3,10 @@ import Foundation
 struct PaneAgentState: Equatable, Sendable {
   var detectedAgent: DetectedAgent?
   var agentProcessID: pid_t?
+  /// The process the shell launched for the agent, which may differ from
+  /// `agentProcessID` once the runtime forks an engine child. Process
+  /// generations key on this so such a child is not mistaken for a relaunch.
+  var launchProcessID: pid_t?
   var launchObservation: AgentLaunchObservation?
   var session: AgentSession?
   /// Consecutive resolver misses while the same process stayed detected;
@@ -17,6 +21,7 @@ struct PaneAgentState: Equatable, Sendable {
   init(
     detectedAgent: DetectedAgent? = nil,
     agentProcessID: pid_t? = nil,
+    launchProcessID: pid_t? = nil,
     launchObservation: AgentLaunchObservation? = nil,
     session: AgentSession? = nil,
     iconLookupToken: String? = nil,
@@ -27,6 +32,7 @@ struct PaneAgentState: Equatable, Sendable {
   ) {
     self.detectedAgent = detectedAgent
     self.agentProcessID = agentProcessID
+    self.launchProcessID = launchProcessID
     self.launchObservation = launchObservation
     self.session = session
     self.iconLookupToken = iconLookupToken
@@ -55,6 +61,25 @@ struct PaneAgentState: Equatable, Sendable {
     guard isFresh else { return (previous.session, previous.sessionMissStreak) }
     let streak = previous.sessionMissStreak + 1
     return (streak >= 3 ? nil : previous.session, streak)
+  }
+
+  /// Launch-process stickiness: the launch process is the generation subject for managed hooks,
+  /// so a transient sample that drops it from the foreground job must not read as a relaunch.
+  /// A full probe gap (no agent identified) keeps the previous value; when the identified root
+  /// changes, keep the previous one only while it is still a live ancestor of the identified
+  /// process — otherwise the launch genuinely moved and the new root wins.
+  static func retainedLaunchProcessID(
+    identifiedLaunchProcessID: pid_t?,
+    identifiedProcessID: pid_t?,
+    previous: PaneAgentState,
+    isLiveAncestor: (_ ancestor: pid_t, _ descendant: pid_t) -> Bool
+  ) -> pid_t? {
+    guard let candidate = identifiedLaunchProcessID else { return previous.launchProcessID }
+    guard let previousLaunch = previous.launchProcessID,
+      previousLaunch != candidate,
+      let identifiedProcessID
+    else { return candidate }
+    return isLiveAncestor(previousLaunch, identifiedProcessID) ? previousLaunch : candidate
   }
 
   /// An argv observation is usable only while it belongs to the same detected

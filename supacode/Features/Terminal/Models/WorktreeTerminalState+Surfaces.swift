@@ -3,6 +3,11 @@ import CoreGraphics
 import Foundation
 import GhosttyKit
 
+enum SplitCreationError: Error, Equatable, Sendable {
+  case anchorNotFound(UUID)
+  case insertionFailed
+}
+
 extension WorktreeTerminalState {
   func confirmCloseIfNeeded(
     tabIds: [TerminalTabID],
@@ -69,7 +74,8 @@ extension WorktreeTerminalState {
     initialInput: String? = nil,
     workingDirectoryOverride: URL? = nil,
     context: ghostty_surface_context_e = GHOSTTY_SURFACE_CONTEXT_TAB,
-    additionalEnvironment: [String: String] = [:]
+    additionalEnvironment: [String: String] = [:],
+    defersSurfaceCreation: Bool = false
   ) -> SplitTree<GhosttySurfaceView> {
     guard tabManager.tabs.contains(where: { $0.id == tabId }) else {
       return SplitTree()
@@ -83,12 +89,63 @@ extension WorktreeTerminalState {
       inheritingFromSurfaceId: inheritingFromSurfaceId,
       workingDirectoryOverride: workingDirectoryOverride,
       context: context,
-      additionalEnvironment: additionalEnvironment
+      additionalEnvironment: additionalEnvironment,
+      defersSurfaceCreation: defersSurfaceCreation
     )
     let tree = SplitTree(view: surface)
     trees[tabId] = tree
     focusedSurfaceIdByTab[tabId] = surface.id
     return tree
+  }
+
+  /// Splits an explicit anchor surface and returns the new pane identity.
+  /// The anchor is resolved directly; callers never need to mutate UI focus before splitting.
+  @discardableResult
+  func createSplit(
+    of anchorSurfaceID: UUID,
+    direction: UserCustomSplitDirection,
+    initialInput: String?,
+    workingDirectoryOverride: URL? = nil,
+    additionalEnvironment: [String: String] = [:],
+    focusing: Bool = true,
+    defersSurfaceCreation: Bool = false
+  ) -> Result<UUID, SplitCreationError> {
+    guard let tabID = tabId(containing: anchorSurfaceID),
+      let tree = trees[tabID],
+      let anchorSurface = surfaces[anchorSurfaceID]
+    else {
+      return .failure(.anchorNotFound(anchorSurfaceID))
+    }
+
+    let newSurface = createSurface(
+      tabId: tabID,
+      initialInput: initialInput.flatMap { runScriptInput($0) },
+      inheritingFromSurfaceId: anchorSurfaceID,
+      workingDirectoryOverride: workingDirectoryOverride,
+      context: GHOSTTY_SURFACE_CONTEXT_SPLIT,
+      additionalEnvironment: additionalEnvironment,
+      defersSurfaceCreation: defersSurfaceCreation
+    )
+    do {
+      let newTree = try tree.inserting(
+        view: newSurface,
+        at: anchorSurface,
+        direction: mapUserSplitDirection(direction)
+      )
+      updateTree(newTree, for: tabID)
+      if isCanvasManaged {
+        newSurface.setOcclusion(true)
+      }
+      if focusing {
+        focusSurface(newSurface, in: tabID)
+      }
+      _ = registerTargetHandle(for: newSurface.id)
+      return .success(newSurface.id)
+    } catch {
+      newSurface.closeSurface()
+      forgetSurface(newSurface.id)
+      return .failure(.insertionFailed)
+    }
   }
 
   /// Splits the currently focused surface and seeds the new pane with `initialInput`.
@@ -99,41 +156,18 @@ extension WorktreeTerminalState {
     initialInput: String,
     additionalEnvironment: [String: String] = [:]
   ) -> UUID? {
-    guard let tabId = tabManager.selectedTabId,
-      let parentSurfaceId = focusedSurfaceIdByTab[tabId],
-      let tree = trees[tabId],
-      let parentSurface = surfaces[parentSurfaceId]
+    guard let tabID = tabManager.selectedTabId,
+      let anchorSurfaceID = focusedSurfaceIdByTab[tabID]
     else {
       return nil
     }
-    let newSurface = createSurface(
-      tabId: tabId,
-      initialInput: runScriptInput(initialInput),
-      inheritingFromSurfaceId: parentSurfaceId,
-      context: GHOSTTY_SURFACE_CONTEXT_SPLIT,
-      additionalEnvironment: additionalEnvironment
-    )
-    do {
-      let newTree = try tree.inserting(
-        view: newSurface,
-        at: parentSurface,
-        direction: mapUserSplitDirection(direction)
-      )
-      updateTree(newTree, for: tabId)
-      if isCanvasManaged {
-        newSurface.setOcclusion(true)
-      }
-      focusSurface(newSurface, in: tabId)
-      _ = registerTargetHandle(for: newSurface.id)
-      return newSurface.id
-    } catch {
-      newSurface.closeSurface()
-      surfaces.removeValue(forKey: newSurface.id)
-      surfaceRunningStartedAtById.removeValue(forKey: newSurface.id)
-      cleanupCommandDetectorState(forSurfaceId: newSurface.id)
-      cleanupAgentDetectionState(forSurfaceId: newSurface.id)
-      return nil
-    }
+    return try? createSplit(
+      of: anchorSurfaceID,
+      direction: direction,
+      initialInput: initialInput,
+      additionalEnvironment: additionalEnvironment,
+      focusing: true
+    ).get()
   }
 
   /// Returns the focused surface id for a given tab, if any.
@@ -193,33 +227,15 @@ extension WorktreeTerminalState {
 
     switch action {
     case .newSplit(let direction):
-      let newSurface = createSurface(
-        tabId: tabId,
+      switch createSplit(
+        of: surfaceId,
+        direction: mapGhosttySplitDirection(direction),
         initialInput: nil,
-        inheritingFromSurfaceId: surfaceId,
-        context: GHOSTTY_SURFACE_CONTEXT_SPLIT
-      )
-      do {
-        let newTree = try tree.inserting(
-          view: newSurface,
-          at: targetSurface,
-          direction: mapSplitDirection(direction)
-        )
-        updateTree(newTree, for: tabId)
-        // Canvas manages occlusion directly; ensure the new pane renders.
-        if isCanvasManaged {
-          newSurface.setOcclusion(true)
-        }
-        focusSurface(newSurface, in: tabId)
-        _ = registerTargetHandle(for: newSurface.id)
+        focusing: true
+      ) {
+      case .success:
         return true
-      } catch {
-        newSurface.closeSurface()
-        surfaces.removeValue(forKey: newSurface.id)
-        surfaceRunningStartedAtById.removeValue(forKey: newSurface.id)
-        cleanupCommandDetectorState(forSurfaceId: newSurface.id)
-        cleanupAgentDetectionState(forSurfaceId: newSurface.id)
-
+      case .failure:
         return false
       }
 
@@ -315,9 +331,11 @@ extension WorktreeTerminalState {
     for tab in tabManager.tabs {
       unregisterTargetHandle(for: tab.id)
     }
-    for surface in surfaces.values {
-      unregisterTargetHandle(for: surface.id)
+    // `closeSurface()` may synchronously re-enter `forgetSurface`; snapshot the
+    // values and let the guarded cleanup seam make each lifecycle exactly once.
+    for surface in Array(surfaces.values) {
       surface.closeSurface()
+      forgetSurface(surface.id)
     }
     surfaces.removeAll()
     launchProfilesBySurface.removeAll()
@@ -339,7 +357,8 @@ extension WorktreeTerminalState {
     inheritingFromSurfaceId: UUID?,
     workingDirectoryOverride: URL? = nil,
     context: ghostty_surface_context_e,
-    additionalEnvironment: [String: String] = [:]
+    additionalEnvironment: [String: String] = [:],
+    defersSurfaceCreation: Bool = false
   ) -> GhosttySurfaceView {
     let inherited = inheritedSurfaceConfig(fromSurfaceId: inheritingFromSurfaceId, context: context)
     let resolvedFontSize = Self.resolvedFontSizeForNewSurface(
@@ -353,19 +372,15 @@ extension WorktreeTerminalState {
       initialInput: initialInput,
       fontSize: resolvedFontSize,
       context: context,
-      environment: worktree.scriptEnvironment.merging(additionalEnvironment) { _, patched in patched }
+      environment: worktree.scriptEnvironment.merging(additionalEnvironment) { _, patched in patched },
+      skipsSurfaceCreationForTesting: skipsSurfaceCreationForTesting,
+      failsSurfaceCreationForTesting: failsSurfaceCreationForTesting,
+      defersSurfaceCreation: defersSurfaceCreation
     )
-    // Sending a no-op font size action marks the Ghostty surface as
-    // "font_size_adjusted", which prevents config reloads (triggered by
-    // keybind changes on worktree switch) from resetting the font to the
-    // config default.
-    if resolvedFontSize != nil {
-      view.performBindingAction("increase_font_size:0")
-    }
     configureBridgeCallbacks(for: view, tabId: tabId)
     configureSurfaceCallbacks(for: view, tabId: tabId)
     surfaces[view.id] = view
-    if initialInput?.isEmpty == false {
+    if !defersSurfaceCreation, initialInput?.isEmpty == false {
       wakeAgentDetection(for: view, tabId: tabId)
     }
     return view
@@ -618,6 +633,7 @@ extension WorktreeTerminalState {
   /// without dropping them here the worktree's unseen indicator (bell + Dock
   /// badge) would stay lit until the user manually dismisses everything.
   func forgetSurface(_ surfaceID: UUID) {
+    guard surfaces[surfaceID] != nil else { return }
     unregisterTargetHandle(for: surfaceID)
     surfaces.removeValue(forKey: surfaceID)
     launchProfilesBySurface.removeValue(forKey: surfaceID)
@@ -632,6 +648,7 @@ extension WorktreeTerminalState {
     let previousHasUnseen = hasUnseenNotification
     notifications = Self.prunedNotifications(from: notifications, removingSurfaceID: surfaceID)
     emitNotificationIndicatorIfNeeded(previousHasUnseen: previousHasUnseen)
+    onSurfaceClosed?(surfaceID)
   }
 
   func removeTree(for tabId: TerminalTabID) {
@@ -663,16 +680,20 @@ extension WorktreeTerminalState {
     return focusedSurfaceIdByTab[selectedTabId] == surfaceId
   }
 
-  /// Whether the user is actively looking at `surfaceId` right now: its worktree
-  /// is selected, it is the focused pane of the selected tab (`isFocusedSurface`
-  /// already implies both), and the app window is key and visible. Unknown window
+  /// Whether the user is actively looking at this worktree right now. Unknown window
   /// state (`nil`) is treated as not-viewed so a notification is never silently
   /// dropped. Canvas mode is also treated as not-viewed: the normal-mode window
   /// observers are torn down there, so `lastWindowIsKey`/`lastWindowIsVisible`
   /// freeze at their pre-canvas values and a backgrounded app would keep muting.
-  func isViewedSurface(_ surfaceId: UUID) -> Bool {
+  func isViewingWorktree() -> Bool {
     guard !isCanvasManaged else { return false }
-    return isSelected() && isFocusedSurface(surfaceId) && lastWindowIsKey == true && lastWindowIsVisible == true
+    return isSelected() && lastWindowIsKey == true && lastWindowIsVisible == true
+  }
+
+  /// Whether the user is actively looking at `surfaceId` right now: its worktree
+  /// is visible and it is the focused pane of the selected tab.
+  func isViewedSurface(_ surfaceId: UUID) -> Bool {
+    isViewingWorktree() && isFocusedSurface(surfaceId)
   }
 
   func updateRunningState(for tabId: TerminalTabID) {
@@ -737,9 +758,7 @@ extension WorktreeTerminalState {
     }
   }
 
-  func mapSplitDirection(_ direction: GhosttySplitAction.NewDirection)
-    -> SplitTree<GhosttySurfaceView>.NewDirection
-  {
+  func mapGhosttySplitDirection(_ direction: GhosttySplitAction.NewDirection) -> UserCustomSplitDirection {
     switch direction {
     case .left:
       return .left

@@ -34,6 +34,31 @@ extension TabResolvedTarget {
   }
 }
 
+extension TabTarget {
+  init(from target: TabResolvedTarget) {
+    self.init(
+      worktree: TabTargetWorktree(
+        id: target.worktreeID,
+        name: target.worktreeName,
+        path: target.worktreePath,
+        rootPath: target.worktreeRootPath,
+        kind: target.worktreeKind
+      ),
+      tab: TabTargetTab(
+        id: target.tabID,
+        title: target.tabTitle,
+        selected: target.tabSelected
+      ),
+      pane: TabTargetPane(
+        id: target.paneID,
+        title: target.paneTitle,
+        cwd: target.paneCWD,
+        focused: target.paneFocused
+      )
+    )
+  }
+}
+
 @MainActor
 final class TabCommandHandler: CommandHandler {
   typealias ResolveProvider = @MainActor (TargetSelector) -> Result<TabResolvedTarget, TargetResolverError>
@@ -136,26 +161,7 @@ final class TabCommandHandler: CommandHandler {
   }
 
   private func makePayloadTarget(from target: TabResolvedTarget) -> TabTarget {
-    TabTarget(
-      worktree: TabTargetWorktree(
-        id: target.worktreeID,
-        name: target.worktreeName,
-        path: target.worktreePath,
-        rootPath: target.worktreeRootPath,
-        kind: target.worktreeKind
-      ),
-      tab: TabTargetTab(
-        id: target.tabID,
-        title: target.tabTitle,
-        selected: target.tabSelected
-      ),
-      pane: TabTargetPane(
-        id: target.paneID,
-        title: target.paneTitle,
-        cwd: target.paneCWD,
-        focused: target.paneFocused
-      )
-    )
+    TabTarget(from: target)
   }
 
   private func mapResolverError(_ error: TargetResolverError) -> CommandResponse {

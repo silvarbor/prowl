@@ -15,6 +15,18 @@ Future upstream checks should only inspect commits **after** this baseline.
 
 ---
 
+## 2026-08-30 — Ghostty fork patch: lazy display link
+
+- Added `a0671ce9` `Backport Ghostty lazy display link creation` to `onevcat/ghostty`
+  `release/v1.3.1-patched` (backport of upstream `ghostty-org/ghostty#13639`, not yet in a tagged
+  Ghostty release). New Ghostty surfaces no longer fail with `CREATE_FAILED` while the display is
+  asleep; see `docs-ai/063-agent-workflows/009-display-sleep-surface-spike.md`.
+- Prowl submodule bumped to that commit; prebuilt artifacts published as
+  `xcframework-a0671ce9bf8a8e5ac8079021385adf2047462cc6-prowl-v1` and pinned in
+  `scripts/ghosttykit-checksums.txt`. Drop the patch when upgrading past `a177ba90af`.
+
+---
+
 ## 2026-07-12 — Ledger corrections (docs-ai backfill audit)
 
 Verifying this ledger against GitHub during the docs-ai backfill (PR #558) surfaced four

@@ -156,4 +156,62 @@ struct PaneAgentStateTests {
       ) == nil
     )
   }
+
+  @Test func launchProcessStaysStickyWhenASampleTransientlyDropsIt() {
+    // A complete sample bound the launcher (100). If the next `proc_listpids` transiently
+    // omits 100, `launchProcessID(of:)` returns the engine (101); keeping the previous launch
+    // process — still a live ancestor of 101 — prevents a spurious process-replacement.
+    let previous = PaneAgentState(agentProcessID: 101, launchProcessID: 100)
+    #expect(
+      PaneAgentState.retainedLaunchProcessID(
+        identifiedLaunchProcessID: 101,
+        identifiedProcessID: 101,
+        previous: previous,
+        isLiveAncestor: { ancestor, descendant in ancestor == 100 && descendant == 101 }
+      ) == 100)
+  }
+
+  @Test func launchProcessMovesWhenThePreviousLauncherIsGone() {
+    // A genuine relaunch: the old launcher is no longer an ancestor of the identified process.
+    let previous = PaneAgentState(agentProcessID: 201, launchProcessID: 100)
+    #expect(
+      PaneAgentState.retainedLaunchProcessID(
+        identifiedLaunchProcessID: 200,
+        identifiedProcessID: 201,
+        previous: previous,
+        isLiveAncestor: { _, _ in false }
+      ) == 200)
+  }
+
+  @Test func launchProcessUsesTheIdentifiedRootWhenUnchangedOrFirstSeen() {
+    // Steady state (engine child rebinding keeps the same launch root) and the first bind.
+    #expect(
+      PaneAgentState.retainedLaunchProcessID(
+        identifiedLaunchProcessID: 100,
+        identifiedProcessID: 102,
+        previous: PaneAgentState(agentProcessID: 101, launchProcessID: 100),
+        isLiveAncestor: { _, _ in
+          Issue.record("must not probe when the root is unchanged")
+          return false
+        }
+      ) == 100)
+    #expect(
+      PaneAgentState.retainedLaunchProcessID(
+        identifiedLaunchProcessID: 100,
+        identifiedProcessID: 100,
+        previous: PaneAgentState(),
+        isLiveAncestor: { _, _ in false }
+      ) == 100)
+  }
+
+  @Test func launchProcessHoldsAcrossAFullProbeGap() {
+    // No agent identified this poll: keep the last known launch process untouched.
+    #expect(
+      PaneAgentState.retainedLaunchProcessID(
+        identifiedLaunchProcessID: nil,
+        identifiedProcessID: nil,
+        previous: PaneAgentState(agentProcessID: 101, launchProcessID: 100),
+        isLiveAncestor: { _, _ in false }
+      ) == 100)
+  }
 }

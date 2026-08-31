@@ -142,6 +142,7 @@ extension WorktreeTerminalState {
       // Presence holds keep the last known pid so a probe gap does not flap
       // the session to nil and back (the resolver re-binds on the next hit).
       agentProcessID: identified?.process.pid ?? previous.agentProcessID,
+      launchProcessID: resolvedLaunchProcessID(identified: identified, previous: previous),
       launchObservation: launchObservation,
       session: session,
       iconLookupToken: iconLookupToken,
@@ -229,6 +230,35 @@ extension WorktreeTerminalState {
     return previous.seen
   }
 
+  private func resolvedLaunchProcessID(
+    identified: IdentifiedAgentProcess?,
+    previous: PaneAgentState
+  ) -> pid_t? {
+    PaneAgentState.retainedLaunchProcessID(
+      identifiedLaunchProcessID: identified?.launchProcessID,
+      identifiedProcessID: identified?.process.pid,
+      previous: previous,
+      isLiveAncestor: Self.processIsLiveAncestor
+    )
+  }
+
+  /// Walk the live process tree upward from `descendant` (bounded), reporting whether it still
+  /// passes through `ancestor`. Used only when the identified launch root changed, so the cost
+  /// is a short `proc_pidinfo` chain on a rare transition, never on the steady-state poll.
+  nonisolated static func processIsLiveAncestor(_ ancestor: pid_t, of descendant: pid_t) -> Bool {
+    var pid = descendant
+    var hops = 0
+    while pid > 1, hops < 32 {
+      if pid == ancestor { return true }
+      guard let info = ProcessDetection.processBSDInfo(pid: pid) else { return false }
+      let parent = pid_t(info.pbi_ppid)
+      if parent == pid { return false }
+      pid = parent
+      hops += 1
+    }
+    return pid == ancestor
+  }
+
   private func resolvedLaunchObservation(
     identified: IdentifiedAgentProcess?,
     previous: PaneAgentState
@@ -283,7 +313,7 @@ extension WorktreeTerminalState {
     surfaceAgentStates[surfaceID] = PaneAgentState(lastChangedAt: Date())
     lastWorkingAtBySurface.removeValue(forKey: surfaceID)
     lastAgentScreenScanBySurface.removeValue(forKey: surfaceID)
-    lastEmittedAgentEntriesBySurface.removeValue(forKey: surfaceID)
+    let hadPublishedEntry = lastEmittedAgentEntriesBySurface.removeValue(forKey: surfaceID) != nil
     // The launch identity lives exactly as long as the launched agent
     // (docs-ai 053/006): once the pane is a bare shell again, a manually
     // started agent is the user's own — default home, default account — and
@@ -291,7 +321,9 @@ extension WorktreeTerminalState {
     launchProfilesBySurface.removeValue(forKey: surfaceID)
     lastAgentEntryEmitAtBySurface.removeValue(forKey: surfaceID)
     pendingAgentEntryBySurface.removeValue(forKey: surfaceID)
-    onAgentEntryRemoved?(surfaceID)
+    if hadPublishedEntry {
+      onAgentEntryRemoved?(surfaceID)
+    }
     if let tabId = tabId(containing: surfaceID) {
       updateTabAgentBusyState(for: tabId)
     }
@@ -362,10 +394,12 @@ extension WorktreeTerminalState {
     now: Date = Date()
   ) {
     guard let entry = activeAgentEntry(surfaceID: surfaceID, tabId: tabId, state: state) else {
-      lastEmittedAgentEntriesBySurface.removeValue(forKey: surfaceID)
+      let hadPublishedEntry = lastEmittedAgentEntriesBySurface.removeValue(forKey: surfaceID) != nil
       lastAgentEntryEmitAtBySurface.removeValue(forKey: surfaceID)
       pendingAgentEntryBySurface.removeValue(forKey: surfaceID)
-      onAgentEntryRemoved?(surfaceID)
+      if hadPublishedEntry {
+        onAgentEntryRemoved?(surfaceID)
+      }
       return
     }
     if let previous = lastEmittedAgentEntriesBySurface[surfaceID] {
@@ -464,17 +498,19 @@ extension WorktreeTerminalState {
     lastWorkingAtBySurface.removeValue(forKey: surfaceId)
     lastAgentDetectionDiagnosticsBySurface.removeValue(forKey: surfaceId)
     lastAgentScreenScanBySurface.removeValue(forKey: surfaceId)
-    lastEmittedAgentEntriesBySurface.removeValue(forKey: surfaceId)
+    let hadPublishedEntry = lastEmittedAgentEntriesBySurface.removeValue(forKey: surfaceId) != nil
     lastAgentEntryEmitAtBySurface.removeValue(forKey: surfaceId)
     pendingAgentEntryBySurface.removeValue(forKey: surfaceId)
-    onAgentEntryRemoved?(surfaceId)
+    if hadPublishedEntry {
+      onAgentEntryRemoved?(surfaceId)
+    }
   }
 
   func cleanupAllAgentDetectionState() {
     for task in agentDetectionTasks.values {
       task.cancel()
     }
-    let removedIDs = Array(surfaceAgentStates.keys)
+    let removedIDs = Array(lastEmittedAgentEntriesBySurface.keys)
     agentDetectionTasks.removeAll()
     agentDetectionSchedules.removeAll()
     surfaceAgentStates.removeAll()

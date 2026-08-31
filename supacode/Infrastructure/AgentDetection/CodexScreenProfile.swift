@@ -44,6 +44,20 @@ enum CodexScreenProfile {
     return AgentScreenDetection(state: .idle, reason: .noRuleMatched)
   }
 
+  /// Raw current interaction text for an actionable blocked screen. This deliberately
+  /// preserves TUI selection markers and keyboard hints instead of reconstructing options.
+  nonisolated static func blockerText(in snapshot: AgentScreenSnapshot) -> String? {
+    let regions = CodexScreenRegions(snapshot: snapshot)
+    guard detect(in: snapshot).state == .blocked else { return nil }
+    if let selectedChoice = regions.selectedChoice {
+      return selectedChoice.interactionText
+    }
+    if hasSignInPrompt(regions) {
+      return regions.signInInteractionText
+    }
+    return nil
+  }
+
   nonisolated private static func hasDirectoryTrustPrompt(_ regions: CodexScreenRegions) -> Bool {
     hasSelectedChoice(
       regions,
@@ -162,16 +176,26 @@ private struct CodexScreenRegions: Sendable {
     let afterLower: String
     let footerLower: String
     let interactionLower: String
+    let interactionText: String
     let options: [String]
   }
 
   let selectedChoice: SelectedChoice?
   let signInMenuLines: [String]
+  let signInInteractionText: String
   let workingFooter: String
 
   nonisolated init(snapshot: AgentScreenSnapshot) {
     self.selectedChoice = Self.makeSelectedChoice(from: snapshot.lines)
-    self.signInMenuLines = Array(snapshot.lines.suffix(18))
+    let signInMenuLines = Array(snapshot.lines.suffix(18))
+    self.signInMenuLines = signInMenuLines
+    let signInStart =
+      signInMenuLines.lastIndex { line in
+        line.lowercased().contains("welcome to codex, openai's command-line coding agent")
+      } ?? signInMenuLines.startIndex
+    self.signInInteractionText = signInMenuLines[signInStart...]
+      .joined(separator: "\n")
+      .trimmingCharacters(in: .newlines)
     self.workingFooter = agentDetectionRecentLines(snapshot.text, limit: 3)
   }
 
@@ -181,9 +205,12 @@ private struct CodexScreenRegions: Sendable {
     }
 
     let lowerBound = max(lines.startIndex, promptIndex - 6)
+    let interactionStart =
+      lines[...promptIndex]
+      .lastIndex(where: isCodexInteractionStart) ?? lowerBound
     let afterStart = lines.index(after: promptIndex)
     let afterEnd = min(lines.endIndex, afterStart + 6)
-    let interactionLines = lines[lowerBound..<lines.endIndex]
+    let interactionLines = lines[interactionStart..<lines.endIndex]
     let footerText = lines[afterStart..<lines.endIndex].joined(separator: "\n")
     return SelectedChoice(
       choice: normalizedCodexChoice(lines[promptIndex]),
@@ -192,9 +219,18 @@ private struct CodexScreenRegions: Sendable {
       afterLower: lines[afterStart..<afterEnd].joined(separator: "\n").lowercased(),
       footerLower: agentDetectionRecentLines(footerText, limit: 3).lowercased(),
       interactionLower: interactionLines.joined(separator: "\n").lowercased(),
+      interactionText: interactionLines.joined(separator: "\n").trimmingCharacters(in: .newlines),
       options: interactionLines.map(normalizedCodexChoice)
     )
   }
+}
+
+nonisolated private func isCodexInteractionStart(_ line: String) -> Bool {
+  let lower = line.trimmingCharacters(in: .whitespaces).lowercased()
+  return lower.hasPrefix("do you trust ")
+    || lower.hasPrefix("do you want ")
+    || lower.hasPrefix("would you like ")
+    || lower == "hooks need review"
 }
 
 nonisolated private func isCodexPromptLine(_ line: String) -> Bool {

@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 
@@ -58,6 +59,200 @@ nonisolated final class TerminationCallRecorder: @unchecked Sendable {
     lock.lock()
     defer { lock.unlock() }
     return countValue
+  }
+}
+
+nonisolated private final class ProcessReadyCancellation: @unchecked Sendable {
+  private let lock = NSLock()
+  private var cancellation: (@Sendable () -> Void)?
+  private var ready = false
+  private var didCancel = false
+
+  func installCancellation(_ cancellation: @escaping @Sendable () -> Void) {
+    let action: (@Sendable () -> Void)?
+    lock.lock()
+    self.cancellation = cancellation
+    action = takeCancellationLocked()
+    lock.unlock()
+    action?()
+  }
+
+  func signalReady() {
+    let action: (@Sendable () -> Void)?
+    lock.lock()
+    ready = true
+    action = takeCancellationLocked()
+    lock.unlock()
+    action?()
+  }
+
+  var cancellationWasIssued: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return didCancel
+  }
+
+  private func takeCancellationLocked() -> (@Sendable () -> Void)? {
+    guard ready, !didCancel, let cancellation else { return nil }
+    didCancel = true
+    return cancellation
+  }
+}
+
+nonisolated private final class NamedPipeState: @unchecked Sendable {
+  private static let cancellationByte: UInt8 = 0
+
+  private let lock = NSLock()
+  private var descriptor: Int32
+
+  init(descriptor: Int32) {
+    self.descriptor = descriptor
+  }
+
+  func read() -> String? {
+    let descriptor = lock.withLock { self.descriptor }
+    guard descriptor >= 0 else { return nil }
+    var buffer = [UInt8](repeating: 0, count: 64)
+    let count = buffer.withUnsafeMutableBytes { bytes -> Int in
+      while true {
+        let count = Darwin.read(descriptor, bytes.baseAddress, bytes.count)
+        if count < 0, errno == EINTR { continue }
+        return count
+      }
+    }
+    closeDescriptor()
+    guard count > 0, buffer[0] != Self.cancellationByte else { return nil }
+    return String(bytes: buffer.prefix(count), encoding: .utf8)
+  }
+
+  func cancel() {
+    lock.withLock {
+      guard descriptor >= 0 else { return }
+      var byte = Self.cancellationByte
+      _ = Darwin.write(descriptor, &byte, 1)
+    }
+  }
+
+  private func closeDescriptor() {
+    lock.withLock {
+      guard descriptor >= 0 else { return }
+      Darwin.close(descriptor)
+      descriptor = -1
+    }
+  }
+}
+
+/// Uses a dedicated OS thread so a loaded cooperative or Dispatch pool cannot delay
+/// the process-ready cancellation signal.
+nonisolated private final class NamedPipeWatcher: @unchecked Sendable {
+  private let state: NamedPipeState
+
+  init(
+    url: URL,
+    onCompletion: @escaping @Sendable (String?) -> Void
+  ) throws {
+    let path = url.path(percentEncoded: false)
+    guard mkfifo(path, 0o600) == 0 else { throw NamedPipeWatcherError.creationFailed }
+    let descriptor = open(path, O_RDWR | O_CLOEXEC)
+    guard descriptor >= 0 else { throw NamedPipeWatcherError.openFailed }
+    let state = NamedPipeState(descriptor: descriptor)
+    self.state = state
+    let thread = Thread {
+      onCompletion(state.read())
+    }
+    thread.name = "Prowl shell cancellation fixture"
+    thread.qualityOfService = .userInitiated
+    thread.start()
+  }
+
+  deinit {
+    state.cancel()
+  }
+}
+
+nonisolated private final class NamedPipeSender {
+  private let descriptor: Int32
+
+  init(url: URL) throws {
+    let path = url.path(percentEncoded: false)
+    guard mkfifo(path, 0o600) == 0 else { throw NamedPipeWatcherError.creationFailed }
+    let descriptor = open(path, O_RDWR | O_CLOEXEC)
+    guard descriptor >= 0 else { throw NamedPipeWatcherError.openFailed }
+    self.descriptor = descriptor
+  }
+
+  deinit {
+    Darwin.close(descriptor)
+  }
+
+  func send(_ value: String) throws {
+    let data = Data(value.utf8)
+    let count = data.withUnsafeBytes {
+      Darwin.write(descriptor, $0.baseAddress, $0.count)
+    }
+    guard count == data.count else { throw NamedPipeWatcherError.writeFailed }
+  }
+}
+
+nonisolated private enum NamedPipeWatcherError: Error {
+  case creationFailed
+  case openFailed
+  case writeFailed
+}
+
+private struct ShellCancellationFixture {
+  let root: URL
+  let readyURL: URL
+  let resultURL: URL
+  let watchdogURL: URL
+  let executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+  let arguments: [String]
+
+  init(name: String) throws {
+    let root = FileManager.default.temporaryDirectory.appending(
+      path: "prowl-tests-shell-cancellation-\(name)-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let scriptURL = root.appending(path: "fixture.py", directoryHint: .notDirectory)
+    let readyURL = root.appending(path: "ready", directoryHint: .notDirectory)
+    let resultURL = root.appending(path: "result", directoryHint: .notDirectory)
+    let watchdogURL = root.appending(path: "watchdog", directoryHint: .notDirectory)
+    try """
+    import pathlib
+    import signal
+    import sys
+
+    ready = pathlib.Path(sys.argv[1])
+    result = pathlib.Path(sys.argv[2])
+    watchdog = pathlib.Path(sys.argv[3])
+
+    def publish(path, value):
+        with path.open("w") as stream:
+            stream.write(value)
+            stream.flush()
+
+    def finish(value):
+        publish(result, value)
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, lambda *_: finish("terminated"))
+    # Arm the fallback only after the Swift consumer has observed cancellation.
+    signal.signal(signal.SIGALRM, lambda *_: finish("natural"))
+    publish(ready, "ready")
+    with watchdog.open("r") as stream:
+        stream.read(3)
+    signal.alarm(5)
+    signal.pause()
+    """.write(to: scriptURL, atomically: true, encoding: .utf8)
+    self.root = root
+    self.readyURL = readyURL
+    self.resultURL = resultURL
+    self.watchdogURL = watchdogURL
+    arguments = [
+      scriptURL.path(percentEncoded: false), readyURL.path(percentEncoded: false),
+      resultURL.path(percentEncoded: false), watchdogURL.path(percentEncoded: false),
+    ]
   }
 }
 
@@ -162,67 +357,82 @@ struct ShellClientStreamingTests {
     #expect(streamedLines.contains(expectedStderrLine))
   }
 
-  @Test func cancellingRunStreamConsumerTerminatesProcessQuickly() async throws {
-    let shell = ShellClient.liveValue
-    let commandURL = URL(fileURLWithPath: "/bin/sleep")
-    let stream = shell.runStream(commandURL, ["30"], nil)
-
+  @Test func cancellingRunStreamConsumerTerminatesProcessAfterItIsReady() async throws {
+    let fixture = try ShellCancellationFixture(name: "stream")
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    let readyCancellation = ProcessReadyCancellation()
+    let readyWatcher = try NamedPipeWatcher(
+      url: fixture.readyURL,
+      onCompletion: { if $0 == "ready" { readyCancellation.signalReady() } }
+    )
+    let watchdog = try NamedPipeSender(url: fixture.watchdogURL)
+    let resultEvent = AsyncStream<String>.makeStream()
+    let resultWatcher = try NamedPipeWatcher(
+      url: fixture.resultURL,
+      onCompletion: {
+        if let value = $0 { resultEvent.continuation.yield(value) }
+        resultEvent.continuation.finish()
+      }
+    )
+    let stream = ShellClient.liveValue.runStream(
+      fixture.executableURL,
+      fixture.arguments,
+      nil
+    )
     let consumer = Task {
-      var lines: [ShellStreamLine] = []
       do {
-        for try await event in stream {
-          if case .line(let line) = event {
-            lines.append(line)
-          }
-        }
+        for try await _ in stream {}
       } catch {
         // CancellationError or ShellClientError after SIGTERM both indicate
-        // the cancellation pathway is connected.
+        // that the consumer observed process teardown.
       }
-      return lines
     }
+    readyCancellation.installCancellation { consumer.cancel() }
 
-    // The coordinator unit test covers cancellation before process registration.
-    // Yield once to exercise the usual already-running stream path without a timing sleep.
-    await Task.yield()
+    await consumer.value
+    try #require(readyCancellation.cancellationWasIssued)
+    try watchdog.send("arm")
+    var resultIterator = resultEvent.stream.makeAsyncIterator()
+    let result = try #require(await resultIterator.next())
+    withExtendedLifetime((readyWatcher, resultWatcher, watchdog)) {}
 
-    let start = ContinuousClock.now
-    consumer.cancel()
-    _ = await consumer.value
-    let elapsed = ContinuousClock.now - start
-
-    // The assertion distinguishes "cancellation worked" from "waited out the
-    // process's 30-second natural exit". Loaded CI runners have pushed the
-    // full cancel → SIGTERM → pipe-EOF → finish chain past 10s while suite
-    // tests run in parallel, so the budget leaves headroom without blurring
-    // that distinction.
-    #expect(
-      elapsed < .seconds(20),
-      "consumer cancellation must not wait for the process's 30-second natural exit; took \(elapsed)"
-    )
+    #expect(result == "terminated")
   }
 
-  @Test func runReturnsQuicklyWhenCallingTaskIsCancelled() async {
-    let shell = ShellClient.liveValue
-    let commandURL = URL(fileURLWithPath: "/bin/sleep")
-
-    let runTask = Task {
-      try await shell.run(commandURL, ["30"], nil)
-    }
-
-    // Cancellation before process registration is covered deterministically above.
-    await Task.yield()
-
-    let start = ContinuousClock.now
-    runTask.cancel()
-    _ = await runTask.result
-    let elapsed = ContinuousClock.now - start
-
-    // Same budget rationale as cancellingRunStreamConsumerTerminatesProcessQuickly.
-    #expect(
-      elapsed < .seconds(20),
-      "run() cancellation must not wait for the process's 30-second natural exit; took \(elapsed)"
+  @Test func runTerminatesReadyProcessWhenCallingTaskIsCancelled() async throws {
+    let fixture = try ShellCancellationFixture(name: "run")
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    let readyCancellation = ProcessReadyCancellation()
+    let readyWatcher = try NamedPipeWatcher(
+      url: fixture.readyURL,
+      onCompletion: { if $0 == "ready" { readyCancellation.signalReady() } }
     )
+    let watchdog = try NamedPipeSender(url: fixture.watchdogURL)
+    let resultEvent = AsyncStream<String>.makeStream()
+    let resultWatcher = try NamedPipeWatcher(
+      url: fixture.resultURL,
+      onCompletion: {
+        if let value = $0 { resultEvent.continuation.yield(value) }
+        resultEvent.continuation.finish()
+      }
+    )
+    let runTask = Task {
+      try await ShellClient.liveValue.run(
+        fixture.executableURL,
+        fixture.arguments,
+        nil
+      )
+    }
+    readyCancellation.installCancellation { runTask.cancel() }
+
+    _ = await runTask.result
+    try #require(readyCancellation.cancellationWasIssued)
+    try watchdog.send("arm")
+    var resultIterator = resultEvent.stream.makeAsyncIterator()
+    let result = try #require(await resultIterator.next())
+    withExtendedLifetime((readyWatcher, resultWatcher, watchdog)) {}
+
+    #expect(result == "terminated")
   }
 
   @Test func runStreamSucceedsForShortLivedProcessAfterCancellationFixes() async throws {

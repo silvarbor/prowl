@@ -7,6 +7,19 @@ struct AgentsRuntimeSnapshot {
   /// raw-state-only changes to avoid invalidating the sidebar, so CLI snapshots
   /// must source state and reason from terminal state instead.
   let screenDetectionsBySurfaceID: [UUID: AgentScreenDetection]
+  let signalsBySurfaceID: [UUID: AgentSignalsPayload]
+
+  init(
+    repositoriesState: RepositoriesFeature.State,
+    listSnapshot: ListRuntimeSnapshot,
+    screenDetectionsBySurfaceID: [UUID: AgentScreenDetection],
+    signalsBySurfaceID: [UUID: AgentSignalsPayload] = [:]
+  ) {
+    self.repositoriesState = repositoriesState
+    self.listSnapshot = listSnapshot
+    self.screenDetectionsBySurfaceID = screenDetectionsBySurfaceID
+    self.signalsBySurfaceID = signalsBySurfaceID
+  }
 }
 
 final class AgentsCommandHandler: CommandHandler {
@@ -123,7 +136,8 @@ final class AgentsCommandHandler: CommandHandler {
             confidence: $0.confidence.rawValue,
             source: $0.source.rawValue
           )
-        }
+        },
+        signals: snapshot.signalsBySurfaceID[entry.surfaceID] ?? .empty
       )
     }
 

@@ -72,7 +72,7 @@ struct ExternalDiffToolTests {
     } operation: {
       await ExternalDiffToolClient.liveValue.open(
         ExternalDiffSettings(toolID: ExternalDiffTool.hunk.settingsID, customCommand: ""),
-        worktree,
+        DiffTarget(worktree: worktree),
         .appDefaults
       ) { _ in }
     }
@@ -85,6 +85,52 @@ struct ExternalDiffToolTests {
           runSetupScriptIfNew: false,
           autoCloseOnSuccess: false,
           customCommandName: "Hunk Diff",
+          customCommandIcon: "square.split.2x1"
+        )
+      ]
+    )
+  }
+
+  @Test func hunkForWorkspaceChildRunsInWorkspaceTerminalWithChildCwd() async {
+    let sentCommands = LockIsolated<[TerminalClient.Command]>([])
+    let workspaceWorktree = Worktree(
+      id: "/tmp/workspace",
+      name: "Workspace",
+      detail: "/tmp/workspace",
+      workingDirectory: URL(fileURLWithPath: "/tmp/workspace"),
+      repositoryRootURL: URL(fileURLWithPath: "/tmp/workspace")
+    )
+    let childURL = URL(fileURLWithPath: "/tmp/workspace/app")
+    let target = DiffTarget(
+      id: .workspaceChild(workspaceID: "/tmp/workspace", path: childURL.path(percentEncoded: false)),
+      workingDirectory: childURL,
+      branchName: "feature",
+      repositoryRootURL: childURL,
+      terminalHost: workspaceWorktree,
+      terminalWorkingDirectory: childURL
+    )
+
+    await withDependencies {
+      $0.terminalClient.send = { command in
+        sentCommands.withValue { $0.append(command) }
+      }
+    } operation: {
+      await ExternalDiffToolClient.liveValue.open(
+        ExternalDiffSettings(toolID: ExternalDiffTool.hunk.settingsID, customCommand: ""),
+        target,
+        .appDefaults
+      ) { _ in }
+    }
+
+    #expect(
+      sentCommands.value == [
+        .createTabWithInput(
+          workspaceWorktree,
+          input: "hunk diff",
+          workingDirectory: childURL,
+          runSetupScriptIfNew: false,
+          autoCloseOnSuccess: false,
+          customCommandName: "Hunk Diff · app",
           customCommandIcon: "square.split.2x1"
         )
       ]
@@ -119,7 +165,7 @@ struct ExternalDiffToolTests {
           toolID: ExternalDiffTool.custom.settingsID,
           customCommand: "my-diff {leftPath} {rightPath} --repo {repoPath}"
         ),
-        worktree,
+        DiffTarget(worktree: worktree),
         .appDefaults
       ) { _ in }
     }
@@ -144,15 +190,7 @@ struct ExternalDiffToolTests {
     try "two\n".write(to: repoURL.appending(path: "tracked.txt"), atomically: true, encoding: .utf8)
     try "new\n".write(to: repoURL.appending(path: "untracked.txt"), atomically: true, encoding: .utf8)
 
-    let worktree = Worktree(
-      id: repoURL.path(percentEncoded: false),
-      name: "main",
-      detail: "main",
-      workingDirectory: repoURL,
-      repositoryRootURL: repoURL
-    )
-
-    let snapshot = try await ExternalDiffSnapshotClient.liveValue.makeSnapshotPair(worktree)
+    let snapshot = try await ExternalDiffSnapshotClient.liveValue.makeSnapshotPair(repoURL)
 
     #expect(try String(contentsOf: snapshot.leftURL.appending(path: "tracked.txt"), encoding: .utf8) == "one\n")
     #expect(try String(contentsOf: snapshot.rightURL.appending(path: "tracked.txt"), encoding: .utf8) == "two\n")

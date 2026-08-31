@@ -1,14 +1,49 @@
 import Foundation
 
 nonisolated let agentDetectionRecentLineLimit = 24
+nonisolated let piAgentDetectionRecentLineLimit = 32
 
 extension DetectedAgent {
   nonisolated func detectState(in screen: String) -> AgentRawState {
     detectScreen(in: screen).state
   }
 
+  /// The slice of the active screen this agent's detector consumes.
+  ///
+  /// Claude reads the full active screen: its rules are region-anchored (the
+  /// live status block is walked bottom-up from the composer by row shape,
+  /// blockers around the prompt, viewer chrome from the bottom lines), so a
+  /// bottom-measured line budget added no false-positive guard — it only cut
+  /// the live signal off when a long todo list plus a multi-line status line
+  /// pushed the spinner row past the limit and a working agent read as idle.
+  ///
+  /// Every other detector keeps a bounded tail as its guard against transcript
+  /// history. Pi retains 32 non-blank lines so pi-subagents' adaptive widget can
+  /// keep its header and live job row together; the remaining detectors keep 24.
+  /// For the legacy scanners the tail is load-bearing — they match with whole-text
+  /// scans. Codex's structured profile anchors its windows inside the tail instead;
+  /// it shares Claude's bounded-bottom exposure in principle and keeps the tail
+  /// until its regions are bounded by shape the same way.
+  nonisolated func detectionScreenText(from screen: String) -> String {
+    switch self {
+    case .claude:
+      screen
+    case .pi:
+      agentDetectionRecentLines(screen, limit: piAgentDetectionRecentLineLimit)
+    default:
+      agentDetectionRecentText(screen)
+    }
+  }
+
+  /// The one production entry point for building a profile snapshot. State
+  /// detection and blocker extraction must read the same slice; going through
+  /// this keeps a call site from pairing a profile with the wrong one.
+  nonisolated func detectionSnapshot(from screen: String) -> AgentScreenSnapshot {
+    AgentScreenSnapshot(text: detectionScreenText(from: screen))
+  }
+
   nonisolated func detectScreen(in screen: String) -> AgentScreenDetection {
-    let text = agentDetectionRecentText(screen)
+    let text = detectionScreenText(from: screen)
     let state: AgentRawState
     switch self {
     case .pi:
@@ -16,9 +51,9 @@ extension DetectedAgent {
     case .omp:
       state = detectOMP(text)
     case .claude:
-      return ClaudeScreenProfile.detect(in: AgentScreenSnapshot(canonicalText: text))
+      return ClaudeScreenProfile.detect(in: AgentScreenSnapshot(text: text))
     case .codex:
-      return CodexScreenProfile.detect(in: AgentScreenSnapshot(canonicalText: text))
+      return CodexScreenProfile.detect(in: AgentScreenSnapshot(text: text))
     case .gemini:
       state = detectGemini(text)
     case .cursor:
@@ -70,9 +105,154 @@ nonisolated func agentDetectionRecentLines(_ content: String, limit: Int) -> Str
 }
 
 nonisolated private func detectPi(_ content: String) -> AgentRawState {
-  content.split(separator: "\n", omittingEmptySubsequences: false).contains { line in
-    isPiWorkingText(line.trimmingCharacters(in: .whitespaces))
-  } ? .working : .idle
+  let lines = content.split(separator: "\n", omittingEmptySubsequences: false).map {
+    $0.trimmingCharacters(in: .whitespaces)
+  }
+  return lines.contains(where: isPiWorkingText) || hasPiRunningAsyncSubagentCard(lines)
+    ? .working
+    : .idle
+}
+
+nonisolated private func hasPiRunningAsyncSubagentCard(_ lines: [String]) -> Bool {
+  if lines.contains(where: isPiAdaptiveAsyncSubagentRunningLine) {
+    return true
+  }
+  guard lines.count >= 2 else { return false }
+
+  return lines.indices.dropLast().contains { index in
+    guard let headerName = piAsyncSubagentName(from: lines[index]) else { return false }
+    return isPiAsyncSubagentJobLine(lines[index + 1], matching: headerName)
+  }
+}
+
+nonisolated private func piAsyncSubagentName(from header: String) -> (name: String, isPrefix: Bool)? {
+  let prefix = "async subagent "
+  let suffix = " · background"
+  guard header.hasPrefix(prefix) else { return nil }
+
+  let title: Substring
+  let isPrefix: Bool
+  if header.hasSuffix(suffix) {
+    title = header.dropFirst(prefix.count).dropLast(suffix.count)
+    isPrefix = false
+  } else {
+    guard header.hasSuffix("…") else { return nil }
+    let truncatedTitle = header.dropFirst(prefix.count).dropLast()
+    if let separator = truncatedTitle.range(of: " ·") {
+      title = truncatedTitle[..<separator.lowerBound]
+      isPrefix = false
+    } else {
+      title = truncatedTitle
+      isPrefix = true
+    }
+  }
+
+  let components = title.split(separator: " ")
+  let countToken = components.last
+  let completeCount = countToken?.dropFirst().dropLast()
+  let hasCompleteCount =
+    countToken?.first == "("
+    && countToken?.last == ")"
+    && completeCount?.isEmpty == false
+    && completeCount?.allSatisfy(\.isNumber) == true
+  let partialCount = countToken?.dropFirst()
+  let hasTruncatedCount =
+    isPrefix
+    && countToken?.first == "("
+    && countToken?.last != ")"
+    && partialCount?.allSatisfy(\.isNumber) == true
+  let hasTrailingCount = hasCompleteCount || hasTruncatedCount
+  let name = hasTrailingCount ? components.dropLast().joined(separator: " ") : String(title)
+  let nameIsPrefix = isPrefix && !hasTrailingCount
+  return name.contains(where: \.isLetter) ? (name, nameIsPrefix) : nil
+}
+
+nonisolated private func isPiAsyncSubagentJobLine(
+  _ line: String,
+  matching headerName: (name: String, isPrefix: Bool)
+) -> Bool {
+  guard let content = labeledBrailleSpinnerContent(line), content.hasPrefix(headerName.name) else { return false }
+  if headerName.isPrefix {
+    return true
+  }
+
+  let remainder = content.dropFirst(headerName.name.count)
+  if remainder.isEmpty || remainder.hasPrefix(" ·") {
+    return true
+  }
+  return [" [fresh]", " [fork]", " [mixed]"].contains { badge in
+    remainder == badge || remainder.hasPrefix("\(badge) ·")
+  }
+}
+
+nonisolated private func isPiAdaptiveAsyncSubagentRunningLine(_ line: String) -> Bool {
+  guard let content = labeledBrailleSpinnerContent(line) else { return false }
+  if content.hasSuffix("…") {
+    let visiblePrefix = content.dropLast()
+    if visiblePrefix.hasPrefix("subagents (") || visiblePrefix.hasPrefix("Async agents · ") {
+      return true
+    }
+  }
+  if content == "Async agents · background" {
+    return true
+  }
+  if content.hasPrefix("Async agents · ") {
+    return isPiProgressiveAsyncSummary(String(content.dropFirst("Async agents · ".count)))
+  }
+  return isPiSingleLineAsyncSummary(content)
+}
+
+nonisolated private func isPiProgressiveAsyncSummary(_ summary: String) -> Bool {
+  let components = summary.split(separator: " ", maxSplits: 2)
+  guard components.count == 3,
+    let count = Int(components[0]),
+    count > 0,
+    components[1] == (count == 1 ? "agent" : "agents")
+  else {
+    return false
+  }
+
+  let state = components[2]
+  if state == "running" {
+    return true
+  }
+  guard state.hasPrefix("running, ") else { return false }
+  return isPiAsyncCountStatus(state.dropFirst("running, ".count), expected: "queued")
+}
+
+nonisolated private func isPiSingleLineAsyncSummary(_ content: String) -> Bool {
+  let prefix = "subagents ("
+  guard content.hasPrefix(prefix), content.hasSuffix(")") else { return false }
+
+  let summary = content.dropFirst(prefix.count).dropLast()
+  let components = summary.split(separator: ",", omittingEmptySubsequences: false)
+  guard let runningSummary = components.first else { return false }
+  let running = runningSummary.split(separator: " ")
+  guard running.count == 2, running[1] == "running" else { return false }
+
+  let counts = running[0].split(separator: "/", omittingEmptySubsequences: false)
+  guard counts.count == 2,
+    let activeCount = Int(counts[0]),
+    let totalCount = Int(counts[1]),
+    activeCount > 0,
+    totalCount >= activeCount
+  else {
+    return false
+  }
+
+  let terminalStates = ["queued", "failed", "stopped", "paused"]
+  return components.dropFirst().allSatisfy { component in
+    terminalStates.contains { state in
+      isPiAsyncCountStatus(component.drop(while: \.isWhitespace), expected: state)
+    }
+  }
+}
+
+nonisolated private func isPiAsyncCountStatus(_ summary: Substring, expected: String) -> Bool {
+  let components = summary.split(separator: " ")
+  return components.count == 2
+    && Int(components[0]).map { $0 > 0 } == true
+    && components[1] == Substring(expected)
 }
 
 nonisolated private func detectOMP(_ content: String) -> AgentRawState {
@@ -95,7 +275,7 @@ nonisolated private func hasOMPWorkingLine(_ content: String) -> Bool {
     let trimmed = line.trimmingCharacters(in: .whitespaces)
     return isPiWorkingText(trimmed)
       || hasOMPInterruptHint(trimmed)
-      || hasOMPBrailleSpinner(trimmed)
+      || hasLabeledBrailleSpinner(trimmed)
   }
 }
 
@@ -123,12 +303,21 @@ nonisolated private func hasOMPInterruptHint(_ line: String) -> Bool {
   }
 }
 
-nonisolated private func hasOMPBrailleSpinner(_ line: String) -> Bool {
-  guard let first = line.unicodeScalars.first else { return false }
+nonisolated private func hasLabeledBrailleSpinner(_ line: String) -> Bool {
+  labeledBrailleSpinnerContent(line) != nil
+}
+
+nonisolated private func labeledBrailleSpinnerContent(_ line: String) -> String? {
+  guard let first = line.unicodeScalars.first,
+    (0x2800...0x28FF).contains(Int(first.value))
+  else {
+    return nil
+  }
+
   let rest = String(line.unicodeScalars.dropFirst())
-  return (0x2800...0x28FF).contains(Int(first.value))
-    && rest.hasPrefix(" ")
-    && rest.contains(where: \.isLetter)
+  guard rest.hasPrefix(" ") else { return nil }
+  let content = rest.dropFirst().trimmingCharacters(in: .whitespaces)
+  return content.contains(where: \.isLetter) ? content : nil
 }
 
 nonisolated private func detectGemini(_ content: String) -> AgentRawState {

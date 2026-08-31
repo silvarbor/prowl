@@ -39,6 +39,43 @@ nonisolated enum SupacodePaths {
     Bundle.main.resourceURL?.appending(path: "docs", directoryHint: .isDirectory)
   }
 
+  /// Bundled workflow definitions (`Prowl.app/Contents/Resources/workflows`); absent until the
+  /// first built-in ships, which discovery tolerates.
+  static var bundledWorkflowsURL: URL? {
+    Bundle.main.resourceURL.map(WorkflowSources.bundleDirectory(resourcesURL:))
+  }
+
+  static var bundledCLIURL: URL? {
+    Bundle.main.resourceURL?.appending(
+      path: "prowl-cli/prowl",
+      directoryHint: .notDirectory
+    )
+  }
+
+  /// Copilot loads hooks only from a plugin directory on disk, so Prowl ships a static one
+  /// inside the bundle (`Prowl.app/Contents/Resources/agent-hooks/copilot`). Its `hooks.json`
+  /// resolves the CLI relative to `$COPILOT_PLUGIN_ROOT`, so the directory stays read-only and
+  /// needs no per-launch materialization.
+  static var bundledCopilotHookPluginURL: URL? {
+    Bundle.main.resourceURL?.appending(
+      path: "agent-hooks/copilot",
+      directoryHint: .isDirectory
+    )
+  }
+
+  /// Extension files relayed by the Pi-family and OpenCode managed hooks (docs-ai 064.010).
+  static var bundledPiHookExtensionURL: URL? { bundledAgentHookFileURL("pi/prowl-hooks.ts") }
+  static var bundledOMPHookExtensionURL: URL? { bundledAgentHookFileURL("omp/prowl-hooks.ts") }
+  static var bundledOpenCodeHookPluginURL: URL? { bundledAgentHookFileURL("opencode/prowl-hooks.ts") }
+
+  private static func bundledAgentHookFileURL(_ relativePath: String) -> URL? {
+    Bundle.main.resourceURL?.appending(path: "agent-hooks/\(relativePath)", directoryHint: .notDirectory)
+  }
+
+  static var agentHookForwardingDirectory: URL {
+    cacheDirectory.appending(path: "agent-hook-forwarding", directoryHint: .isDirectory)
+  }
+
   /// On-disk path to the bundled docs index (`docs/README.md`), e.g.
   /// `/Applications/Prowl.app/Contents/Resources/docs/README.md`. `nil` only
   /// if the bundle has no resource directory (should not happen at runtime).

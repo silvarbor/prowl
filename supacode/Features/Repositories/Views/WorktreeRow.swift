@@ -173,27 +173,35 @@ struct WorktreeRow: View {
           RunScriptIndicator(onStop: onStopRunScript)
         }
         if let lineChangePresentation {
-          Button {
-            onDiffTap?()
-          } label: {
+          if let onDiffTap {
+            Button {
+              onDiffTap()
+            } label: {
+              WorktreeRowChangeCountView(
+                presentation: lineChangePresentation,
+                isSelected: isSelected,
+              )
+            }
+            .buttonStyle(.plain)
+            .help(
+              [
+                AppShortcuts.helpText(
+                  title: "Show Diff",
+                  commandID: AppShortcuts.CommandID.showDiff,
+                  in: resolvedKeybindings
+                ),
+                lineChangePresentation.incompleteCountDescription,
+              ]
+              .compactMap { $0 }
+              .joined(separator: "\n")
+            )
+          } else {
             WorktreeRowChangeCountView(
               presentation: lineChangePresentation,
               isSelected: isSelected,
             )
+            .help(lineChangePresentation.incompleteCountDescription ?? "")
           }
-          .buttonStyle(.plain)
-          .help(
-            [
-              AppShortcuts.helpText(
-                title: "Show Diff",
-                commandID: AppShortcuts.CommandID.showDiff,
-                in: resolvedKeybindings
-              ),
-              lineChangePresentation.incompleteCountDescription,
-            ]
-            .compactMap { $0 }
-            .joined(separator: "\n")
-          )
         }
       }
       WorktreeRowInfoView(

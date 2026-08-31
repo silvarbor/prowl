@@ -241,7 +241,7 @@ struct WorktreeRowsView: View {
 
   private func diffTapHandler(for worktreeID: Worktree.ID) -> (() -> Void)? {
     {
-      store.send(.delegate(.showDiff(worktreeID)))
+      store.send(.delegate(.showDiff(.worktree(worktreeID))))
     }
   }
 
@@ -512,11 +512,11 @@ struct WorktreeRowsView: View {
     }
     Divider()
     Button("Show Diff") {
-      store.send(.delegate(.showDiff(worktree.id)))
+      store.send(.delegate(.showDiff(.worktree(worktree.id))))
     }
     .help("Show uncommitted changes for this worktree")
     Button("Show Outgoing Changes") {
-      store.send(.delegate(.showOutgoingChanges(worktree.id)))
+      store.send(.delegate(.showOutgoingChanges(.worktree(worktree.id))))
     }
     .help("Show committed changes relative to this worktree's base")
     Divider()

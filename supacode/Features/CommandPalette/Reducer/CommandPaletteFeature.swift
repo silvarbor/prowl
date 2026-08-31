@@ -240,8 +240,12 @@ struct CommandPaletteFeature {
       items.append(contentsOf: canvasCommandItems())
     }
     let worktreeActionTargetID = actionTargetWorktreeID ?? repositories.selectedWorktreeID
-    if repositories.selectedWorktreeID != nil {
+    // Diff view items follow the broader diff target (worktree or workspace
+    // child); the navigation/action items below stay worktree-scoped.
+    if repositories.selectedDiffTargetID != nil {
       items.append(contentsOf: selectedWorktreeViewCommandItems())
+    }
+    if repositories.selectedWorktreeID != nil {
       items.append(contentsOf: worktreeNavigationCommandItems())
       items.append(
         contentsOf: worktreeActionCommandItems(

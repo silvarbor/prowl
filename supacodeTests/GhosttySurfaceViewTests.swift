@@ -180,6 +180,28 @@ struct GhosttySurfaceViewTests {
     #expect(!duplicateApply)
   }
 
+  @Test func launchEnvironmentCarriesThePaneIdentity() {
+    let runtime = GhosttyRuntime()
+    let surfaceView = GhosttySurfaceView(
+      runtime: runtime,
+      workingDirectory: nil,
+      context: GHOSTTY_SURFACE_CONTEXT_SPLIT,
+      environment: ["PROWL_WORKTREE_PATH": "/repo/wt", "PROWL_PANE_ID": "forged"],
+      skipsSurfaceCreationForTesting: true
+    )
+    let sibling = GhosttySurfaceView(
+      runtime: runtime,
+      workingDirectory: nil,
+      context: GHOSTTY_SURFACE_CONTEXT_SPLIT,
+      skipsSurfaceCreationForTesting: true
+    )
+
+    #expect(surfaceView.launchEnvironment["PROWL_PANE_ID"] == surfaceView.id.uuidString)
+    #expect(surfaceView.launchEnvironment["PROWL_WORKTREE_PATH"] == "/repo/wt")
+    #expect(sibling.launchEnvironment["PROWL_PANE_ID"] == sibling.id.uuidString)
+    #expect(sibling.id != surfaceView.id)
+  }
+
   @Test func occlusionDoesNotApplyUntilViewHasSuperviewAndWindow() async {
     let runtime = GhosttyRuntime()
     let surfaceView = GhosttySurfaceView(

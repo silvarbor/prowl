@@ -45,10 +45,9 @@ Compared with the initial draft, this version makes `key` broader and more scrip
 
 ## Supported targeting
 
-- `--worktree <id|name|path>`
-- `--tab <id>`
-- `--pane <id>`
-- no selector, meaning current focused pane
+`key` uses [targeting.md](targeting.md). Its two-positional form accepts a generic
+target first, so `key p12 enter` targets that pane; a single token still acts on the
+current pane for interactive use.
 
 ## Input contract (v1)
 

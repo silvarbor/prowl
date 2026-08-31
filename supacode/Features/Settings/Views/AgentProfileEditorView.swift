@@ -1,7 +1,7 @@
 import ComposableArchitecture
 import SwiftUI
 
-/// Settings → Agents → native drill-in editor for one profile. The feature
+/// Settings → Agents → Profiles → native drill-in editor for one profile. The feature
 /// owns the alert presentation because its state lives with this destination.
 struct AgentProfileEditorView: View {
   @Bindable var store: StoreOf<AgentProfileEditorFeature>

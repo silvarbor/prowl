@@ -114,8 +114,14 @@ final class GhosttySurfaceView: NSView, Identifiable {
     }
   }
 
+  /// Environment variable that carries the pane's own UUID into every process
+  /// started inside it, so an agent can address itself (`--pane "$PROWL_PANE_ID"`)
+  /// without guessing from focus. Convenience identity only: the value is
+  /// inherited and forgeable, so trusted attribution stays on caller-PID resolution.
+  static let paneIdentityEnvironmentKey = "PROWL_PANE_ID"
+
   let runtime: GhosttyRuntime
-  let id = UUID()
+  let id: UUID
   private var debugID: String {
     String(id.uuidString.prefix(8))
   }
@@ -124,6 +130,8 @@ final class GhosttySurfaceView: NSView, Identifiable {
   }
   let bridge: GhosttySurfaceBridge
   let launchWorkingDirectory: URL?
+  /// Environment handed to the surface's shell: the caller's variables plus the pane identity.
+  let launchEnvironment: [String: String]
   private(set) var surface: ghostty_surface_t?
   private var surfaceRef: GhosttyRuntime.SurfaceReference?
   private let workingDirectoryCString: UnsafeMutablePointer<CChar>?
@@ -132,11 +140,15 @@ final class GhosttySurfaceView: NSView, Identifiable {
   private let envVarEntries: UnsafeMutablePointer<ghostty_env_var_s>?
   private let envVarCount: Int
   private let fontSize: Float32
+  private let appliesFontSizeAdjustmentMarker: Bool
+  private(set) var didApplyFontSizeAdjustmentMarker = false
   private let context: ghostty_surface_context_e
   var surfaceContextForTesting: ghostty_surface_context_e {
     context
   }
   private let skipsSurfaceCreationForTesting: Bool
+  private let failsSurfaceCreationForTesting: Bool
+  private(set) var surfaceCreationArmed = false
   private var trackingArea: NSTrackingArea?
   private var lastBackingSize: CGSize = .zero
   var lastPerformKeyEvent: TimeInterval?
@@ -259,13 +271,19 @@ final class GhosttySurfaceView: NSView, Identifiable {
     fontSize: Float32? = nil,
     context: ghostty_surface_context_e,
     environment: [String: String] = [:],
-    skipsSurfaceCreationForTesting: Bool = false
+    skipsSurfaceCreationForTesting: Bool = false,
+    failsSurfaceCreationForTesting: Bool = false,
+    defersSurfaceCreation: Bool = false
   ) {
+    let id = UUID()
+    self.id = id
     self.runtime = runtime
     self.bridge = GhosttySurfaceBridge()
     self.fontSize = fontSize ?? 0
+    self.appliesFontSizeAdjustmentMarker = fontSize != nil
     self.context = context
     self.skipsSurfaceCreationForTesting = skipsSurfaceCreationForTesting
+    self.failsSurfaceCreationForTesting = failsSurfaceCreationForTesting
     if let workingDirectory {
       let path = Self.normalizedWorkingDirectoryPath(
         workingDirectory.path(percentEncoded: false)
@@ -281,7 +299,10 @@ final class GhosttySurfaceView: NSView, Identifiable {
     } else {
       initialInputCString = nil
     }
-    let sortedEnv = environment.sorted { $0.key < $1.key }
+    var launchEnvironment = environment
+    launchEnvironment[Self.paneIdentityEnvironmentKey] = id.uuidString
+    self.launchEnvironment = launchEnvironment
+    let sortedEnv = launchEnvironment.sorted { $0.key < $1.key }
     var allocatedStrings: [UnsafeMutablePointer<CChar>] = []
     allocatedStrings.reserveCapacity(sortedEnv.count * 2)
     for (key, value) in sortedEnv {
@@ -310,11 +331,8 @@ final class GhosttySurfaceView: NSView, Identifiable {
     super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
     wantsLayer = true
     bridge.surfaceView = self
-    if !skipsSurfaceCreationForTesting {
-      createSurface()
-      if let surface {
-        surfaceRef = runtime.registerSurface(surface)
-      }
+    if !skipsSurfaceCreationForTesting, !defersSurfaceCreation {
+      _ = armSurfaceCreation()
     }
     registerForDraggedTypes(Array(Self.dropTypes))
 
@@ -350,6 +368,30 @@ final class GhosttySurfaceView: NSView, Identifiable {
     for pointer in envVarCStrings {
       free(pointer)
     }
+  }
+
+  @discardableResult
+  func armSurfaceCreation() -> Bool {
+    guard !surfaceCreationArmed else { return true }
+    surfaceCreationArmed = true
+    guard !skipsSurfaceCreationForTesting else { return true }
+    guard !failsSurfaceCreationForTesting else {
+      surfaceCreationArmed = false
+      return false
+    }
+    createSurface()
+    guard let surface else {
+      surfaceCreationArmed = false
+      return false
+    }
+    surfaceRef = runtime.registerSurface(surface)
+    // This no-op marks the native surface as font-size adjusted so a config
+    // reload cannot reset an inherited/preferred size. It must run post-create.
+    if appliesFontSizeAdjustmentMarker {
+      performBindingAction("increase_font_size:0")
+      didApplyFontSizeAdjustmentMarker = true
+    }
+    return true
   }
 
   func closeSurface() {

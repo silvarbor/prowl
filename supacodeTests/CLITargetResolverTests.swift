@@ -31,12 +31,14 @@ struct CLITargetResolverTests {
     }
   }
 
-  @Test func autoSelectorKeepsNumericValuesForWorktrees() throws {
+  @Test func autoSelectorResolvesPrefixedHandlesAndKeepsBareNumbersForWorktrees() throws {
+    let tabID = UUID()
+    let paneID = UUID()
     let paneSnapshot = makeSnapshot(
       worktreeID: "pane-worktree",
       worktreeName: "other",
-      tab: (id: UUID(), handle: 1),
-      panes: [(id: UUID(), handle: 3)],
+      tab: (id: tabID, handle: 1),
+      panes: [(id: paneID, handle: 3)],
       focusedPaneID: nil
     )
     let numericWorktreeSnapshot = makeSnapshot(
@@ -53,13 +55,69 @@ struct CLITargetResolverTests {
       )
     }
 
+    let paneTarget = try resolvedTarget(from: resolver.resolve(.auto("p3")))
+    #expect(paneTarget.paneID == paneID)
+
+    let tabTarget = try resolvedTarget(from: resolver.resolve(.auto("t1")))
+    #expect(tabTarget.tabID == tabID)
+
     let numericTarget = try resolvedTarget(from: resolver.resolve(.auto("3")))
     #expect(numericTarget.worktreeID == "numeric-worktree")
+  }
 
-    if case .failure(.notFound) = resolver.resolve(.auto("p3")) {
-      // Expected: short handles are explicit-selector-only.
+  @Test func lifecycleResolverRoutesOnlyTabsAndPanes() throws {
+    let tabID = UUID()
+    let paneID = UUID()
+    let snapshot = makeSnapshot(
+      worktreeID: "worktree",
+      worktreeName: "main",
+      tab: (id: tabID, handle: 6),
+      panes: [(id: paneID, handle: 12)],
+      focusedPaneID: paneID
+    )
+    let resolver = TargetResolver { snapshot }
+
+    let pane = try lifecycleTarget(from: resolver.resolveLifecycleTarget(.auto("p12")))
+    #expect(pane.resource == .pane)
+    #expect(pane.target.paneID == paneID.uuidString)
+
+    let tab = try lifecycleTarget(from: resolver.resolveLifecycleTarget(.auto("t6")))
+    #expect(tab.resource == .tab)
+    #expect(tab.target.tabID == tabID.uuidString)
+
+    if case .failure(.notFound) = resolver.resolveLifecycleTarget(.worktree("main")) {
+      // Expected: lifecycle operations never project a worktree to a tab or pane.
     } else {
-      Issue.record("--target must not resolve a short pane handle")
+      Issue.record("Lifecycle commands must reject worktree targets.")
+    }
+  }
+
+  @Test func stalePrefixedHandleDoesNotFallBackToWorktree() {
+    let snapshot = makeSnapshot(
+      worktreeID: "p3-worktree",
+      worktreeName: "p3",
+      tab: (id: UUID(), handle: 1),
+      panes: [(id: UUID(), handle: 2)],
+      focusedPaneID: nil
+    )
+    let resolver = TargetResolver { snapshot }
+
+    guard case .failure(.notFound(let message)) = resolver.resolve(.auto("p3")) else {
+      Issue.record("A stale prefixed handle must not resolve as a worktree.")
+      return
+    }
+    #expect(message.contains("Pane 'p3' not found"))
+  }
+
+  private func lifecycleTarget(
+    from result: Result<LifecycleResolvedTarget, TargetResolverError>
+  ) throws -> LifecycleResolvedTarget {
+    switch result {
+    case .success(let target):
+      return target
+    case .failure(let error):
+      Issue.record("Unexpected lifecycle resolution failure: \(error)")
+      throw error
     }
   }
 

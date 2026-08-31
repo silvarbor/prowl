@@ -65,7 +65,8 @@ struct AgentDetectionDiagnostic {
       "ptyPGID=\(processGroupID.map(String.init) ?? "nil")",
       "fgPGID=\(job.map { String($0.processGroupID) } ?? "nil")",
       "processes=\(processSummary)",
-      "identified=\(identified.map { "\($0.agent.rawValue)(\($0.name))" } ?? "nil")",
+      "identified=\(identified.map { "\($0.agent.rawValue)(\($0.name)):\($0.process.pid)" } ?? "nil")",
+      "launch=\(identified.map { String($0.launchProcessID) } ?? "nil")",
       "retained=\(retainedAgent?.rawValue ?? "nil")",
       "raw=\(raw?.rawValue ?? "nil")",
       "reason=\(reason?.identifier ?? "nil")",
@@ -95,6 +96,8 @@ final class WorktreeTerminalState {
   let runtime: GhosttyRuntime
   let worktree: Worktree
   private let targetHandleRegistry: TerminalTargetHandleRegistry
+  let skipsSurfaceCreationForTesting: Bool
+  let failsSurfaceCreationForTesting: Bool
   @ObservationIgnored
   @SharedReader private var repositorySettings: RepositorySettings
   var trees: [TerminalTabID: SplitTree<GhosttySurfaceView>] = [:]
@@ -266,6 +269,11 @@ final class WorktreeTerminalState {
   var onTaskStatusChanged: ((WorktreeTaskStatus) -> Void)?
   var onAgentEntryChanged: ((ActiveAgentEntry) -> Void)?
   var onAgentEntryRemoved: ((ActiveAgentEntry.ID) -> Void)?
+  /// Emitted exactly once after agent cleanup for each torn-down surface.
+  var onSurfaceClosed: ((UUID) -> Void)?
+  /// The exact surface is installed but its Profile command has not been sent.
+  /// Returning false rolls the surface back before agent input can execute.
+  var onAgentProfileSurfacePrepared: ((UUID, AgentProfileLaunchPlan) -> Bool)?
   var onRunScriptStatusChanged: ((Bool) -> Void)?
   var onCommandPaletteToggle: (() -> Void)?
   var onSetupScriptConsumed: (() -> Void)?
@@ -280,11 +288,15 @@ final class WorktreeTerminalState {
     runSetupScript: Bool = false,
     defaultFontSize: Float32? = nil,
     targetHandleRegistry: TerminalTargetHandleRegistry? = nil,
-    titleFlushClock: any Clock<Duration> = ContinuousClock()
+    titleFlushClock: any Clock<Duration> = ContinuousClock(),
+    skipsSurfaceCreationForTesting: Bool = false,
+    failsSurfaceCreationForTesting: Bool = false
   ) {
     self.runtime = runtime
     self.worktree = worktree
     self.targetHandleRegistry = targetHandleRegistry ?? TerminalTargetHandleRegistry()
+    self.skipsSurfaceCreationForTesting = skipsSurfaceCreationForTesting
+    self.failsSurfaceCreationForTesting = failsSurfaceCreationForTesting
     self.pendingSetupScript = runSetupScript
     self.defaultFontSize = defaultFontSize
     self.tabManager = TerminalTabManager(titleFlushClock: titleFlushClock)
@@ -479,59 +491,225 @@ final class WorktreeTerminalState {
     return tabId
   }
 
-  /// Launches an agent profile per its compiled plan (docs-ai 053): provisions
-  /// the dedicated home when bound, creates the placement surface with the
-  /// environment patch, and records the profile identity on the new surface.
-  /// Split placement degrades to a new tab when nothing is splittable.
+  func freezeAgentProfileLaunchContext(
+    _ request: AgentProfileLaunchRequest
+  ) -> Result<FrozenAgentProfileLaunchContext, AgentProfileLaunchError> {
+    let anchor: UUID?
+    let context: ghostty_surface_context_e
+    let tracksFocusedAnchor: Bool
+    switch request.placement {
+    case .tab:
+      anchor = request.inheritanceAnchor ?? currentFocusedSurfaceId()
+      context = GHOSTTY_SURFACE_CONTEXT_TAB
+      tracksFocusedAnchor = request.inheritanceAnchor == nil
+    case .split(let requestedAnchor, _, _):
+      guard let resolved = requestedAnchor ?? currentFocusedSurfaceId(), surfaces[resolved] != nil else {
+        return .failure(.splitAnchorUnavailable)
+      }
+      anchor = resolved
+      context = GHOSTTY_SURFACE_CONTEXT_SPLIT
+      tracksFocusedAnchor = requestedAnchor == nil
+    }
+    let inheritedCWD =
+      request.workingDirectoryOverride
+      ?? inheritedSurfaceConfig(fromSurfaceId: anchor, context: context).workingDirectory
+      ?? worktree.workingDirectory
+    let frozenPlacement: AgentProfileLaunchRequest.Placement =
+      switch request.placement {
+      case .tab(let background): .tab(background: background)
+      case .split(_, let direction, let background):
+        .split(anchor: anchor, direction: direction, background: background)
+      }
+    return .success(
+      FrozenAgentProfileLaunchContext(
+        request: AgentProfileLaunchRequest(
+          plan: request.plan,
+          placement: frozenPlacement,
+          workingDirectoryOverride: inheritedCWD,
+          inheritanceAnchor: anchor,
+          title: request.title
+        ),
+        inheritedCWD: inheritedCWD.standardizedFileURL,
+        anchorSurfaceID: anchor,
+        tracksFocusedAnchor: tracksFocusedAnchor,
+        tracksInheritedCWD: request.workingDirectoryOverride == nil
+      )
+    )
+  }
+
+  func isAgentProfileLaunchContextValid(
+    _ context: FrozenAgentProfileLaunchContext,
+    inheritedCWDOverride: URL? = nil
+  ) -> Bool {
+    if let anchor = context.anchorSurfaceID, surfaces[anchor] == nil { return false }
+    if context.tracksFocusedAnchor, currentFocusedSurfaceId() != context.anchorSurfaceID { return false }
+    guard context.tracksInheritedCWD else { return true }
+    let surfaceContext: ghostty_surface_context_e =
+      switch context.request.placement {
+      case .tab: GHOSTTY_SURFACE_CONTEXT_TAB
+      case .split: GHOSTTY_SURFACE_CONTEXT_SPLIT
+      }
+    let currentCWD =
+      inheritedCWDOverride
+      ?? inheritedSurfaceConfig(
+        fromSurfaceId: context.anchorSurfaceID,
+        context: surfaceContext
+      ).workingDirectory
+      ?? worktree.workingDirectory
+    return AgentProfileLaunchPlanner.pathString(currentCWD)
+      == AgentProfileLaunchPlanner.pathString(context.inheritedCWD)
+  }
+
+  /// Launches an agent profile through the deterministic A2 boundary. Explicit
+  /// split placement never falls back to a tab; callers receive both identities
+  /// synchronously and can resolve the exact created target without using focus.
+  @discardableResult
+  func launchAgentProfile(
+    _ request: AgentProfileLaunchRequest
+  ) -> Result<LaunchedSurface, AgentProfileLaunchError> {
+    guard provisionAgentProfileHome(for: request.plan) else {
+      return .failure(.homeProvisioningFailed)
+    }
+    return launchProvisionedAgentProfile(request)
+  }
+
+  /// Compatibility wrapper for the shipped menu/palette path. It preserves the
+  /// original split-to-tab fallback and UUID-only result while the CLI/runner use
+  /// the typed request boundary above.
   @discardableResult
   func launchAgentProfile(_ plan: AgentProfileLaunchPlan) -> UUID? {
-    if let home = plan.dedicatedHome {
-      do {
-        try AgentProfileHomeProvisioner.provision(
-          home: home,
-          base: SupacodePaths.agentProfileHomesDirectory
+    guard provisionAgentProfileHome(for: plan) else { return nil }
+    if plan.placement == .split {
+      let splitRequest = AgentProfileLaunchRequest(
+        plan: plan,
+        placement: .split(
+          anchor: nil,
+          direction: plan.splitDirection,
+          background: false
         )
-      } catch {
-        terminalStateLogger.warning("Agent profile home provisioning failed: \(error)")
-        return nil
+      )
+      if case .success(let launched) = launchProvisionedAgentProfile(splitRequest) {
+        return launched.surfaceID
       }
     }
-    let identity = SurfaceLaunchProfile(
+    return try? launchProvisionedAgentProfile(
+      AgentProfileLaunchRequest(
+        plan: plan,
+        placement: .tab(background: false)
+      )
+    ).get().surfaceID
+  }
+
+  func provisionAgentProfileHome(for plan: AgentProfileLaunchPlan) -> Bool {
+    guard let home = plan.dedicatedHome else { return true }
+    do {
+      try AgentProfileHomeProvisioner.provision(
+        home: home,
+        base: SupacodePaths.agentProfileHomesDirectory
+      )
+      return true
+    } catch {
+      terminalStateLogger.warning("Agent profile home provisioning failed: \(error)")
+      return false
+    }
+  }
+
+  private func launchProvisionedAgentProfile(
+    _ request: AgentProfileLaunchRequest
+  ) -> Result<LaunchedSurface, AgentProfileLaunchError> {
+    let plan = request.plan
+    let launched: Result<LaunchedSurface, AgentProfileLaunchError>
+    switch request.placement {
+    case .tab(let background):
+      launched = createAgentProfileTab(request, background: background)
+    case .split(let requestedAnchor, let direction, let background):
+      guard let anchor = requestedAnchor ?? currentFocusedSurfaceId() else {
+        return .failure(.splitAnchorUnavailable)
+      }
+      switch createSplit(
+        of: anchor,
+        direction: direction,
+        initialInput: plan.terminalInput,
+        workingDirectoryOverride: request.workingDirectoryOverride,
+        additionalEnvironment: plan.surfaceEnvironment,
+        focusing: !background,
+        defersSurfaceCreation: true
+      ) {
+      case .success(let surfaceID):
+        guard let tabID = tabID(containing: surfaceID) else {
+          return .failure(.splitCreationFailed(.insertionFailed))
+        }
+        launched = .success(LaunchedSurface(tabID: tabID, surfaceID: surfaceID))
+      case .failure(let error):
+        launched = .failure(.splitCreationFailed(error))
+      }
+    }
+
+    guard case .success(let surface) = launched else { return launched }
+    launchProfilesBySurface[surface.surfaceID] = SurfaceLaunchProfile(
       profileID: plan.profileID,
       name: plan.profileName,
       runtime: plan.runtime,
       dedicatedHome: plan.dedicatedHome,
       sessionConfigRoot: plan.sessionConfigRoot
     )
-    if plan.placement == .split,
-      let surfaceID = createSplitOnFocusedSurface(
-        direction: plan.splitDirection,
-        initialInput: plan.terminalInput,
-        additionalEnvironment: plan.surfaceEnvironment
-      )
+    if case .split = request.placement,
+      let icon = Self.launchTabIcon(for: plan.runtime)
     {
-      launchProfilesBySurface[surfaceID] = identity
-      if let icon = Self.launchTabIcon(for: plan.runtime), let tabID = tabID(containing: surfaceID) {
-        applyResolvedIcon(icon, surfaceId: surfaceID, tabId: tabID)
-      }
-      return surfaceID
+      applyResolvedIcon(icon, surfaceId: surface.surfaceID, tabId: surface.tabID)
     }
-    let tabId = createTab(
-      TabCreation(
-        title: plan.profileName,
-        icon: Self.launchTabIcon(for: plan.runtime)?.storageString ?? "terminal",
-        isTitleLocked: false,
-        initialInput: runScriptInput(plan.terminalInput),
-        focusing: true,
-        inheritingFromSurfaceId: currentFocusedSurfaceId(),
-        context: GHOSTTY_SURFACE_CONTEXT_TAB,
-        workingDirectoryOverride: nil,
-        additionalEnvironment: plan.surfaceEnvironment
+    guard onAgentProfileSurfacePrepared?(surface.surfaceID, plan) != false else {
+      rollbackAgentProfileSurface(surface, placement: request.placement)
+      return .failure(.hookRegistrationFailed)
+    }
+    guard let view = surfaces[surface.surfaceID], view.armSurfaceCreation() else {
+      rollbackAgentProfileSurface(surface, placement: request.placement)
+      return .failure(.surfaceCreationFailed)
+    }
+    wakeAgentDetection(for: view, tabId: surface.tabID)
+    return launched
+  }
+
+  private func createAgentProfileTab(
+    _ request: AgentProfileLaunchRequest,
+    background: Bool
+  ) -> Result<LaunchedSurface, AgentProfileLaunchError> {
+    let plan = request.plan
+    guard
+      let tabID = createTab(
+        TabCreation(
+          title: request.title ?? plan.profileName,
+          icon: Self.launchTabIcon(for: plan.runtime)?.storageString ?? "terminal",
+          isTitleLocked: false,
+          initialInput: runScriptInput(plan.terminalInput),
+          focusing: !background,
+          selecting: !background,
+          inheritingFromSurfaceId: request.inheritanceAnchor ?? currentFocusedSurfaceId(),
+          context: GHOSTTY_SURFACE_CONTEXT_TAB,
+          workingDirectoryOverride: request.workingDirectoryOverride,
+          additionalEnvironment: plan.surfaceEnvironment,
+          defersSurfaceCreation: true
+        )
       )
-    )
-    guard let tabId, let surfaceID = trees[tabId]?.root?.leftmostLeaf().id else { return nil }
-    launchProfilesBySurface[surfaceID] = identity
-    return surfaceID
+    else {
+      return .failure(.tabCreationFailed)
+    }
+    guard let surfaceID = trees[tabID]?.root?.leftmostLeaf().id else {
+      return .failure(.launchedSurfaceMissing(tabID))
+    }
+    return .success(LaunchedSurface(tabID: tabID, surfaceID: surfaceID))
+  }
+
+  private func rollbackAgentProfileSurface(
+    _ surface: LaunchedSurface,
+    placement: AgentProfileLaunchRequest.Placement
+  ) {
+    switch placement {
+    case .tab:
+      _ = closeTab(surface.tabID, confirmation: .skip)
+    case .split:
+      _ = closeSurface(id: surface.surfaceID, confirmation: .skip)
+    }
   }
 
   /// Icon for a profile launch. The launch path knows its runtime, so it
@@ -621,6 +799,7 @@ final class WorktreeTerminalState {
     let context: ghostty_surface_context_e
     let workingDirectoryOverride: URL?
     var additionalEnvironment: [String: String] = [:]
+    var defersSurfaceCreation = false
   }
 
   private func createTab(_ creation: TabCreation) -> TerminalTabID? {
@@ -636,7 +815,8 @@ final class WorktreeTerminalState {
       initialInput: creation.initialInput,
       workingDirectoryOverride: creation.workingDirectoryOverride,
       context: creation.context,
-      additionalEnvironment: creation.additionalEnvironment
+      additionalEnvironment: creation.additionalEnvironment,
+      defersSurfaceCreation: creation.defersSurfaceCreation
     )
     _ = registerTargetHandle(for: tabId)
     for surface in tree.leaves() {

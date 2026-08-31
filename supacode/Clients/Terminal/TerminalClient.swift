@@ -5,7 +5,14 @@ struct TerminalClient {
   var send: @MainActor @Sendable (Command) -> Void
   /// Creates and selects a tab synchronously so Canvas can target its exact ID.
   var createTabInDirectory: @MainActor @Sendable (Worktree, URL) -> TerminalTabID?
+  /// Launches a compiled profile request synchronously and returns the exact tab
+  /// and pane identities. This is the CLI/workflow boundary; the legacy command
+  /// remains event-driven for menu and palette launches.
+  var launchAgentProfile:
+    @MainActor @Sendable (Worktree, AgentProfileLaunchRequest) async -> Result<LaunchedSurface, AgentProfileLaunchError>
   var events: @MainActor @Sendable () -> AsyncStream<Event>
+  /// Per-surface multicast stream. Independent from the single-consumer event stream.
+  var observeAgentState: @MainActor @Sendable (UUID) -> AgentObservationStream
   var canvasFocusedWorktreeID: @MainActor @Sendable () -> Worktree.ID?
   /// Active surface in the selected tab. Lets the reducer capture the target
   /// synchronously before an async dispatch races against AppKit focus reshuffle
@@ -87,6 +94,7 @@ struct TerminalClient {
     /// launch memory on this event — not at dispatch — so a failed launch
     /// never shifts the Recommended resolution (docs-ai 053/005).
     case agentProfileLaunched(worktreeID: Worktree.ID, profileID: AgentProfile.ID)
+    case agentProfileLaunchWarning(worktreeID: Worktree.ID, profileName: String, message: String)
     case agentProfileLaunchFailed(worktreeID: Worktree.ID, profileName: String)
     case runScriptStatusChanged(worktreeID: Worktree.ID, isRunning: Bool)
     case commandPaletteToggleRequested(worktreeID: Worktree.ID)
@@ -101,7 +109,9 @@ extension TerminalClient: DependencyKey {
   static let liveValue = TerminalClient(
     send: { _ in fatalError("TerminalClient.send not configured") },
     createTabInDirectory: { _, _ in fatalError("TerminalClient.createTabInDirectory not configured") },
+    launchAgentProfile: { _, _ in fatalError("TerminalClient.launchAgentProfile not configured") },
     events: { fatalError("TerminalClient.events not configured") },
+    observeAgentState: { _ in fatalError("TerminalClient.observeAgentState not configured") },
     canvasFocusedWorktreeID: { nil },
     selectedSurfaceID: { _ in nil },
     handoffSourceContext: { _ in nil },
@@ -117,7 +127,9 @@ extension TerminalClient: DependencyKey {
   static let testValue = TerminalClient(
     send: { _ in },
     createTabInDirectory: { _, _ in nil },
+    launchAgentProfile: { _, _ in .failure(.tabCreationFailed) },
     events: { AsyncStream { $0.finish() } },
+    observeAgentState: { _ in AgentObservationStream { $0.finish() } },
     canvasFocusedWorktreeID: { nil },
     selectedSurfaceID: { _ in nil },
     handoffSourceContext: { _ in nil },

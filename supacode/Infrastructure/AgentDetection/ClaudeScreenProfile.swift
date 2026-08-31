@@ -46,6 +46,16 @@ enum ClaudeScreenProfile {
     return AgentScreenDetection(state: .idle, reason: .noRuleMatched)
   }
 
+  /// Raw current interaction text for an actionable blocked screen. Keep the
+  /// rendered choices and keyboard hints intact rather than inventing option fields.
+  nonisolated static func blockerText(in snapshot: AgentScreenSnapshot) -> String? {
+    let regions = ClaudeScreenRegions(snapshot: snapshot)
+    guard hasBlockedPrompt(regions) else { return nil }
+    let lines =
+      regions.currentInteractionLines.isEmpty ? Array(snapshot.lines.suffix(18)) : regions.currentInteractionLines
+    return lines.joined(separator: "\n").trimmingCharacters(in: .newlines)
+  }
+
   nonisolated private static func hasViewerChrome(_ regions: ClaudeScreenRegions) -> Bool {
     if regions.bottomChromeLines.contains(where: { line in
       line.contains("⌕ Search…") || line.lowercased().contains("ctrl+r to toggle")
@@ -193,14 +203,22 @@ private struct ClaudeScreenRegions: Sendable {
     )
     self.currentInteractionLines = currentInteractionLines
     self.currentInteractionLower = currentInteractionLines.joined(separator: "\n").lowercased()
-    // Reconstruct rows before limiting the region. Counting the limit in physical
-    // lines drops the head of any row that wraps onto three or more continuations,
+    // Reconstruct rows before selecting the region. Counting in physical lines
+    // drops the head of any row that wraps onto three or more continuations,
     // and the head is what carries the "●" or spinner glyph the rules key on.
     // Widths that narrow are reachable: a surface can be as few as five columns.
-    self.liveStatus = claudeLogicalRows(
-      Self.contentAbovePrompt(screenLines: lines, promptIndex: promptIndex)
+    //
+    // The block is then bounded by shape, not by count. The TUI paints live
+    // status as a trailing run of chrome-headed rows directly above the
+    // composer, so rows are taken bottom-up while they keep that shape. A
+    // fixed row count put an upper bound on the block — one extra queued "❯"
+    // message or "⎿" tip row displaced the live spinner and a working agent
+    // read as idle — while stopping at the first transcript-shaped row keeps
+    // a status row quoted inside a "⏺" block or prose from matching now that
+    // Claude detection reads the full active screen.
+    self.liveStatus = Self.liveStatusBlock(
+      claudeLogicalRows(Self.contentAbovePrompt(screenLines: lines, promptIndex: promptIndex))
     )
-    .suffix(3)
     .joined(separator: "\n")
     self.belowPromptLines = Self.contentBelowPrompt(screenLines: lines, promptIndex: promptIndex)
       .split(separator: "\n", omittingEmptySubsequences: false)
@@ -210,6 +228,39 @@ private struct ClaudeScreenRegions: Sendable {
     self.bottomChromeLines = Array(nonEmptyLines.suffix(3))
     self.bottomViewerLines = Array(nonEmptyLines.suffix(5))
     self.hasIdleComposer = Self.hasIdleComposer(screenLines: lines, promptIndex: promptIndex)
+  }
+
+  nonisolated private static func liveStatusBlock(_ rows: [String]) -> ArraySlice<String> {
+    var start = rows.endIndex
+    while start > rows.startIndex {
+      if isClaudeLiveChromeRow(rows[start - 1]) {
+        start -= 1
+        continue
+      }
+      guard let head = queuedMessageHeadIndex(above: start - 1, in: rows) else { break }
+      start = head
+    }
+    return rows[start...]
+  }
+
+  // A prose row sits inside the live block only as a queued-message body
+  // paragraph: a blank line inside a queued "❯" message detaches the paragraph
+  // from its head row, so it surfaces as an unmarked row and would otherwise
+  // end the block, demoting the spinner above to history while the agent is
+  // still working. Body paragraphs hang directly under their head, so the
+  // prose run counts as queued body only when the first row-starting or
+  // chrome row above it is a "❯" head. Anything else on top — a "⏺" block, a
+  // border, or non-queued chrome such as a quoted spinner — means the prose
+  // is transcript text, which still ends the block.
+  nonisolated private static func queuedMessageHeadIndex(above proseIndex: Int, in rows: [String]) -> Int? {
+    var index = proseIndex
+    while index > rows.startIndex {
+      let row = rows[index - 1]
+      if row.first == "❯" { return index - 1 }
+      if isClaudeLiveChromeRow(row) || claudeRowStartsNewRow(row) { return nil }
+      index -= 1
+    }
+    return nil
   }
 
   nonisolated private static func currentInteractionLines(
@@ -305,6 +356,18 @@ nonisolated private func claudeRowStartsNewRow(_ trimmed: String) -> Bool {
   guard let first = trimmed.unicodeScalars.first else { return false }
   if isAgentSpinnerScalar(first) { return true }
   return "●⏺◯⎿❯─-".unicodeScalars.contains(first)
+}
+
+// Rows the TUI paints below the transcript while a turn is live: the spinner
+// or "●" status row, "⎿" attachments (todo lists, tips), queued "❯" messages,
+// todo checkboxes when they surface as their own rows, and right-aligned
+// chrome such as "◉ xhigh · /effort" (whose head is a spinner scalar). "⏺"
+// transcript blocks, "◯" agent-switcher rows, prose, and borders end the live
+// block: everything above them is history, however status-shaped it looks.
+nonisolated private func isClaudeLiveChromeRow(_ row: String) -> Bool {
+  guard let first = row.unicodeScalars.first else { return false }
+  if isAgentSpinnerScalar(first) { return true }
+  return "●⎿❯◻☐✔✘".unicodeScalars.contains(first)
 }
 
 nonisolated private func isClaudeNumberedSelectionLine(_ line: String) -> Bool {

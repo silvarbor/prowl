@@ -41,8 +41,25 @@ PROWL_SENTRY_DSN ?=
 PROWL_POSTHOG_API_KEY ?=
 PROWL_POSTHOG_HOST ?=
 
+# Local Debug signing. Debug products are ad-hoc signed by default, and an ad-hoc
+# signature's designated requirement is its cdhash, which changes on every rebuild:
+# TCC then treats each build as a new app and re-asks for Desktop/Documents/Downloads
+# access from Prowl Debug and from the commands running in its panes. Setting
+# PROWL_DEVELOPMENT_TEAM (environment or Config/Secrets.env) makes build-app and
+# test-app sign the app and the test host with that team's Apple Development identity
+# through Xcode's automatic signing, so the grants survive rebuilds. Empty keeps
+# ad-hoc signing, which needs no certificate (CI, contributors).
+PROWL_DEVELOPMENT_TEAM ?=
+ifneq ($(strip $(PROWL_DEVELOPMENT_TEAM)),)
+DEBUG_SIGNING_ARGS := DEVELOPMENT_TEAM=$(PROWL_DEVELOPMENT_TEAM)
+TEST_SIGNING_ARGS := $(DEBUG_SIGNING_ARGS)
+else
+DEBUG_SIGNING_ARGS :=
+TEST_SIGNING_ARGS := CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+endif
+
 .DEFAULT_GOAL := help
-.PHONY: build-ghostty-xcframework ensure-ghostty sync-ghostty _record-ghostty-hash build-app build-cli build-cli-release embed-cli-debug embed-cli embed-docs run-app install-dev-build install-release archive export-archive format format-changed format-lint lint check test test-app test-cli-smoke test-cli-integration benchmark-build bump-version log-stream
+.PHONY: build-ghostty-xcframework ensure-ghostty sync-ghostty _record-ghostty-hash build-app build-cli build-cli-release embed-cli-debug embed-cli embed-docs embed-skills run-app install-dev-build install-release archive export-archive format format-changed format-lint lint check test test-app test-scripts test-cli-smoke test-cli-unit test-cli-integration benchmark-build bump-version log-stream agent-versions
 
 help:  # Display this help.
 	@-+echo "Run make with one of the following targets:"
@@ -111,8 +128,16 @@ embed-docs: # Stage docs/ into Resources for bundling into the app (.app/Content
 	rsync -a --delete --exclude '.sync-meta.json' "$$src/" "$$dst/"; \
 	echo "embedded docs at $$dst"
 
-build-app: ensure-ghostty embed-cli-debug embed-docs # Build the macOS app (Debug)
-	bash -o pipefail -c 'xcodebuild -project supacode.xcodeproj -scheme supacode -configuration Debug build -skipMacroValidation -clonedSourcePackagesDirPath $(SPM_CACHE_DIR) SWIFT_COMPILATION_MODE=incremental 2>&1 | mise exec -- xcsift -w --format toon'
+embed-skills: # Stage skills/ into Resources for bundling into the app (.app/Contents/Resources/skills)
+	@set -euo pipefail; \
+	src="$(CURRENT_MAKEFILE_DIR)/skills"; \
+	dst="$(CURRENT_MAKEFILE_DIR)/Resources/skills"; \
+	mkdir -p "$$dst"; \
+	rsync -a --delete "$$src/" "$$dst/"; \
+	echo "embedded skills at $$dst"
+
+build-app: ensure-ghostty embed-cli-debug embed-docs embed-skills # Build the macOS app (Debug)
+	bash -o pipefail -c 'xcodebuild -project supacode.xcodeproj -scheme supacode -configuration Debug build -skipMacroValidation -clonedSourcePackagesDirPath $(SPM_CACHE_DIR) SWIFT_COMPILATION_MODE=incremental $(DEBUG_SIGNING_ARGS) 2>&1 | mise exec -- xcsift -w --format toon'
 
 sync-cli-version: # Sync app MARKETING_VERSION into ProwlCLIShared/ProwlVersion.swift
 	@version="$$(/usr/bin/awk -F' = ' '/MARKETING_VERSION = [0-9.]*;/{gsub(/;/,"",$$2);print $$2; exit}' \
@@ -318,28 +343,53 @@ install-release: build-ghostty-xcframework # Build Release, sign locally, instal
 	ditto "$$APP_PATH" "$$DST"; \
 	echo "installed $$DST (Release build, locally signed)"
 
-archive: build-ghostty-xcframework embed-cli embed-docs # Archive Release build for distribution
+archive: build-ghostty-xcframework embed-cli embed-docs embed-skills # Archive Release build for distribution
 	bash -o pipefail -c 'xcodebuild -project supacode.xcodeproj -scheme supacode -configuration Release -archivePath build/supacode.xcarchive archive CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="$$APPLE_TEAM_ID" CODE_SIGN_IDENTITY="$$DEVELOPER_ID_IDENTITY_SHA" OTHER_CODE_SIGN_FLAGS="--timestamp" PROWL_SENTRY_DSN="$(PROWL_SENTRY_DSN)" PROWL_POSTHOG_API_KEY="$(PROWL_POSTHOG_API_KEY)" PROWL_POSTHOG_HOST="$(PROWL_POSTHOG_HOST)" -skipMacroValidation -clonedSourcePackagesDirPath $(SPM_CACHE_DIR) $(XCODEBUILD_FLAGS) 2>&1 | mise exec -- xcsift -qw --format toon'
 
 export-archive: # Export xarchive
 	bash -o pipefail -c 'xcodebuild -exportArchive -archivePath build/supacode.xcarchive -exportPath build/export -exportOptionsPlist build/ExportOptions.plist 2>&1 | mise exec -- xcsift -qw --format toon'
 
-test: ensure-ghostty embed-cli-debug embed-docs test-app
+test: ensure-ghostty embed-cli-debug embed-docs embed-skills test-app
+
+test-scripts: # Run tests for the repository's Python scripts
+	@python3 -m unittest discover -s "$(CURRENT_MAKEFILE_DIR)/scripts" -p 'test_*.py'
 
 test-app: ensure-ghostty # Run app/unit tests via xcodebuild
 	@set -euo pipefail; \
-	result_bundle="$(CURRENT_MAKEFILE_DIR)/build/test-results/supacode-tests.xcresult"; \
-	mkdir -p "$$(dirname "$$result_bundle")"; \
-	rm -rf "$$result_bundle"; \
-	set +e; \
-	xcodebuild test -project supacode.xcodeproj -scheme supacode -destination "platform=macOS" -resultBundlePath "$$result_bundle" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -skipMacroValidation -clonedSourcePackagesDirPath $(SPM_CACHE_DIR) SWIFT_COMPILATION_MODE=incremental 2>&1 | mise exec -- xcsift -w --format toon; \
-	xcodebuild_status=$${PIPESTATUS[0]}; \
-	set -e; \
-	if [ "$$xcodebuild_status" -ne 0 ]; then \
-		bash "$(CURRENT_MAKEFILE_DIR)/scripts/print-xcresult-failures.sh" "$$result_bundle" || true; \
-		exit "$$xcodebuild_status"; \
-	fi; \
-	bash "$(CURRENT_MAKEFILE_DIR)/scripts/assert-xcresult-tests.sh" "$$result_bundle"
+	result_root="$(CURRENT_MAKEFILE_DIR)/build/test-results"; \
+	mkdir -p "$$result_root"; \
+	run_xcode_tests() { \
+		local result_bundle="$$1"; \
+		local action="$$2"; \
+		local expected_test_count="$$3"; \
+		shift 3; \
+		rm -rf "$$result_bundle"; \
+		set +e; \
+		xcodebuild "$$action" -project supacode.xcodeproj -scheme supacode -destination "platform=macOS" -resultBundlePath "$$result_bundle" $(TEST_SIGNING_ARGS) -skipMacroValidation -clonedSourcePackagesDirPath $(SPM_CACHE_DIR) SWIFT_COMPILATION_MODE=incremental "$$@" 2>&1 | mise exec -- xcsift -w --format toon; \
+		local xcodebuild_status=$${PIPESTATUS[0]}; \
+		set -e; \
+		if [ "$$xcodebuild_status" -ne 0 ]; then \
+			bash "$(CURRENT_MAKEFILE_DIR)/scripts/print-xcresult-failures.sh" "$$result_bundle" || true; \
+			return "$$xcodebuild_status"; \
+		fi; \
+		if [ -n "$$expected_test_count" ]; then \
+			bash "$(CURRENT_MAKEFILE_DIR)/scripts/assert-xcresult-tests.sh" "$$result_bundle" "$$expected_test_count"; \
+		else \
+			bash "$(CURRENT_MAKEFILE_DIR)/scripts/assert-xcresult-tests.sh" "$$result_bundle"; \
+		fi; \
+	}; \
+	shell_cancellation_tests=( \
+		"supacodeTests/ShellClientStreamingTests/cancellingRunStreamConsumerTerminatesProcessAfterItIsReady()" \
+		"supacodeTests/ShellClientStreamingTests/runTerminatesReadyProcessWhenCallingTaskIsCancelled()" \
+	); \
+	skip_args=(); \
+	only_args=(); \
+	for test_id in "$${shell_cancellation_tests[@]}"; do \
+		skip_args+=("-skip-testing:$$test_id"); \
+		only_args+=("-only-testing:$$test_id"); \
+	done; \
+	run_xcode_tests "$$result_root/supacode-tests.xcresult" test "" "$${skip_args[@]}"; \
+	run_xcode_tests "$$result_root/supacode-shell-cancellation-tests.xcresult" test-without-building 2 "$${only_args[@]}"
 
 test-cli-smoke: build-cli # Smoke test CLI executable
 	@set -euo pipefail; \
@@ -354,7 +404,23 @@ test-cli-smoke: build-cli # Smoke test CLI executable
 	socket="$$tmp_dir/cli.sock"; \
 	response="$$tmp_dir/response.json"; \
 	PROWL_CLI_SOCKET="$$socket" "$$bin" list --json >"$$response" || true; \
-	jq -e '.error.code == "APP_NOT_RUNNING"' "$$response" >/dev/null
+	jq -e '.error.code == "APP_NOT_RUNNING"' "$$response" >/dev/null; \
+	mkdir -p "$$tmp_dir/skills/prowl-cli" "$$tmp_dir/home"; \
+	cp "$(CURRENT_MAKEFILE_DIR)/skills/prowl-cli/SKILL.md" "$$tmp_dir/skills/prowl-cli/SKILL.md"; \
+	skills_response="$$tmp_dir/skills.json"; \
+	PROWL_CLI_SOCKET="$$socket" PROWL_SKILLS_DIR="$$tmp_dir/skills" HOME="$$tmp_dir/home" \
+		"$$bin" skills list --json >"$$skills_response"; \
+	jq -e '.ok and .data.action == "list" and (.data.skills | map(.id)) == ["prowl-cli"]' "$$skills_response" >/dev/null
+
+test-cli-unit: # Run CLI unit tests via SwiftPM
+	@test_list="$$(swift test list)"; \
+	matching_test_count="$$(printf '%s\n' "$$test_list" | grep -Evc '$(CLI_INTEGRATION_TEST_FILTER)' || true)"; \
+	if [ "$$matching_test_count" -eq 0 ]; then \
+		echo "error: CLI unit filter matched zero tests" >&2; \
+		exit 1; \
+	fi; \
+	echo "CLI unit filter matched $$matching_test_count test(s)."; \
+	swift test --skip-build --skip '$(CLI_INTEGRATION_TEST_FILTER)'
 
 test-cli-integration: # Run CLI integration tests via SwiftPM
 	@test_list="$$(swift test list)"; \
@@ -366,13 +432,13 @@ test-cli-integration: # Run CLI integration tests via SwiftPM
 	echo "CLI integration filter matched $$matching_test_count test(s)."; \
 	swift test --skip-build --filter '$(CLI_INTEGRATION_TEST_FILTER)'
 
-benchmark-build: ensure-ghostty embed-cli-debug embed-docs # Benchmark clean and compilation-cache build/test time
+benchmark-build: ensure-ghostty embed-cli-debug embed-docs embed-skills # Benchmark clean and compilation-cache build/test time
 	@BUILD_BENCHMARK_ROOT="$(CURRENT_MAKEFILE_DIR)/.build-benchmark/build-time" \
 		SPM_CACHE_DIR="$(SPM_CACHE_DIR)" \
 		bash "$(CURRENT_MAKEFILE_DIR)/scripts/benchmark-build.sh" \
 		"$(BUILD_BENCHMARK_SCENARIO)" "$(BUILD_BENCHMARK_SAMPLES)"
 
-bench: ensure-ghostty embed-cli-debug embed-docs # Run performance benchmarks optimized (-O); append absolute medians to the bench log
+bench: ensure-ghostty embed-cli-debug embed-docs embed-skills # Run performance benchmarks optimized (-O); append absolute medians to the bench log
 	@set -euo pipefail; \
 	bench_log_dir="$$HOME/Library/Logs/Prowl/measurements/bench"; \
 	mkdir -p "$$bench_log_dir"; \
@@ -403,6 +469,10 @@ capture-spike: # Sample the running Prowl Debug app the moment CPU crosses a thr
 measure-titles: # Black-box check that animated tab titles stay coalesced to ~1 change/s (works on Release builds)
 	@bash scripts/measure-title-coalescing.sh
 
+AGENT_VERSIONS_ARGS ?=
+agent-versions: # Compare installed tier-A agent CLI versions with the managed-hook attestation (AGENT_VERSIONS_ARGS="--json" / "--strict" / "--check-matrix")
+	@python3 "$(CURRENT_MAKEFILE_DIR)/scripts/agent_versions.py" $(AGENT_VERSIONS_ARGS)
+
 format: # Format all Swift code with swift-format (full-tree cleanup)
 	swift-format -p --in-place --recursive --configuration ./.swift-format.json supacode supacodeTests
 
@@ -427,7 +497,7 @@ format-lint: # Check Swift formatting without rewriting files
 lint: # Lint code with swiftlint
 	mise exec -- swiftlint lint --quiet --config .swiftlint.yml
 
-check: format-changed format-lint lint # Format changed Swift files, then run swift-format lint and SwiftLint
+check: format-changed format-lint lint test-scripts # Format changed Swift files, then run swift-format lint, SwiftLint, and the script tests
 
 log-stream: # Stream logs from the app via log stream
 	log stream --predicate 'subsystem == "com.onevcat.prowl"' --style compact --color always

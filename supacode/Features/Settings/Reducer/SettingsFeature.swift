@@ -63,6 +63,7 @@ struct SettingsFeature {
     var repositorySettings: RepositorySettingsFeature.State?
     var globalCustomCommands: GlobalCustomCommandsFeature.State?
     var agentProfiles: AgentProfilesFeature.State?
+    var agentSkills: AgentSkillsFeature.State?
     @Presents var alert: AlertState<Alert>?
 
     init(settings: GlobalSettings = .default) {
@@ -186,6 +187,7 @@ struct SettingsFeature {
     case repositorySettings(RepositorySettingsFeature.Action)
     case globalCustomCommands(GlobalCustomCommandsFeature.Action)
     case agentProfiles(AgentProfilesFeature.Action)
+    case agentSkills(AgentSkillsFeature.Action)
     case alert(PresentationAction<Alert>)
     case delegate(Delegate)
     case binding(BindingAction<State>)
@@ -450,7 +452,17 @@ struct SettingsFeature {
         return .none
 
       case .setSelection(let selection):
-        state.selection = selection ?? .general
+        let resolvedSelection = selection ?? .general
+        state.selection = resolvedSelection
+        // Owned here rather than in AppFeature so `ifLet` observes the removal and cancels an
+        // in-flight link effect instead of letting its completion land on nil child state.
+        if resolvedSelection == .commandLineTool {
+          if state.agentSkills == nil {
+            state.agentSkills = .init()
+          }
+        } else {
+          state.agentSkills = nil
+        }
         return .none
 
       case .alert(.presented(.openSystemNotificationSettings)):
@@ -470,6 +482,9 @@ struct SettingsFeature {
       case .agentProfiles:
         return .none
 
+      case .agentSkills:
+        return .none
+
       case .delegate:
         return .none
       }
@@ -482,6 +497,9 @@ struct SettingsFeature {
     }
     .ifLet(\.agentProfiles, action: \.agentProfiles) {
       AgentProfilesFeature()
+    }
+    .ifLet(\.agentSkills, action: \.agentSkills) {
+      AgentSkillsFeature()
     }
     // Without this, alert state is only cleared by the view's dismiss
     // writeback: state set while the Settings window is closed (or closed

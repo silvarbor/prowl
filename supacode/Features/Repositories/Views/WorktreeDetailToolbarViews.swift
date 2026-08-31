@@ -255,6 +255,11 @@ private struct WorktreeToolbarPreview: View {
         ),
         agentsLauncherItems: [],
         statusToast: nil,
+        workflowStatus: WorkflowStatusCenterPresentation(
+          state: WorkflowRunsFeature.State(),
+          selectedWorktreeID: nil,
+          now: Date()
+        ),
         pullRequest: nil,
         codeHost: .github,
         notificationGroups: [],
@@ -310,7 +315,8 @@ private struct WorktreeToolbarPreview: View {
         onActivateUpdateButton: {},
         onHandOff: {},
         onLaunchProfile: { _ in },
-        onManageProfiles: {}
+        onManageProfiles: {},
+        onWorkflowIntent: { _ in }
       )
     }
     .environment(commandKeyObserver)
@@ -346,7 +352,11 @@ private struct CanvasToolbarPreview: View {
             onLaunchProfile: { _ in },
             onManageProfiles: {},
             onSelectNotification: { _, _ in },
-            onDismissAllNotifications: {}
+            onDismissAllNotifications: {},
+            isUpdateAvailable: true,
+            isUpdateReadyToInstall: false,
+            availableUpdateVersion: "2026.5.1",
+            onActivateUpdateButton: {}
           )
         }
     }

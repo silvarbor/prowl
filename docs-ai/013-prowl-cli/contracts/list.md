@@ -99,20 +99,23 @@ Every item in `data.items` represents exactly one actionable pane.
 - `name`: string
 - `path`: string, absolute path to the worktree or plain folder shown in the UI
 - `root_path`: string, absolute repository root or plain-folder root
-- `kind`: `"git"` | `"plain"`
+- `kind`: `"git"` | `"plain"` | `"workspace"`
 
 ### `tab`
 
 - `id`: string, UUID text form
+- `handle`: optional current-process integer handle
 - `title`: string
 - `selected`: boolean
 
 ### `pane`
 
 - `id`: string, UUID text form
+- `handle`: optional current-process integer handle
 - `title`: string
 - `cwd`: string or `null`
 - `focused`: boolean
+- `agent`: optional detected-agent machine token when available
 
 ### `task`
 

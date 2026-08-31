@@ -8,12 +8,161 @@ struct ScreenHeuristicsTests {
     #expect(agent?.detectState(in: "Working...") ?? .unknown == .unknown)
   }
 
+  @Test func detectionScreenTextSlicesPerAgent() {
+    // Pin the slice asymmetry: Claude consumes the full active screen, every
+    // other detector consumes the bounded tail. Widening the full-screen
+    // branch to a whole-text scanner must fail here, not ship silently.
+    let screen = (1...(agentDetectionRecentLineLimit * 2)).map { "line \($0)" }.joined(separator: "\n")
+
+    #expect(DetectedAgent.claude.detectionScreenText(from: screen) == screen)
+    #expect(
+      DetectedAgent.pi.detectionScreenText(from: screen)
+        == agentDetectionRecentLines(screen, limit: piAgentDetectionRecentLineLimit)
+    )
+    #expect(DetectedAgent.pi.detectionScreenText(from: screen) != agentDetectionRecentText(screen))
+    #expect(DetectedAgent.codex.detectionScreenText(from: screen) == agentDetectionRecentText(screen))
+    #expect(DetectedAgent.codex.detectionScreenText(from: screen) != screen)
+    #expect(DetectedAgent.gemini.detectionScreenText(from: screen) == agentDetectionRecentText(screen))
+  }
+
   @Test func piDetection() {
     #expect(DetectedAgent.pi.detectState(in: "Working...") == .working)
     #expect(DetectedAgent.pi.detectState(in: "⠹ Working...") == .working)
     #expect(DetectedAgent.pi.detectState(in: "⣾ Working...") == .working)
     #expect(DetectedAgent.pi.detectState(in: "Interrupting…") == .working)
     #expect(DetectedAgent.pi.detectState(in: "Done") == .idle)
+  }
+
+  @Test func piDetectsRunningAsyncSubagentCardAfterParentTurnSettles() {
+    let screen = """
+      第二轮 reviewer 已启动并订阅完成通知喵：
+
+      - Run: 9bb327ff-e525-42b6-89d3-27db71a2a54b
+      - Fresh context、repo-only、只读
+      - 明确复核上一轮 5 项发现及修订后的新风险
+
+      完成后我会自行验证，并按证据决定是否修改计划。
+
+      Tool output: collapsed
+
+      async subagent reviewer · background
+      ⠋ reviewer · step 1/1 · 140 tool uses · 9m12s
+        ⠴ Step 1/1: reviewer · running (gpt-5.6-sol · thinking xhigh) · 20 turns · 140 tool uses
+          ⎿  active but long-running · last activity now
+          Press ctrl+o for live detail
+          output: /tmp/pi-subagents/async-subagent-runs/9bb327ff/output-0.log
+      ──────────────────────────────────────────────────────────────────────────────
+
+      ──────────────────────────────────────────────────────────────────────────────
+        1 active agent · Async runs 0/∞ · ↓ 278.7k tokens · ↓/← to inspect
+      ~/workspace (feature/review-plan)
+      """
+
+    #expect(DetectedAgent.pi.detectState(in: screen) == .working)
+  }
+
+  @Test func piDetectsAdaptiveAsyncSubagentLayouts() {
+    let workingScreens = [
+      "⠋ subagents (1/1 running)",
+      "⠋ subagents (2/3 running, 1 queued)",
+      "⠋ Async agents · 1 agent running",
+      "⠋ Async agents · 2 agents running, 1 queued",
+      "⠋ Async agents · background",
+      """
+      async subagent chain (2) · background
+      ⠋ chain [fresh] · step 1/2 · 20 tool uses · 2m14s
+      """,
+    ]
+
+    for screen in workingScreens {
+      #expect(DetectedAgent.pi.detectState(in: screen) == .working)
+    }
+  }
+
+  @Test func piDetectsRendererTruncatedAsyncSubagentLayouts() {
+    let workingScreens = [
+      """
+      async subagent reviewer · b…
+      ⠋ reviewer · step 1/1 · 1…
+      """,
+      """
+      async subagent revi…
+      ⠋ reviewer · step 1…
+      """,
+      """
+      async subagent chain (…
+      ⠋ chain [fresh] · step 1/2…
+      """,
+      """
+      async subagent chain (2…
+      ⠋ chain [fresh] · step 1/2…
+      """,
+      """
+      async subagent chain (2)…
+      ⠋ chain [fresh] · step 1/2…
+      """,
+      "⠋ subagents (1/1 ru…",
+      "⠋ Async agents · 1 agent ru…",
+      "⠋ Async agents · back…",
+    ]
+
+    for screen in workingScreens {
+      #expect(DetectedAgent.pi.detectState(in: screen) == .working)
+    }
+  }
+
+  @Test func piRetainsACompleteAsyncSubagentCardBeyondTheDefaultTail() {
+    let lowerChrome = (1...23).map { "lower widget row \($0)" }.joined(separator: "\n")
+    let screen = """
+      async subagent reviewer · background
+      ⠋ reviewer · step 1/1 · 140 tool uses · 9m12s
+      \(lowerChrome)
+      """
+
+    #expect(DetectedAgent.pi.detectState(in: screen) == .working)
+  }
+
+  @Test func piAsyncSubagentDetectionRejectsInactiveOrUnrelatedChrome() {
+    let idleScreens = [
+      """
+      async subagent reviewer · background
+      ✓ reviewer · step 1/1 · 140 tool uses · 9m12s
+        ✓ Step 1/1: reviewer · completed
+      """,
+      """
+      async subagent reviewer · background
+      The following spinner belongs to quoted transcript output.
+      ⠋ reviewer · running
+      """,
+      """
+      async subagent reviewer · background
+      ⠋ quoted output
+      """,
+      """
+      async subagent reviewer · background
+      ⠋ another-agent · step 1/1 · 12 tool uses · 1m2s
+      """,
+      """
+      async subagent · background
+      ⠋ reviewer · running
+      """,
+      """
+      async subagent reviewer · foreground
+      ⠋ reviewer · running
+      """,
+      """
+      ⠋ reviewer · step 1/1 · 140 tool uses · 9m12s
+      """,
+      "⠋ subagents (0/1 running)",
+      "⠋ subagents (2/1 running)",
+      "⠋ Async agents · 0 agents running",
+      "⠋ Async agents · backgrounded",
+      "● Async agents · 1 agent running",
+    ]
+
+    for screen in idleScreens {
+      #expect(DetectedAgent.pi.detectState(in: screen) == .idle)
+    }
   }
 
   @Test func ompDetectionUsesItsOwnRuntimeChrome() {

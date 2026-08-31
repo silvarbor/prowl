@@ -3,13 +3,22 @@ import Foundation
 
 struct ForegroundProcess: Equatable, Sendable {
   let pid: pid_t
+  let parentProcessID: pid_t?
   let name: String
   let argv0: String?
   let cmdline: String?
   let arguments: [String]?
 
-  nonisolated init(pid: pid_t, name: String, argv0: String?, cmdline: String?, arguments: [String]? = nil) {
+  nonisolated init(
+    pid: pid_t,
+    parentProcessID: pid_t? = nil,
+    name: String,
+    argv0: String?,
+    cmdline: String?,
+    arguments: [String]? = nil
+  ) {
     self.pid = pid
+    self.parentProcessID = parentProcessID
     self.name = name
     self.argv0 = argv0
     self.cmdline = cmdline
@@ -20,6 +29,22 @@ struct ForegroundProcess: Equatable, Sendable {
 struct ForegroundJob: Equatable, Sendable {
   let processGroupID: pid_t
   let processes: [ForegroundProcess]
+
+  /// The job member the shell launched on behalf of `pid`: its topmost ancestor
+  /// that is still part of this job. A runtime that forks an engine child
+  /// (Droid's `droid exec`) moves the identified process while this stays put.
+  nonisolated func launchProcessID(of pid: pid_t) -> pid_t {
+    var current = pid
+    var hops = 0
+    while hops < processes.count,
+      let parent = processes.first(where: { $0.pid == current })?.parentProcessID,
+      processes.contains(where: { $0.pid == parent })
+    {
+      current = parent
+      hops += 1
+    }
+    return current
+  }
 }
 
 actor AgentProcessProbe {
@@ -92,6 +117,7 @@ nonisolated enum ProcessDetection {
       let argv = processArguments(pid: pid)
       return ForegroundProcess(
         pid: pid,
+        parentProcessID: pid_t(info.pbi_ppid),
         name: name,
         argv0: argv?.first.flatMap(basename),
         cmdline: argv?.joined(separator: " "),

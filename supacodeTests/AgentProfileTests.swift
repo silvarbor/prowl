@@ -285,6 +285,141 @@ struct AgentProfileTests {
     #expect(plan.previewText == plan.invocation.terminalInput)
   }
 
+  @Test func plannerCarriesPromptOutsideTheInitialPTYInput() throws {
+    var preset = profile(name: "Codex · Reviewer")
+    preset.model = "gpt-5.4"
+    let prompt = String(repeating: "Review the current diff carefully. ", count: 80) + "\tReport findings."
+
+    let plan = try AgentProfileLaunchPlanner.plan(
+      for: preset,
+      intent: .prompt(prompt),
+      homeBaseDirectory: URL(fileURLWithPath: "/base", isDirectory: true)
+    )
+
+    #expect(plan.invocation.executable == "codex")
+    #expect(plan.invocation.arguments == ["--model", "gpt-5.4", prompt])
+    #expect(plan.surfaceEnvironment[AgentProfileLaunchPlanner.promptCarrierName] == prompt)
+    #expect(!plan.terminalInput.contains(prompt))
+    #expect(plan.terminalInput.hasPrefix("env -u \(AgentProfileLaunchPlanner.promptCarrierName) "))
+    #expect(plan.terminalInput.contains("\"$\(AgentProfileLaunchPlanner.promptCarrierName)\""))
+    #expect(!plan.terminalInput.contains(";"))
+    #expect(!plan.terminalInput.contains("unset "))
+    #expect(!plan.terminalInput.contains("\(AgentProfileLaunchPlanner.promptCarrierName)="))
+    #expect(plan.terminalInput.utf8.count < 1_024)
+  }
+
+  @Test func dispatchPromptAddsVersionedProtocolAndChildOnlyContext() throws {
+    let dispatchID = "dispatch-secret-id"
+    let plan = try AgentProfileLaunchPlanner.plan(
+      for: profile(name: "Codex · Reviewer"),
+      intent: .prompt("Review the current diff."),
+      homeBaseDirectory: URL(fileURLWithPath: "/base", isDirectory: true),
+      dispatchID: dispatchID
+    )
+
+    let effectivePrompt = try #require(
+      plan.surfaceEnvironment[AgentProfileLaunchPlanner.promptCarrierName]
+    )
+    #expect(effectivePrompt.hasPrefix("Review the current diff."))
+    #expect(effectivePrompt.contains("Prowl dispatch completion protocol v1"))
+    #expect(effectivePrompt.contains("prowl agents dispatch-complete"))
+    #expect(effectivePrompt.contains("--outcome succeeded|failed"))
+    #expect(effectivePrompt.contains("single line"))
+    #expect(effectivePrompt.contains("no control characters"))
+    #expect(!effectivePrompt.contains(dispatchID))
+    #expect(
+      plan.surfaceEnvironment[AgentProfileLaunchPlanner.dispatchCarrierName] == dispatchID
+    )
+    #expect(plan.surfaceEnvironment[DispatchCompleteInput.environmentKey] == nil)
+    #expect(
+      plan.commandEnvironmentTokens.contains(
+        "\(DispatchCompleteInput.environmentKey)=\"$\(AgentProfileLaunchPlanner.dispatchCarrierName)\""
+      )
+    )
+    #expect(plan.terminalInput.contains("-u \(AgentProfileLaunchPlanner.dispatchCarrierName)"))
+    #expect(!plan.terminalInput.contains(dispatchID))
+  }
+
+  @Test func interactiveLaunchNeverInheritsDispatchContext() throws {
+    let plan = try AgentProfileLaunchPlanner.plan(
+      for: profile(name: "Codex"),
+      homeBaseDirectory: URL(fileURLWithPath: "/base", isDirectory: true)
+    )
+
+    #expect(plan.surfaceEnvironment[AgentProfileLaunchPlanner.dispatchCarrierName] == nil)
+    #expect(!plan.terminalInput.contains(DispatchCompleteInput.environmentKey))
+  }
+
+  @Test func promptedTerminalInputRunsThroughSupportedInteractiveShellSyntax() throws {
+    let prompt = "Review the current diff."
+    let carrier = AgentProfileLaunchPlanner.promptCarrierName
+    let childCheck = "[[ \"$1\" == \"\(prompt)\" && -z ${\(carrier)+x} ]]"
+    let plan = AgentProfileLaunchPlan(
+      profileID: UUID(),
+      profileName: "Reviewer",
+      runtime: .claude,
+      invocation: AgentInvocation(
+        executable: "/bin/zsh",
+        arguments: ["-f", "-c", childCheck, "prowl-child", prompt]
+      ),
+      commandEnvironmentTokens: [],
+      placement: .tab,
+      splitDirection: .right,
+      surfaceEnvironment: [carrier: prompt],
+      dedicatedHome: nil
+    )
+    let shellCandidates = [
+      "/bin/zsh",
+      "/bin/bash",
+      "/opt/homebrew/bin/fish",
+      "/usr/local/bin/fish",
+    ]
+    let shells = shellCandidates.filter(FileManager.default.isExecutableFile(atPath:))
+
+    for shell in shells {
+      let process = Process()
+      process.executableURL = URL(fileURLWithPath: shell)
+      process.arguments = ["-c", plan.terminalInput]
+      var environment = ProcessInfo.processInfo.environment
+      environment[carrier] = prompt
+      process.environment = environment
+
+      try process.run()
+      process.waitUntilExit()
+
+      #expect(process.terminationStatus == 0, "Prompt launch syntax failed in \(shell)")
+    }
+  }
+
+  @Test func plannerRejectsPromptThatCannotRideInTheSurfaceEnvironment() {
+    #expect(throws: AgentProfileLaunchPlanError.promptContainsNUL) {
+      try AgentProfileLaunchPlanner.plan(
+        for: profile(name: "Codex"),
+        intent: .prompt("Review\0this"),
+        homeBaseDirectory: URL(fileURLWithPath: "/base", isDirectory: true)
+      )
+    }
+  }
+
+  @Test func plannerKeepsInteractiveAsTheDefaultIntent() throws {
+    let plan = try AgentProfileLaunchPlanner.plan(
+      for: profile(name: "Codex"),
+      homeBaseDirectory: URL(fileURLWithPath: "/base", isDirectory: true)
+    )
+
+    #expect(plan.invocation.arguments.isEmpty)
+  }
+
+  @Test func plannerPreservesAmpPromptRejection() {
+    #expect(throws: AgentRuntimeError.unsupportedStartIntent(.amp, .prompt("Review."))) {
+      try AgentProfileLaunchPlanner.plan(
+        for: profile(name: "Amp", runtime: .amp),
+        intent: .prompt("Review."),
+        homeBaseDirectory: URL(fileURLWithPath: "/base", isDirectory: true)
+      )
+    }
+  }
+
   @Test func boundProfilePlanDerivesHomeFromUUIDInsideBase() throws {
     var bound = profile(name: "Codex · Work")
     bound.bindsDedicatedHome = true

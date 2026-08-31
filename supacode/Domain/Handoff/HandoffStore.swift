@@ -193,13 +193,9 @@ nonisolated struct HandoffStore: Sendable {
   /// authors semantic prose: this only strips chat wrapping (fences, preamble)
   /// and checks that the core sections are present.
   static func validatedBriefing(from text: String) -> String? {
-    var text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    let hadOpeningFence = text.hasPrefix("```")
-    text = droppingOpeningFence(text)
-    text = droppingPreamble(text)
-    text = droppingClosingFence(text, truncatingTrailer: hadOpeningFence)
+    let text = MarkdownArtifactNormalizer.normalized(text)
     let requiredSections = ["## Objective", "## Current State", "## Next Steps"]
-    guard !text.isEmpty, requiredSections.allSatisfy(text.contains) else { return nil }
+    guard !text.isEmpty, MarkdownArtifactNormalizer.hasSections(requiredSections, in: text) else { return nil }
     return text + "\n"
   }
 
@@ -241,41 +237,6 @@ nonisolated struct HandoffStore: Sendable {
     }
     try existing.write(to: destination, atomically: true, encoding: .utf8)
     didWrite = true
-  }
-
-  /// Unwraps the opening line of a markdown code fence ("```markdown").
-  private static func droppingOpeningFence(_ text: String) -> String {
-    guard text.hasPrefix("```") else { return text }
-    let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-    return lines.dropFirst().joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-  }
-
-  /// Drops chat preamble ahead of the artifact ("Sure, here's the file: …").
-  private static func droppingPreamble(_ text: String) -> String {
-    guard !text.hasPrefix("#") else { return text }
-    let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-    guard let start = lines.firstIndex(where: { $0.hasPrefix("# ") || $0.hasPrefix("## ") }) else {
-      return text
-    }
-    return lines[start...].joined(separator: "\n")
-  }
-
-  /// Drops a trailing code-fence line left over after preamble removal.
-  /// When the reply opened with a fence, the *last* fence line is that
-  /// wrapper's closer, so any chatter after it ("Let me know if…") is also
-  /// discarded — embedded code blocks inside the document close in pairs
-  /// before it. Without an opening fence only an exact trailing fence line
-  /// is removed, so a fence inside a document body is never a cut point.
-  private static func droppingClosingFence(_ text: String, truncatingTrailer: Bool) -> String {
-    var lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-    guard let lastFence = lines.lastIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "```" })
-    else { return text }
-    if lastFence == lines.indices.last {
-      lines.removeLast()
-      return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-    guard truncatingTrailer else { return text }
-    return lines[..<lastFence].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
   // MARK: - Archive

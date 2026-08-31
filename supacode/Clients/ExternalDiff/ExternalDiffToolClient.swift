@@ -5,14 +5,14 @@ nonisolated struct ExternalDiffToolClient: Sendable {
   var open:
     @MainActor @Sendable (
       _ settings: ExternalDiffSettings,
-      _ worktree: Worktree,
+      _ target: DiffTarget,
       _ resolvedKeybindings: ResolvedKeybindingMap,
       _ onError: @escaping @MainActor @Sendable (OpenActionError) -> Void
     ) async -> Void
 }
 
 extension ExternalDiffToolClient: DependencyKey {
-  static let liveValue = ExternalDiffToolClient { settings, worktree, resolvedKeybindings, onError in
+  static let liveValue = ExternalDiffToolClient { settings, target, resolvedKeybindings, onError in
     @Dependency(TerminalClient.self) var terminalClient
     @Dependency(ShellClient.self) var shellClient
     @Dependency(ExternalDiffSnapshotClient.self) var snapshotClient
@@ -22,21 +22,28 @@ extension ExternalDiffToolClient: DependencyKey {
     case .builtIn:
       @Shared(.settingsFile) var settingsFile
       DiffWindowManager.shared.show(
-        worktreeURL: worktree.workingDirectory,
-        branchName: worktree.name,
-        outgoingResolver: outgoingChangesClient.makeResolver(worktree),
+        worktreeURL: target.workingDirectory,
+        branchName: target.branchName,
+        outgoingResolver: outgoingChangesClient.makeResolver(target),
         resolvedKeybindings: resolvedKeybindings,
         colorScheme: settingsFile.global.appearanceMode.colorScheme
       )
 
     case .hunk:
+      // A cwd override means the diff runs somewhere other than the host's own
+      // directory (a workspace child); name the tab after that repository.
+      let commandName =
+        target.terminalWorkingDirectory == nil
+        ? "Hunk Diff"
+        : "Hunk Diff · \(target.workingDirectory.lastPathComponent)"
       await terminalClient.send(
         .createTabWithInput(
-          worktree,
+          target.terminalHost,
           input: "hunk diff",
+          workingDirectory: target.terminalWorkingDirectory,
           runSetupScriptIfNew: false,
           autoCloseOnSuccess: false,
-          customCommandName: "Hunk Diff",
+          customCommandName: commandName,
           customCommandIcon: "square.split.2x1"
         )
       )
@@ -44,7 +51,7 @@ extension ExternalDiffToolClient: DependencyKey {
     case .fileMerge:
       await runGUICommand(
         ExternalDiffGUICommandRequest(tool: settings.tool, executableName: "opendiff", arguments: []),
-        worktree: worktree,
+        target: target,
         shellClient: shellClient,
         snapshotClient: snapshotClient,
         onError: onError
@@ -53,7 +60,7 @@ extension ExternalDiffToolClient: DependencyKey {
     case .kaleidoscope:
       await runGUICommand(
         ExternalDiffGUICommandRequest(tool: settings.tool, executableName: "ksdiff", arguments: ["--diff"]),
-        worktree: worktree,
+        target: target,
         shellClient: shellClient,
         snapshotClient: snapshotClient,
         onError: onError
@@ -62,7 +69,7 @@ extension ExternalDiffToolClient: DependencyKey {
     case .custom:
       await runCustomCommand(
         settings: settings,
-        worktree: worktree,
+        target: target,
         shellClient: shellClient,
         snapshotClient: snapshotClient,
         onError: onError
@@ -88,13 +95,13 @@ private struct ExternalDiffGUICommandRequest {
 
 private func runGUICommand(
   _ request: ExternalDiffGUICommandRequest,
-  worktree: Worktree,
+  target: DiffTarget,
   shellClient: ShellClient,
   snapshotClient: ExternalDiffSnapshotClient,
   onError: @escaping @MainActor @Sendable (OpenActionError) -> Void
 ) async {
   do {
-    let snapshot = try await snapshotClient.makeSnapshotPair(worktree)
+    let snapshot = try await snapshotClient.makeSnapshotPair(target.workingDirectory)
     let executableURL = URL(fileURLWithPath: "/usr/bin/env")
     _ = try await shellClient.runLogin(
       executableURL,
@@ -102,7 +109,7 @@ private func runGUICommand(
         snapshot.leftURL.path(percentEncoded: false),
         snapshot.rightURL.path(percentEncoded: false),
       ],
-      worktree.workingDirectory
+      target.workingDirectory
     )
   } catch {
     onError(openError(for: request.tool, error: error))
@@ -111,7 +118,7 @@ private func runGUICommand(
 
 private func runCustomCommand(
   settings: ExternalDiffSettings,
-  worktree: Worktree,
+  target: DiffTarget,
   shellClient: ShellClient,
   snapshotClient: ExternalDiffSnapshotClient,
   onError: @escaping @MainActor @Sendable (OpenActionError) -> Void
@@ -127,11 +134,11 @@ private func runCustomCommand(
     return
   }
   do {
-    let snapshot = try await snapshotClient.makeSnapshotPair(worktree)
+    let snapshot = try await snapshotClient.makeSnapshotPair(target.workingDirectory)
     let context = ExternalDiffCommandContext(
-      worktreePath: worktree.workingDirectory.path(percentEncoded: false),
-      repoPath: worktree.repositoryRootURL.path(percentEncoded: false),
-      branch: worktree.name,
+      worktreePath: target.workingDirectory.path(percentEncoded: false),
+      repoPath: target.repositoryRootURL.path(percentEncoded: false),
+      branch: target.branchName,
       leftPath: snapshot.leftURL.path(percentEncoded: false),
       rightPath: snapshot.rightURL.path(percentEncoded: false)
     )
@@ -139,7 +146,7 @@ private func runCustomCommand(
     _ = try await shellClient.runLogin(
       URL(fileURLWithPath: "/bin/zsh"),
       ["-lc", command],
-      worktree.workingDirectory
+      target.workingDirectory
     )
   } catch {
     onError(openError(for: settings.tool, error: error))

@@ -3,7 +3,7 @@
 
 import Foundation
 
-public enum ProwlSocket {
+nonisolated public enum ProwlSocket {
   /// Environment variable for overriding socket path.
   public static let environmentKey = "PROWL_CLI_SOCKET"
 

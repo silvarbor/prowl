@@ -173,3 +173,4 @@ plumbing from 047.003; no new pipeline work is expected.
   wave starts with zero rework if real usage surfaces the pain.
 - Updated 2026-07-20: cancel/Skip now make reducer acceptance the boundary for transcribing a preparation reply, and Skip gains a keyboard path — see [002-briefing-cancellation.md](002-briefing-cancellation.md).
 - Updated 2026-08-07: the redundant branch title was removed; Agents + Quick Launch now leads, followed by a separately surfaced Bell, across Normal, Shelf, and Canvas — see [058-unified-toolbar-layout](../058-unified-toolbar-layout/000-plan.md).
+- Updated 2026-08-22: the indefinitely deferred PR2 (dismiss-while-running, background progress) is subsumed by the toolbar status center planned in [063-agent-workflows](../063-agent-workflows/000-plan.md); the HUD choose stage is replaced there by a generic workflow start sheet and the staged HUD is scheduled for removal once `prowl.handoff` ships.

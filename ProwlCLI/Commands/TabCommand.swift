@@ -7,7 +7,7 @@ import ProwlCLIShared
 struct TabCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "tab",
-    abstract: "Create or close terminal tabs.",
+    abstract: "[Deprecated] Create or close terminal tabs. Use `prowl create tab` or `prowl close`.",
     subcommands: [
       TabCreateCommand.self,
       TabCloseCommand.self,
@@ -18,7 +18,7 @@ struct TabCommand: ParsableCommand {
 struct TabCreateCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "create",
-    abstract: "Create a new terminal tab."
+    abstract: "[Deprecated] Create a new terminal tab. Use `prowl create tab`."
   )
 
   @OptionGroup var selector: SelectorOptions
@@ -28,6 +28,7 @@ struct TabCreateCommand: ParsableCommand {
   var path: String?
 
   mutating func run() throws {
+    emitDeprecationWarning(command: "tab create", replacement: "create tab <worktree>")
     try CLIExecution.run(command: "tab", output: options.outputMode, colorEnabled: options.colorEnabled) {
       let envelope = CommandEnvelope(
         output: options.outputMode,
@@ -49,7 +50,7 @@ struct TabCreateCommand: ParsableCommand {
 struct TabCloseCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "close",
-    abstract: "Close a terminal tab."
+    abstract: "[Deprecated] Close a terminal tab. Use `prowl close <tab>`."
   )
 
   @OptionGroup var selector: SelectorOptions
@@ -59,6 +60,7 @@ struct TabCloseCommand: ParsableCommand {
   var force = false
 
   mutating func run() throws {
+    emitDeprecationWarning(command: "tab close", replacement: "close <tab>")
     try CLIExecution.run(command: "tab", output: options.outputMode, colorEnabled: options.colorEnabled) {
       let resolvedSelector = try selector.resolve()
       guard !resolvedSelector.isNone else {

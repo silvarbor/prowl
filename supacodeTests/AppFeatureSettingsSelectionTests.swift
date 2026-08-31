@@ -163,10 +163,33 @@ struct AppFeatureSettingsSelectionTests {
     }
   }
 
-  @Test func selectingAnotherSectionClearsAgentProfileEditorState() async {
+  @Test(.dependencies) func openAgentProfilesSettingsSelectsProfiles() async {
+    let shown = LockIsolated(false)
+    var state = AppFeature.State(settings: SettingsFeature.State())
+    state.settings.selection = .commandLineTool
+    let store = TestStore(initialState: state) {
+      AppFeature()
+    } withDependencies: {
+      $0.settingsWindowClient.show = {
+        shown.withValue { $0 = true }
+      }
+    }
+
+    await store.send(.openAgentProfilesSettings)
+    await store.receive(\.settings.setSelection) {
+      $0.settings.selection = .profiles
+      $0.settings.agentProfiles = .init()
+    }
+    await store.finish()
+
+    #expect(shown.value)
+  }
+
+  @Test(arguments: [SettingsSection.general, .commandLineTool])
+  func selectingAnotherSectionClearsAgentProfileEditorState(section: SettingsSection) async {
     let profile = AgentProfile(name: "Codex", runtime: .codex)
     var state = AppFeature.State(settings: SettingsFeature.State())
-    state.settings.selection = .agents
+    state.settings.selection = .profiles
     var agentProfiles = AgentProfilesFeature.State()
     agentProfiles.settings = UserGlobalSettings(customCommands: [], agentProfiles: [profile])
     agentProfiles.path.append(AgentProfileEditorFeature.State(profile: profile))
@@ -175,9 +198,41 @@ struct AppFeatureSettingsSelectionTests {
       AppFeature()
     }
 
-    await store.send(.settings(.setSelection(.general))) {
-      $0.settings.selection = .general
+    await store.send(.settings(.setSelection(section))) {
+      $0.settings.selection = section
       $0.settings.agentProfiles = nil
+      if section == .commandLineTool {
+        $0.settings.agentSkills = .init()
+      }
+    }
+  }
+
+  @Test func selectingCommandLineToolInitialisesAgentSkillsState() async {
+    let store = TestStore(initialState: AppFeature.State(settings: SettingsFeature.State())) {
+      AppFeature()
+    }
+
+    await store.send(.settings(.setSelection(.commandLineTool))) {
+      $0.settings.selection = .commandLineTool
+      $0.settings.agentSkills = .init()
+    }
+  }
+
+  @Test(arguments: [SettingsSection.general, .profiles])
+  func selectingAnotherSectionClearsAgentSkillsState(section: SettingsSection) async {
+    var state = AppFeature.State(settings: SettingsFeature.State())
+    state.settings.selection = .commandLineTool
+    state.settings.agentSkills = .init()
+    let store = TestStore(initialState: state) {
+      AppFeature()
+    }
+
+    await store.send(.settings(.setSelection(section))) {
+      $0.settings.selection = section
+      $0.settings.agentSkills = nil
+      if section == .profiles {
+        $0.settings.agentProfiles = .init()
+      }
     }
   }
 }

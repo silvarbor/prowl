@@ -34,6 +34,15 @@ upstream tag, cherry-pick all of them.
    - Keeps the public `ghostty_surface_free_text(ghostty_surface_t, ghostty_text_s*)`
      API shape and fixes the Zig export to accept the unused surface parameter.
    - Drop this patch when upgrading to an upstream tag that contains `4803d58`.
+5. `a0671ce9bf8a8e5ac8079021385adf2047462cc6` — `Backport Ghostty lazy display link creation`
+   - Backports upstream `ghostty-org/ghostty#13639` (`a177ba90af`, merged 2026-08-05) before an
+     upstream tag that includes it exists.
+   - Makes CoreVideo display link creation lazy and non-fatal in `src/renderer/generic.zig`
+     (`syncDisplayLink`), so `ghostty_surface_new` succeeds with zero active displays (display
+     asleep, locked session) and falls back to change-driven rendering until a display-id update
+     recreates the link. `pkg/macos/video/display_link.zig` reports `CreationFailed` instead of
+     `OutOfMemory`. Background: `docs-ai/063-agent-workflows/009-display-sleep-surface-spike.md`.
+   - Drop this patch when upgrading to an upstream tag that contains `a177ba90af`.
    - This is the commit the submodule currently points at.
 
 ## Upgrade To A New Ghostty Tag
@@ -107,8 +116,15 @@ Build GhosttyKit with Xcode 26.3:
 DEVELOPER_DIR=/Applications/Xcode-26.3.0.app/Contents/Developer make sync-ghostty
 ```
 
-Build Prowl itself with the current Xcode, typically Xcode 26.4:
+Xcode 26.3 is a hard requirement for the Zig side, not a preference: from Xcode 26.4 on, the
+macOS SDK's `libSystem.tbd` lists `arm64e-macos` instead of `arm64-macos`, and zig 0.15.2's
+Mach-O linker cannot match its `aarch64-macos` target to it, so `zig build` fails while linking
+its own build runner with a wall of undefined libc symbols (`_waitpid`, `_sigaction`, …;
+ziglang/zig#31658, fixed on the 0.16 line but never released for 0.15). Xcode 26.3 ships SDK
+26.2, the last one with the old target list. Revisit when the fork moves to a Ghostty release
+that requires zig 0.16. A freshly installed Xcode 26.x may also lack the Metal toolchain that
+`Ghostty.metallib` needs; `xcodebuild -downloadComponent MetalToolchain` fixes
+`cannot execute tool 'metal'`.
 
-```bash
-DEVELOPER_DIR=/Applications/Xcode-26.4.1.app/Contents/Developer make build-app
-```
+Build Prowl itself with the current Xcode (26.6 at the time of writing); no `DEVELOPER_DIR` is
+needed for `make build-app`.

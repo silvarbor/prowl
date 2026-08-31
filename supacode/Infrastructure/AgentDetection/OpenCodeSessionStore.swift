@@ -20,9 +20,11 @@ nonisolated enum OpenCodeSessionStore {
     defer { sqlite3_close(database) }
     sqlite3_busy_timeout(database, 50)
 
+    // Sub-agent sessions carry a `parent_id` and update more often than the session the user
+    // is talking to; they are never the pane's session and must not displace it.
     let query =
       "SELECT id, time_updated FROM session WHERE directory = ?1 AND time_updated >= ?2 "
-      + "ORDER BY time_updated DESC LIMIT ?3"
+      + "AND parent_id IS NULL ORDER BY time_updated DESC LIMIT ?3"
     var statement: OpaquePointer?
     guard sqlite3_prepare_v2(database, query, -1, &statement, nil) == SQLITE_OK, let statement else { return [] }
     defer { sqlite3_finalize(statement) }

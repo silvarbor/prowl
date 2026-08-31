@@ -11,7 +11,16 @@ private let layoutRestoreFailureMessage = "Saved terminal layout was invalid and
 final class WorktreeTerminalManager {
   private let runtime: GhosttyRuntime?
   private let layoutPersistence: TerminalLayoutPersistenceClient
+  private let skipsSurfaceCreationForTesting: Bool
   private let targetHandleRegistry = TerminalTargetHandleRegistry()
+  @ObservationIgnored private let agentObservationStore: AgentObservationStore
+  @ObservationIgnored private let agentDispatchStore: AgentDispatchStore
+  @ObservationIgnored private let codexConfigReadProcess: CodexConfigReadProcess
+  @ObservationIgnored private let codexShellEnvironmentResolver:
+    @Sendable (URL, String?) async -> CodexShellLaunchEnvironment?
+  @ObservationIgnored private let hookResourcesProvider: @MainActor () -> AgentHookResources?
+  @ObservationIgnored private let forwardingRecordBaseDirectory: URL
+  @ObservationIgnored private var codexForwardingRecordStore: CodexForwardingRecordStore?
   private var states: [Worktree.ID: WorktreeTerminalState] = [:]
   private var notificationsEnabled = true
   private var commandFinishedNotificationEnabled = true
@@ -34,11 +43,37 @@ final class WorktreeTerminalManager {
   init(
     runtime: GhosttyRuntime,
     preferredFontSize: Float32? = nil,
-    layoutPersistence: TerminalLayoutPersistenceClient = .liveValue
+    layoutPersistence: TerminalLayoutPersistenceClient = .liveValue,
+    agentObservationBufferCapacity: Int = 64,
+    agentDispatchStore: AgentDispatchStore = AgentDispatchStore(),
+    codexConfigReadProcess: CodexConfigReadProcess = CodexConfigReadProcess(),
+    codexShellEnvironmentResolver: @escaping @Sendable (URL, String?) async -> CodexShellLaunchEnvironment? = {
+      await CodexShellLaunchEnvironmentProbe.resolve(cwd: $0, pathOverride: $1)
+    },
+    hookResourcesProvider: @escaping @MainActor () -> AgentHookResources? = {
+      guard let url = SupacodePaths.bundledCLIURL else { return nil }
+      return AgentHookResources(
+        bundledCLIPath: url.path(percentEncoded: false),
+        socketPath: ProwlSocket.defaultPath,
+        copilotPluginPath: SupacodePaths.bundledCopilotHookPluginURL?.path(percentEncoded: false),
+        piExtensionPath: SupacodePaths.bundledPiHookExtensionURL?.path(percentEncoded: false),
+        ompExtensionPath: SupacodePaths.bundledOMPHookExtensionURL?.path(percentEncoded: false),
+        opencodePluginPath: SupacodePaths.bundledOpenCodeHookPluginURL?.path(percentEncoded: false)
+      )
+    },
+    forwardingRecordBaseDirectory: URL = SupacodePaths.agentHookForwardingDirectory,
+    skipsSurfaceCreationForTesting: Bool = false
   ) {
     self.runtime = runtime
     self.layoutPersistence = layoutPersistence
+    self.skipsSurfaceCreationForTesting = skipsSurfaceCreationForTesting
     self.preferredFontSize = preferredFontSize
+    self.agentObservationStore = AgentObservationStore(bufferCapacity: agentObservationBufferCapacity)
+    self.agentDispatchStore = agentDispatchStore
+    self.codexConfigReadProcess = codexConfigReadProcess
+    self.codexShellEnvironmentResolver = codexShellEnvironmentResolver
+    self.hookResourcesProvider = hookResourcesProvider
+    self.forwardingRecordBaseDirectory = forwardingRecordBaseDirectory
     baselineFontSize = runtime.defaultFontSize()
   }
 
@@ -60,14 +95,264 @@ final class WorktreeTerminalManager {
     createTabAsync(in: worktree, runSetupScriptIfNew: false, workingDirectory: directory)
   }
 
+  /// Synchronous launch boundary used by the CLI and workflow runner. Menu and
+  /// palette launch events remain owned by the compatibility command below.
+  func launchAgentProfile(
+    _ request: AgentProfileLaunchRequest,
+    in worktree: Worktree
+  ) -> Result<LaunchedSurface, AgentProfileLaunchError> {
+    state(for: worktree).launchAgentProfile(request)
+  }
+
+  func prepareAgentProfileLaunch(
+    _ request: AgentProfileLaunchRequest,
+    in worktree: Worktree
+  ) async -> Result<PreparedAgentProfileLaunch, AgentProfileLaunchError> {
+    let terminalState = state(for: worktree)
+    guard terminalState.provisionAgentProfileHome(for: request.plan) else {
+      return .failure(.homeProvisioningFailed)
+    }
+    var latestContext: FrozenAgentProfileLaunchContext?
+    for attempt in 0..<2 {
+      let context: FrozenAgentProfileLaunchContext
+      switch terminalState.freezeAgentProfileLaunchContext(request) {
+      case .success(let value): context = value
+      case .failure(let error): return .failure(error)
+      }
+      latestContext = context
+      let resources = hookResourcesProvider()
+      let codexShellEnvironment: CodexShellLaunchEnvironment?
+      if context.request.plan.runtime == .codex, resources != nil {
+        codexShellEnvironment = await codexShellEnvironmentResolver(
+          context.inheritedCWD,
+          context.request.plan.profileEnvironmentOverrides["PATH"]
+        )
+      } else {
+        codexShellEnvironment = nil
+      }
+      guard !Task.isCancelled else { return .failure(.preparationCancelled) }
+      let preparation = await AgentManagedHookPreparer.prepare(
+        plan: context.request.plan,
+        inheritedCWD: context.inheritedCWD,
+        resources: resources,
+        codexShellEnvironment: codexShellEnvironment,
+        codexConfigReadProcess: codexConfigReadProcess,
+        droidSettingsEnvironmentResolver: { cwd, pathOverride in
+          await DroidSettingsEnvironmentProbe.resolve(cwd: cwd, pathOverride: pathOverride)
+        },
+        openCodeEnvironmentResolver: { cwd, pathOverride in
+          await ShellEnvironmentProbe.resolve(
+            variables: OpenCodeHookPluginPreparer.environmentVariableNames,
+            cwd: cwd,
+            pathOverride: pathOverride
+          )
+        }
+      )
+      guard !Task.isCancelled else { return .failure(.preparationCancelled) }
+      guard terminalState.isAgentProfileLaunchContextValid(context) else {
+        if attempt == 0 { continue }
+        let warning = LifecycleCommandWarning(
+          code: .managedHookDegraded,
+          runtime: request.plan.runtime.rawValue,
+          message: "The launch target changed during managed hook preparation."
+        )
+        return .success(PreparedAgentProfileLaunch(context: context, warnings: [warning]))
+      }
+      return applyManagedHook(preparation, context: context, resources: resources)
+    }
+    guard let latestContext else { return .failure(.tabCreationFailed) }
+    return .success(PreparedAgentProfileLaunch(context: latestContext, warnings: []))
+  }
+
+  /// Turn a completed hook preparation into an execution-ready launch context: materialize
+  /// any private files, patch the plan, and keep every failure path fail-open for the user's
+  /// launch. Any file already exposed to no child is discarded before returning.
+  private func applyManagedHook(
+    _ preparation: AgentManagedHookPreparation,
+    context: FrozenAgentProfileLaunchContext,
+    resources: AgentHookResources?
+  ) -> Result<PreparedAgentProfileLaunch, AgentProfileLaunchError> {
+    let runtimeRawValue = context.request.plan.runtime.rawValue
+    func degraded(_ message: String) -> Result<PreparedAgentProfileLaunch, AgentProfileLaunchError> {
+      .success(
+        PreparedAgentProfileLaunch(
+          context: context,
+          warnings: [
+            LifecycleCommandWarning(
+              code: .managedHookDegraded,
+              runtime: runtimeRawValue,
+              message: message
+            )
+          ]
+        )
+      )
+    }
+
+    // Droid's merged settings arrive as data because only this actor owns the owner-only
+    // store. Write it first, then render the argv against the resulting path.
+    let settingsFile = writePendingHookSettingsFile(preparation.pendingSettingsFile)
+    if preparation.pendingSettingsFile != nil, settingsFile == nil {
+      return degraded("The managed hook settings file could not be created.")
+    }
+    var privateFiles = [settingsFile?.record].compactMap { $0 }
+    func discardPrivateFiles() {
+      for file in privateFiles { codexForwardingRecordStore?.discardUnexposed(file) }
+    }
+
+    guard let capability = preparation.capability,
+      let preparedInvocation = settingsFile?.prepared ?? preparation.preparedInvocation,
+      let resources
+    else {
+      discardPrivateFiles()
+      return .success(
+        PreparedAgentProfileLaunch(
+          context: context,
+          warnings: preparation.warning.map { [$0] } ?? []
+        )
+      )
+    }
+
+    if let argv = preparation.forwardingArgv {
+      guard let store = forwardingRecordStore(),
+        let record = try? store.create(argv: argv)
+      else {
+        discardPrivateFiles()
+        return degraded("The existing Codex notifier could not be preserved safely.")
+      }
+      privateFiles.append(record)
+    }
+    if Task.isCancelled {
+      discardPrivateFiles()
+      return .failure(.preparationCancelled)
+    }
+
+    let executionPlan = context.request.plan.applyingManagedHook(
+      preparedInvocation,
+      resources: resources,
+      launchCWD: preparation.launchCWD,
+      token: UUID().uuidString,
+      nativeEvents: capability.nativeEvents,
+      coveredEvents: capability.coveredEvents,
+      forwardingRecord: privateFiles.last
+    )
+    let preparedContext = FrozenAgentProfileLaunchContext(
+      request: AgentProfileLaunchRequest(
+        plan: executionPlan,
+        placement: context.request.placement,
+        workingDirectoryOverride: context.request.workingDirectoryOverride,
+        inheritanceAnchor: context.request.inheritanceAnchor,
+        title: context.request.title
+      ),
+      inheritedCWD: context.inheritedCWD,
+      anchorSurfaceID: context.anchorSurfaceID,
+      tracksFocusedAnchor: context.tracksFocusedAnchor,
+      tracksInheritedCWD: context.tracksInheritedCWD
+    )
+    return .success(
+      PreparedAgentProfileLaunch(
+        context: preparedContext,
+        warnings: preparation.warning.map { [$0] } ?? []
+      )
+    )
+  }
+
+  /// Materialize a runtime's merged hook settings into the owner-only store and render the
+  /// argv that names it. Returns `nil` only when the file could not be created.
+  private func writePendingHookSettingsFile(
+    _ pending: PendingManagedHookSettingsFile?
+  ) -> (record: CodexForwardingRecord, prepared: AgentHookPreparedInvocation)? {
+    guard let pending,
+      let store = forwardingRecordStore(),
+      let record = try? store.createPrivateFile(pending.data)
+    else { return nil }
+    return (
+      record,
+      DroidHookSettingsPreparer.applying(
+        settingsPath: record.locator,
+        invocation: pending.invocation,
+        promptArgumentIndex: pending.promptArgumentIndex
+      )
+    )
+  }
+
+  func discardPreparedAgentProfileLaunch(_ preparation: PreparedAgentProfileLaunch) {
+    guard let record = preparation.context.request.plan.hookRegistration?.forwardingRecord else { return }
+    codexForwardingRecordStore?.discardUnexposed(record)
+  }
+
+  func launchPreparedAgentProfile(
+    _ preparation: PreparedAgentProfileLaunch,
+    in worktree: Worktree
+  ) -> Result<LaunchedSurface, AgentProfileLaunchError> {
+    let result = state(for: worktree).launchAgentProfile(preparation.context.request)
+    if case .failure = result,
+      let record = preparation.context.request.plan.hookRegistration?.forwardingRecord
+    {
+      codexForwardingRecordStore?.discardUnexposed(record)
+    }
+    return result
+  }
+
+  func startAgentHookRuntimeMaintenance() {
+    _ = forwardingRecordStore()
+  }
+
+  private func forwardingRecordStore() -> CodexForwardingRecordStore? {
+    if let codexForwardingRecordStore { return codexForwardingRecordStore }
+    guard
+      let store = try? CodexForwardingRecordStore(baseDirectory: forwardingRecordBaseDirectory)
+    else { return nil }
+    store.sweepOrphans()
+    codexForwardingRecordStore = store
+    return store
+  }
+
   /// The launch outcome is reported as an event either way: the reducer
   /// records the per-repo launch memory only on success and surfaces the
   /// failure as a toast (docs-ai 053/005).
   private func launchAgentProfile(_ plan: AgentProfileLaunchPlan, in worktree: Worktree) {
-    if state(for: worktree).launchAgentProfile(plan) != nil {
-      emit(.agentProfileLaunched(worktreeID: worktree.id, profileID: plan.profileID))
-    } else {
-      emit(.agentProfileLaunchFailed(worktreeID: worktree.id, profileName: plan.profileName))
+    Task { @MainActor [weak self] in
+      guard let self else { return }
+      var placement: AgentProfileLaunchRequest.Placement =
+        plan.placement == .split
+        ? .split(anchor: nil, direction: plan.splitDirection, background: false)
+        : .tab(background: false)
+      for attempt in 0..<2 {
+        let request = AgentProfileLaunchRequest(plan: plan, placement: placement)
+        switch await prepareAgentProfileLaunch(request, in: worktree) {
+        case .failure where Task.isCancelled:
+          return
+        case .failure(let error):
+          if attempt == 0, case .split = placement, error == .splitAnchorUnavailable {
+            placement = .tab(background: false)
+            continue
+          }
+          emit(.agentProfileLaunchFailed(worktreeID: worktree.id, profileName: plan.profileName))
+          return
+        case .success(let preparation):
+          switch launchPreparedAgentProfile(preparation, in: worktree) {
+          case .success:
+            for warning in preparation.warnings {
+              emit(
+                .agentProfileLaunchWarning(
+                  worktreeID: worktree.id,
+                  profileName: plan.profileName,
+                  message: warning.message
+                )
+              )
+            }
+            emit(.agentProfileLaunched(worktreeID: worktree.id, profileID: plan.profileID))
+            return
+          case .failure:
+            if attempt == 0, case .split = placement {
+              placement = .tab(background: false)
+              continue
+            }
+            emit(.agentProfileLaunchFailed(worktreeID: worktree.id, profileName: plan.profileName))
+            return
+          }
+        }
+      }
     }
   }
 
@@ -214,6 +499,311 @@ final class WorktreeTerminalManager {
     }
   }
 
+  /// Independent per-surface multicast observation. This deliberately does not
+  /// reuse `eventStream()`, whose single production subscriber is `AppFeature`.
+  func observeAgentState(surfaceID: UUID) -> AgentObservationStream {
+    agentObservationStore.observe(surfaceID: surfaceID, isLive: containsSurface(surfaceID))
+  }
+
+  @discardableResult
+  func recordAgentSignal(_ signal: AgentSignal, surfaceID: UUID) -> Bool {
+    guard containsSurface(surfaceID) else { return false }
+    agentObservationStore.publishSignal(signal, surfaceID: surfaceID)
+    return true
+  }
+
+  @discardableResult
+  func recordAgentSignal(_ signal: AgentSignal, caller: CallerPane) -> AgentSignalRecordOutcome {
+    guard containsSurface(caller.surfaceID) else { return .paneGone }
+    let evidence = refreshEvidenceEpoch(surfaceID: caller.surfaceID)
+    let generationMatches = evidence.generation.map(caller.processAncestry.contains) ?? false
+    let binding = agentObservationStore.bindingForSignal(
+      surfaceID: caller.surfaceID,
+      generationMatches: generationMatches,
+      signalSessionID: signal.sessionID
+    )
+    agentObservationStore.publishSignal(signal, binding: binding, surfaceID: caller.surfaceID)
+    guard
+      binding == .current,
+      let evidenceEpoch = agentObservationStore.currentEvidenceEpoch(surfaceID: caller.surfaceID)
+    else { return .recorded(binding: binding) }
+    noteDispatchEvidence(
+      signal,
+      surfaceID: caller.surfaceID,
+      evidenceEpoch: evidenceEpoch
+    )
+    return .recorded(binding: binding)
+  }
+
+  @discardableResult
+  func recordAgentNativeHook(_ input: AgentNativeHookInput, caller: CallerPane) -> Bool {
+    guard containsSurface(caller.surfaceID) else { return false }
+    refreshEvidenceEpoch(surfaceID: caller.surfaceID)
+    switch agentObservationStore.recordManagedHook(
+      input,
+      callerAncestry: caller.processAncestry,
+      surfaceID: caller.surfaceID
+    ) {
+    case .rejected:
+      return false
+    case .pending:
+      return true
+    case .accepted(let signal, let evidenceEpoch):
+      noteDispatchEvidence(signal, surfaceID: caller.surfaceID, evidenceEpoch: evidenceEpoch)
+      return true
+    }
+  }
+
+  /// Reconciles the surface's evidence epoch with the agent generation and session the
+  /// detector currently proves, activating any hook signals that were waiting for it.
+  @discardableResult
+  private func refreshEvidenceEpoch(
+    surfaceID: UUID
+  ) -> (generation: AgentProcessGeneration?, sessionID: String?) {
+    let evidence = currentAgentEvidence(surfaceID: surfaceID)
+    handleEvidenceEpochUpdate(
+      agentObservationStore.updateEvidenceEpoch(
+        surfaceID: surfaceID,
+        processGeneration: evidence.generation,
+        sessionID: evidence.sessionID
+      ),
+      surfaceID: surfaceID
+    )
+    return evidence
+  }
+
+  private func handleEvidenceEpochUpdate(
+    _ update: AgentEvidenceEpochUpdate,
+    surfaceID: UUID
+  ) {
+    for signal in update.activatedSignals {
+      guard let epoch = agentObservationStore.currentEvidenceEpoch(surfaceID: surfaceID) else { continue }
+      noteDispatchEvidence(signal, surfaceID: surfaceID, evidenceEpoch: epoch)
+    }
+    for record in update.revokedForwardingRecords {
+      retireForwardingRecord(record)
+    }
+  }
+
+  private func retireForwardingRecord(_ record: CodexForwardingRecord) {
+    codexForwardingRecordStore?.retire(record)
+  }
+
+  private func noteDispatchEvidence(
+    _ signal: AgentSignal,
+    surfaceID: UUID,
+    evidenceEpoch: UUID
+  ) {
+    switch signal.kind {
+    case .turnEnded:
+      agentDispatchStore.noteTerminalEvidence(
+        surfaceID: surfaceID,
+        evidenceEpoch: evidenceEpoch,
+        evidence: .turnEnded
+      )
+    case .needsInput:
+      agentDispatchStore.noteTerminalEvidence(
+        surfaceID: surfaceID,
+        evidenceEpoch: evidenceEpoch,
+        evidence: .needsInput
+      )
+    case .sessionEnd:
+      agentDispatchStore.noteTerminalEvidence(
+        surfaceID: surfaceID,
+        evidenceEpoch: evidenceEpoch,
+        evidence: .sessionEnd
+      )
+    case .sessionStart, .progress:
+      agentDispatchStore.noteActivity(surfaceID: surfaceID, evidenceEpoch: evidenceEpoch)
+    }
+  }
+
+  /// Internal observer-health diagnostic; not a user-facing API.
+  func agentObservationSubscriberCount(surfaceID: UUID) -> Int {
+    agentObservationStore.subscriberCount(surfaceID: surfaceID)
+  }
+
+  func agentObservationSnapshot(surfaceID: UUID) -> AgentObservationSnapshot? {
+    agentObservationStore.snapshot(surfaceID: surfaceID)
+  }
+
+  func agentEvidenceEpochForTesting(surfaceID: UUID) -> UUID? {
+    agentObservationStore.currentEvidenceEpoch(surfaceID: surfaceID)
+  }
+
+  func isSurfaceLive(_ surfaceID: UUID) -> Bool {
+    containsSurface(surfaceID)
+  }
+
+  func agentSignalsPayload(
+    surfaceID: UUID,
+    includeDiagnosticLast: Bool = true
+  ) -> AgentSignalsPayload {
+    refreshEvidenceEpoch(surfaceID: surfaceID)
+    return agentObservationStore.signalsPayload(
+      surfaceID: surfaceID,
+      formatter: Self.agentSignalDateFormatter,
+      includeDiagnosticLast: includeDiagnosticLast
+    )
+  }
+
+  func currentAgentSignalEvidence(surfaceID: UUID) -> AgentCurrentSignalEvidence {
+    _ = agentSignalsPayload(surfaceID: surfaceID)
+    return agentObservationStore.currentSignalEvidence(surfaceID: surfaceID)
+  }
+
+  func currentEligibleAgentSignal(surfaceID: UUID) -> AgentSignal? {
+    currentAgentSignalEvidence(surfaceID: surfaceID).activeTerminal
+  }
+
+  private func currentAgentEvidence(
+    surfaceID: UUID
+  ) -> (generation: AgentProcessGeneration?, sessionID: String?) {
+    for state in states.values {
+      guard let paneState = state.surfaceAgentStates[surfaceID] else { continue }
+      // The launch process, not the identified one, is the generation subject:
+      // hooks descend from both, and only the launch survives an engine child
+      // taking over identification.
+      let generation = (paneState.launchProcessID ?? paneState.agentProcessID).flatMap { pid in
+        ProcessDetection.processStartDate(pid: pid).map {
+          AgentProcessGeneration(pid: pid, startedAt: $0)
+        }
+      }
+      let trustedSessionID = paneState.session.flatMap {
+        $0.confidence == .medium ? nil : $0.id
+      }
+      return (generation, trustedSessionID)
+    }
+    return (nil, nil)
+  }
+
+  private static let agentSignalDateFormatter: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    formatter.timeZone = TimeZone(secondsFromGMT: 0)
+    return formatter
+  }()
+
+  func issueAgentDispatch() throws -> AgentDispatchSnapshot {
+    try agentDispatchStore.issue()
+  }
+
+  func bindAgentDispatch(dispatchID: String, target: TabResolvedTarget) throws {
+    guard let surfaceID = UUID(uuidString: target.paneID) else {
+      throw AgentDispatchStoreError.bindingMissing
+    }
+    guard let snapshot = agentDispatchStore.snapshot(dispatchID: dispatchID) else {
+      throw AgentDispatchStoreError.notFound
+    }
+    let target = TabTarget(from: target)
+    if let existing = snapshot.binding {
+      guard existing.surfaceID == surfaceID, existing.target == target else {
+        throw AgentDispatchStoreError.alreadyBound
+      }
+      try agentDispatchStore.bind(dispatchID: dispatchID, binding: existing)
+      return
+    }
+    guard snapshot.record.state == .pending else {
+      throw AgentDispatchStoreError.alreadyTerminal
+    }
+    let evidenceEpoch: UUID
+    if agentObservationStore.hasManagedHook(surfaceID: surfaceID) {
+      guard let current = agentObservationStore.currentEvidenceEpoch(surfaceID: surfaceID) else {
+        throw AgentDispatchStoreError.bindingMissing
+      }
+      evidenceEpoch = current
+    } else {
+      evidenceEpoch = agentObservationStore.beginDispatchEpoch(surfaceID: surfaceID)
+    }
+    try agentDispatchStore.bind(
+      dispatchID: dispatchID,
+      binding: AgentDispatchBinding(
+        surfaceID: surfaceID,
+        target: target,
+        evidenceEpoch: evidenceEpoch
+      )
+    )
+  }
+
+  /// Issues a record for an agent already running in `target` and binds it to the pane's
+  /// current evidence epoch in one main-actor step (docs-ai 064.014). Unlike a prompted
+  /// launch this never begins a new epoch: the generation that will report the receipt is
+  /// the one the pane holds now, so its hook and cooperative signals keep counting.
+  func issueAgentDispatch(boundTo target: TabResolvedTarget) throws -> AgentDispatchSnapshot {
+    guard let surfaceID = UUID(uuidString: target.paneID), containsSurface(surfaceID) else {
+      throw AgentDispatchStoreError.bindingMissing
+    }
+    refreshEvidenceEpoch(surfaceID: surfaceID)
+    guard let evidenceEpoch = agentObservationStore.currentEvidenceEpoch(surfaceID: surfaceID) else {
+      throw AgentDispatchStoreError.bindingMissing
+    }
+    guard agentDispatchStore.pendingSnapshot(surfaceID: surfaceID) == nil else {
+      throw AgentDispatchStoreError.surfacePending
+    }
+    let issued = try agentDispatchStore.issue()
+    do {
+      try agentDispatchStore.bind(
+        dispatchID: issued.record.id,
+        binding: AgentDispatchBinding(
+          surfaceID: surfaceID,
+          target: TabTarget(from: target),
+          evidenceEpoch: evidenceEpoch
+        )
+      )
+    } catch {
+      agentDispatchStore.cancelIssuance(dispatchID: issued.record.id)
+      throw error
+    }
+    return agentDispatchStore.snapshot(dispatchID: issued.record.id) ?? issued
+  }
+
+  func cancelAgentDispatchIssuance(dispatchID: String) {
+    agentDispatchStore.cancelIssuance(dispatchID: dispatchID)
+  }
+
+  func agentDispatchSnapshot(dispatchID: String) -> AgentDispatchSnapshot? {
+    agentDispatchStore.snapshot(dispatchID: dispatchID)
+  }
+
+  func pendingAgentDispatchSnapshot(surfaceID: UUID) -> AgentDispatchSnapshot? {
+    agentDispatchStore.pendingSnapshot(surfaceID: surfaceID)
+  }
+
+  func completeAgentDispatch(
+    dispatchID: String,
+    outcome: DispatchCompletionOutcome,
+    summary: String,
+    callerSurfaceID: UUID
+  ) throws -> AgentDispatchMutationResult {
+    try agentDispatchStore.complete(
+      dispatchID: dispatchID,
+      outcome: outcome,
+      summary: summary,
+      callerSurfaceID: callerSurfaceID
+    )
+  }
+
+  /// Completes the caller pane's current pending dispatch (see `AgentDispatchStore.complete(surfaceID:)`).
+  func completeAgentDispatch(
+    surfaceID: UUID,
+    outcome: DispatchCompletionOutcome,
+    summary: String
+  ) throws -> AgentDispatchMutationResult {
+    try agentDispatchStore.complete(surfaceID: surfaceID, outcome: outcome, summary: summary)
+  }
+
+  func abandonAgentDispatch(dispatchID: String, reason: String) throws -> AgentDispatchMutationResult {
+    try agentDispatchStore.abandon(dispatchID: dispatchID, reason: reason)
+  }
+
+  func observeAgentDispatch(dispatchID: String) throws -> AgentDispatchObservationStream {
+    try agentDispatchStore.observe(dispatchID: dispatchID)
+  }
+
+  func agentDispatchSubscriberCount(dispatchID: String) -> Int {
+    agentDispatchStore.subscriberCount(dispatchID: dispatchID)
+  }
+
   func eventStream() -> AsyncStream<TerminalClient.Event> {
     eventContinuation?.finish()
     let (stream, continuation) = AsyncStream.makeStream(
@@ -256,7 +846,8 @@ final class WorktreeTerminalManager {
       worktree: worktree,
       runSetupScript: runSetupScript,
       defaultFontSize: preferredFontSize,
-      targetHandleRegistry: targetHandleRegistry
+      targetHandleRegistry: targetHandleRegistry,
+      skipsSurfaceCreationForTesting: skipsSurfaceCreationForTesting
     )
     state.setNotificationsEnabled(notificationsEnabled)
     state.setCommandFinishedNotification(
@@ -294,12 +885,7 @@ final class WorktreeTerminalManager {
     state.onTaskStatusChanged = { [weak self] status in
       self?.emit(.taskStatusChanged(worktreeID: worktree.id, status: status))
     }
-    state.onAgentEntryChanged = { [weak self] entry in
-      self?.emit(.agentEntryChanged(entry))
-    }
-    state.onAgentEntryRemoved = { [weak self] id in
-      self?.emit(.agentEntryRemoved(id))
-    }
+    configureAgentObservationCallbacks(state)
     state.onRunScriptStatusChanged = { [weak self] isRunning in
       self?.emit(.runScriptStatusChanged(worktreeID: worktree.id, isRunning: isRunning))
     }
@@ -318,6 +904,42 @@ final class WorktreeTerminalManager {
     states[worktree.id] = state
     terminalLogger.info("Created terminal state for worktree \(worktree.id)")
     return state
+  }
+
+  private func configureAgentObservationCallbacks(_ state: WorktreeTerminalState) {
+    state.onAgentEntryChanged = { [weak self] entry in
+      guard let self else { return }
+      let beganWorking = agentObservationStore.publishAgentChanged(entry)
+      refreshEvidenceEpoch(surfaceID: entry.surfaceID)
+      if beganWorking,
+        let evidenceEpoch = agentObservationStore.currentEvidenceEpoch(surfaceID: entry.surfaceID)
+      {
+        agentDispatchStore.noteActivity(surfaceID: entry.surfaceID, evidenceEpoch: evidenceEpoch)
+      }
+      emit(.agentEntryChanged(entry))
+    }
+    state.onAgentEntryRemoved = { [weak self] surfaceID in
+      guard let self else { return }
+      if let record = agentObservationStore.revokeManagedHook(surfaceID: surfaceID) {
+        retireForwardingRecord(record)
+      }
+      agentObservationStore.publishAgentRemoved(surfaceID: surfaceID)
+      emit(.agentEntryRemoved(surfaceID))
+    }
+    state.onSurfaceClosed = { [weak self] surfaceID in
+      guard let self else { return }
+      if let record = agentObservationStore.revokeManagedHook(surfaceID: surfaceID) {
+        retireForwardingRecord(record)
+      }
+      agentObservationStore.publishSurfaceClosed(surfaceID: surfaceID)
+      agentDispatchStore.surfaceClosed(surfaceID: surfaceID)
+    }
+    state.onAgentProfileSurfacePrepared = { [weak self] surfaceID, plan in
+      guard let self, containsSurface(surfaceID) else { return false }
+      guard let registration = plan.hookRegistration else { return true }
+      _ = agentObservationStore.registerManagedHook(registration, surfaceID: surfaceID)
+      return true
+    }
   }
 
   @discardableResult
@@ -440,6 +1062,10 @@ final class WorktreeTerminalManager {
 
   func stateContaining(tabId: TerminalTabID) -> WorktreeTerminalState? {
     activeWorktreeStates.first { $0.surfaceView(for: tabId) != nil }
+  }
+
+  private func containsSurface(_ surfaceID: UUID) -> Bool {
+    states.values.contains { $0.surfaceView(for: surfaceID) != nil }
   }
 
   @discardableResult
@@ -735,7 +1361,14 @@ final class WorktreeTerminalManager {
     private init(preview: Void) {
       self.runtime = nil
       self.layoutPersistence = .liveValue
+      self.skipsSurfaceCreationForTesting = true
       self.preferredFontSize = nil
+      self.agentObservationStore = AgentObservationStore(bufferCapacity: 64)
+      self.agentDispatchStore = AgentDispatchStore()
+      self.codexConfigReadProcess = CodexConfigReadProcess()
+      self.codexShellEnvironmentResolver = { _, _ in nil }
+      self.hookResourcesProvider = { nil }
+      self.forwardingRecordBaseDirectory = SupacodePaths.agentHookForwardingDirectory
       self.baselineFontSize = 13
     }
   #endif
