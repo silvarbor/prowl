@@ -321,6 +321,23 @@ struct ClaudeBackgroundAgentDetectionTests {
     #expect(detection.state == .idle)
   }
 
+  @Test func aRowWithNoTrailingRuleIsNotABorder() {
+    // The annotation closes on a second run of rule characters. A retired
+    // transcript row that opens with a rule and runs on into prose carries no
+    // trailing run, so reading it as the border would end the history at that
+    // row and promote the retired wait row above it into the live block.
+    let detection = detect(
+      """
+      ✻ Waiting for 1 background agent to finish
+      ─── some retired text
+      ❯
+      ─────────
+      """
+    )
+
+    #expect(detection.state == .idle)
+  }
+
   @Test func incompleteElapsedSegmentsStayIdle() {
     let notWorking = [
       "● Retrying the merge lifecycle… (1st attempt)",
