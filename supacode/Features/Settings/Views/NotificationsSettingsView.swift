@@ -71,7 +71,7 @@ struct NotificationsSettingsView: View {
           .disabled(!dockBadgeAvailable)
           if let dockBadgeCaption {
             Text(dockBadgeCaption)
-              .font(.callout)
+              .interfaceFont(.callout)
               .foregroundStyle(.secondary)
           }
         }

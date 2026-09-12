@@ -11,7 +11,7 @@ struct WorkflowHistoryMarkdownPreview: View {
         .frame(maxWidth: .infinity, alignment: .leading)
       if preview.remainingCharacters > 0 {
         Text("\(preview.remainingCharacters.formatted()) more characters…")
-          .font(.caption).foregroundStyle(.secondary)
+          .interfaceFont(.caption).foregroundStyle(.secondary)
       }
     }
   }

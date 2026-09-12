@@ -9,7 +9,7 @@ struct WorkflowStepHistoryView: View {
   var body: some View {
     VStack(spacing: 0) {
       HStack {
-        Text("Workflow History").font(.headline)
+        Text("Workflow History").interfaceFont(.headline)
         Spacer()
         if store.isLoading { ProgressView().controlSize(.small) }
         Picker("History Scope", selection: $store.selectedScope.sending(\.setScope)) {
@@ -55,7 +55,7 @@ struct WorkflowStepHistoryView: View {
       }
       if let error = store.error {
         Divider()
-        Text(error).font(.callout).foregroundStyle(.red).textSelection(.enabled)
+        Text(error).interfaceFont(.callout).foregroundStyle(.red).textSelection(.enabled)
           .lineLimit(3).padding(10)
       }
     }
@@ -81,15 +81,15 @@ struct WorkflowStepHistoryView: View {
                 Text(entry.name).lineLimit(2)
                 if store.selectedScope == .all {
                   Text(URL(filePath: entry.root).lastPathComponent)
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    .interfaceFont(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
                 if let relationship = entry.relationship(paneID: store.context.paneID, session: store.context.session) {
-                  Text(relationship).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                  Text(relationship).interfaceFont(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
               }
               Spacer(minLength: 0)
             }
-            .font(.body)
+            .interfaceFont(.body)
             .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
@@ -110,7 +110,7 @@ struct WorkflowStepHistoryView: View {
         }
         if store.visibleEntries.isEmpty {
           Text("No runs in this scope. Try This Worktree or All Runs.")
-            .font(.callout).foregroundStyle(.secondary).padding(8)
+            .interfaceFont(.callout).foregroundStyle(.secondary).padding(8)
         }
       }
       .padding(6)

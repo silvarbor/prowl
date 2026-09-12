@@ -28,7 +28,7 @@ struct ActiveAgentsPanel: View {
       resizeHandle
       HStack {
         Text("Active Agents")
-          .font(.caption)
+          .interfaceFont(.caption)
           .foregroundStyle(.secondary)
         Spacer()
         ZStack(alignment: .trailing) {
@@ -42,7 +42,7 @@ struct ActiveAgentsPanel: View {
               store.send(.islandToggleEnabledTapped)
             } label: {
               Image(systemName: "inset.filled.topthird.rectangle")
-                .font(.caption)
+                .interfaceFont(.caption)
                 .foregroundStyle(store.isIslandEnabled ? .primary : .secondary)
                 .frame(width: 20, height: 16)
             }
@@ -64,7 +64,7 @@ struct ActiveAgentsPanel: View {
       if store.entries.isEmpty {
         Spacer(minLength: 0)
         Text("New agents will appear here")
-          .font(.callout)
+          .interfaceFont(.callout)
           .foregroundStyle(.secondary)
           // Nudge up slightly off dead-center for better visual balance.
           .offset(y: -8)

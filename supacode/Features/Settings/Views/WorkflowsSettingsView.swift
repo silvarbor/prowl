@@ -57,11 +57,11 @@ private struct WorkflowHistorySummarySection: View {
       if let error = store.error {
         Label(error, systemImage: "exclamationmark.triangle.fill")
           .foregroundStyle(.orange)
-          .font(.callout)
+          .interfaceFont(.callout)
           .textSelection(.enabled)
       } else if let result = store.result {
         Text(result)
-          .font(.callout)
+          .interfaceFont(.callout)
           .foregroundStyle(.secondary)
       }
     } header: {
@@ -110,7 +110,7 @@ struct WorkflowSettingsSections: View {
       Section {
         Label(loadError, systemImage: "exclamationmark.triangle.fill")
           .foregroundStyle(.orange)
-          .font(.callout)
+          .interfaceFont(.callout)
       }
     }
 
@@ -135,7 +135,7 @@ struct WorkflowSettingsSections: View {
       if rows.isEmpty {
         Text(emptyMessage)
           .foregroundStyle(.secondary)
-          .font(.callout)
+          .interfaceFont(.callout)
       }
       ForEach(rows) { row in
         NavigationLink(
@@ -221,7 +221,7 @@ struct WorkflowSettingsSections: View {
             .foregroundStyle(.secondary)
         }
       }
-      .font(.callout)
+      .interfaceFont(.callout)
       .fixedSize(horizontal: false, vertical: true)
     }
   }
@@ -245,13 +245,13 @@ struct WorkflowCompactRow: View {
             .foregroundStyle(.primary)
           if let workflowID = row.workflowID, workflowID != row.name {
             Text(workflowID)
-              .font(.caption.monospaced())
+              .interfaceFont(.caption, design: .monospaced)
               .foregroundStyle(.secondary)
           }
         }
         if let description = row.description, !description.isEmpty {
           Text(description)
-            .font(.callout)
+            .interfaceFont(.callout)
             .foregroundStyle(.secondary)
             .lineLimit(2)
         }
@@ -271,7 +271,7 @@ struct WorkflowIconImage: View {
 
   var body: some View {
     Image(systemName: icon ?? "point.3.connected.trianglepath.dotted")
-      .font(.system(size: pointSize))
+      .fixedInterfaceFont(.system(size: pointSize))
       .foregroundStyle(.secondary)
       .accessibilityHidden(true)
   }
@@ -282,7 +282,7 @@ struct WorkflowStatusLabel: View {
 
   var body: some View {
     Label(title, systemImage: symbol)
-      .font(.caption)
+      .interfaceFont(.caption)
       .foregroundStyle(color)
       .lineLimit(1)
       .help(helpText)

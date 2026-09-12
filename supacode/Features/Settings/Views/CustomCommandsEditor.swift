@@ -152,12 +152,12 @@ struct CustomCommandsEditor: View {
         Spacer(minLength: 0)
 
         Text("\(displayedCommandCount) commands")
-          .font(.caption)
+          .interfaceFont(.caption)
           .foregroundStyle(.secondary)
       }
       if let invalidMessage = selectedCommandInvalidMessage {
         Text(invalidMessage)
-          .font(.caption)
+          .interfaceFont(.caption)
           .foregroundStyle(.red)
       } else {
         Text(
@@ -165,7 +165,7 @@ struct CustomCommandsEditor: View {
             ? "Global commands are managed in Settings → Commands."
             : "Click cells to edit icon, name, command, and shortcut inline."
         )
-        .font(.caption)
+        .interfaceFont(.caption)
         .foregroundStyle(.secondary)
       }
     }
@@ -321,7 +321,7 @@ struct CustomCommandsEditor: View {
       } label: {
         VStack(alignment: .leading, spacing: 2) {
           Text(inlineCommandTitle(for: binding.wrappedValue.execution))
-            .font(.caption)
+            .interfaceFont(.caption)
             .foregroundStyle(.secondary)
           Text(inlineCommandScriptPreview(for: binding.wrappedValue.command))
             .lineLimit(1)
@@ -347,7 +347,7 @@ struct CustomCommandsEditor: View {
       } label: {
         VStack(alignment: .leading, spacing: 2) {
           Text(inlineCommandTitle(for: command.execution))
-            .font(.caption)
+            .interfaceFont(.caption)
             .foregroundStyle(.secondary)
           Text(inlineCommandScriptPreview(for: command.command))
             .lineLimit(1)
@@ -370,7 +370,7 @@ struct CustomCommandsEditor: View {
       toggleRecording(for: command.id)
     } label: {
       Text(isRecording ? "Recording…" : shortcutDisplay)
-        .font(.body.monospaced())
+        .interfaceFont(.body, design: .monospaced)
         .foregroundStyle(isRecording ? Color.orange : (resolvedBinding == nil ? .secondary : .primary))
         .lineLimit(1)
     }
@@ -414,7 +414,7 @@ struct CustomCommandsEditor: View {
     }
     .padding(.horizontal, 14)
     .padding(.vertical, 8)
-    .font(.headline)
+    .interfaceFont(.headline)
     .foregroundStyle(.secondary)
   }
 
@@ -481,7 +481,7 @@ struct CustomCommandsEditor: View {
     HStack(spacing: 8) {
       customCommandRowCell(width: customCommandsDragColumnWidth, alignment: .center) {
         Image(systemName: "lock.fill")
-          .font(.caption2)
+          .interfaceFont(.caption2)
           .foregroundStyle(.tertiary)
           .accessibilityHidden(true)
       }
@@ -500,12 +500,12 @@ struct CustomCommandsEditor: View {
             Text(command.resolvedTitle)
               .lineLimit(1)
             Text("Global")
-              .font(.caption2)
+              .interfaceFont(.caption2)
               .foregroundStyle(.secondary)
           }
           if !command.isEnabled {
             Text("Disabled globally")
-              .font(.caption2)
+              .interfaceFont(.caption2)
               .foregroundStyle(.secondary)
           }
         }
@@ -513,7 +513,7 @@ struct CustomCommandsEditor: View {
       customCommandRowCell {
         VStack(alignment: .leading, spacing: 2) {
           Text(inlineCommandTitle(for: command.execution))
-            .font(.caption)
+            .interfaceFont(.caption)
             .foregroundStyle(.secondary)
           Text(inlineCommandScriptPreview(for: command.command))
             .lineLimit(1)
@@ -524,7 +524,7 @@ struct CustomCommandsEditor: View {
           for: customCommandBindingID(for: command.id, source: .global)
         )
         Text(binding?.display ?? "Unassigned")
-          .font(.body.monospaced())
+          .interfaceFont(.body, design: .monospaced)
           .foregroundStyle(binding == nil ? .secondary : .primary)
           .lineLimit(1)
       }
@@ -632,9 +632,9 @@ struct CustomCommandsEditor: View {
   ) -> some View {
     VStack(alignment: .leading, spacing: 10) {
       Text("Icon")
-        .font(.headline)
+        .interfaceFont(.headline)
       Text("Pick from common symbols or enter any SF Symbol name available in your system.")
-        .font(.caption)
+        .interfaceFont(.caption)
         .foregroundStyle(.secondary)
 
       HStack(spacing: 8) {
@@ -674,9 +674,9 @@ struct CustomCommandsEditor: View {
   private func commandEditorPopover(for command: Binding<UserCustomCommand>) -> some View {
     VStack(alignment: .leading, spacing: 10) {
       Text("Command")
-        .font(.headline)
+        .interfaceFont(.headline)
       Text(commandEditorDescription)
-        .font(.caption)
+        .interfaceFont(.caption)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
 
@@ -709,7 +709,7 @@ struct CustomCommandsEditor: View {
       .frame(height: 140)
 
       Text(scriptDescription(for: command.wrappedValue.execution))
-        .font(.caption)
+        .interfaceFont(.caption)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
 

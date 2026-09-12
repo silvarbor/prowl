@@ -22,6 +22,27 @@ struct AppearanceSettingsView: View {
               }
             }
           }
+          Picker("Interface text size", selection: $store.interfaceTextScale) {
+            ForEach(InterfaceTextScale.allCases) { scale in
+              Text(scale.title).tag(scale)
+            }
+          }
+          .help(
+            "Scale all app text by this amount, keeping headings larger than "
+              + "body text and body text larger than captions. "
+              + "Terminal text follows your Ghostty font size instead."
+          )
+          Picker("Minimum text size", selection: $store.minimumTextSize) {
+            ForEach(MinimumTextSize.allCases) { size in
+              Text(size.title).tag(size)
+            }
+          }
+          .help(
+            "Never use text smaller than this size, like Safari's minimum font "
+              + "size. A floor raises small text to meet it, so sizes below the "
+              + "floor become equal. Use Interface text size to enlarge "
+              + "everything and keep the differences."
+          )
           VStack(alignment: .leading, spacing: 6) {
             Text(
               """
@@ -45,7 +66,7 @@ struct AppearanceSettingsView: View {
             }
             .controlSize(.small)
           }
-          .font(.footnote)
+          .interfaceFont(.footnote)
           .foregroundStyle(.secondary)
         }
         Section("Window Tint") {
@@ -64,7 +85,7 @@ struct AppearanceSettingsView: View {
             .help("Tint the nav and toolbar with this color in every view, ignoring repository colors.")
           }
           Text(tintFootnote)
-            .font(.callout)
+            .interfaceFont(.callout)
             .foregroundStyle(.secondary)
 
           Picker("Tint spines in Shelf View", selection: $store.shelfSpineTintFallback) {
@@ -79,7 +100,7 @@ struct AppearanceSettingsView: View {
           )
           .help("When disabled, all Shelf spines use the selected Neutral or System Tint style.")
           Text(shelfSpineTintFootnote)
-            .font(.callout)
+            .interfaceFont(.callout)
             .foregroundStyle(.secondary)
         }
         Section("Repository Icons") {
@@ -93,7 +114,7 @@ struct AppearanceSettingsView: View {
               + "you picked, and turning it off leaves already detected icons unchanged."
           )
           .foregroundStyle(.secondary)
-          .font(.callout)
+          .interfaceFont(.callout)
         }
         Section("Splits") {
           Toggle(
@@ -118,7 +139,7 @@ struct AppearanceSettingsView: View {
           .help("How cards are arranged the first time you open Canvas for a set of cards.")
           Text(store.canvasDefaultLayout.settingsDescription)
             .foregroundStyle(.secondary)
-            .font(.callout)
+            .interfaceFont(.callout)
         }
         Section("Default Editor") {
           Toggle(
@@ -155,7 +176,7 @@ struct AppearanceSettingsView: View {
           }
           .help("Choose what opens when you click a diff badge or run Show Diff.")
           Text("Tools not installed on this Mac appear disabled.")
-            .font(.callout)
+            .interfaceFont(.callout)
             .foregroundStyle(.secondary)
           if store.externalDiffToolID == ExternalDiffTool.custom.settingsID {
             TextField(

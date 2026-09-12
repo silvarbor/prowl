@@ -39,7 +39,7 @@ struct WorkflowHistoryStepRow: View {
         ForEach(Array(group.attempts.enumerated()), id: \.offset) { index, attempt in
           if group.attempts.count > 1 {
             if index == group.attempts.count - 1 {
-              Text("\(group.attemptLabel) \(index + 1)").font(.caption).foregroundStyle(.secondary)
+              Text("\(group.attemptLabel) \(index + 1)").interfaceFont(.caption).foregroundStyle(.secondary)
               attemptContent(attempt)
             } else {
               DisclosureGroup(
@@ -53,7 +53,7 @@ struct WorkflowHistoryStepRow: View {
           }
         }
       }
-      .font(.callout)
+      .interfaceFont(.callout)
       .frame(maxWidth: .infinity, alignment: .leading)
     } label: {
       HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -61,15 +61,15 @@ struct WorkflowHistoryStepRow: View {
         VStack(alignment: .leading, spacing: 3) {
           Text(group.title).lineLimit(2)
           if !group.contextLabel.isEmpty {
-            Text(group.contextLabel).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            Text(group.contextLabel).interfaceFont(.caption).foregroundStyle(.secondary).lineLimit(2)
           }
         }
         Spacer(minLength: 8)
         Text(duration.map(WorkflowHistoryTiming.duration) ?? "—")
-          .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+          .interfaceFont(.caption).monospacedDigit().foregroundStyle(.secondary)
           .fixedSize()
           .help(duration == nil ? "No duration recorded" : "Recorded step duration, including retries")
-      }.font(.subheadline)
+      }.interfaceFont(.subheadline)
     }
     .disclosureGroupStyle(WorkflowHistoryDisclosureStyle())
     .onChange(of: expanded) { _, _ in onInteraction() }
@@ -81,7 +81,8 @@ struct WorkflowHistoryStepRow: View {
       updatedAt: attempt.state == .active ? updatedAt : nil, state: attempt.state.rawValue)
     if let error = attempt.error {
       HStack {
-        Text(attempt.state == .completed ? "Earlier issue" : "Error").font(.caption).foregroundStyle(.secondary)
+        Text(attempt.state == .completed ? "Earlier issue" : "Error").interfaceFont(.caption).foregroundStyle(
+          .secondary)
         Spacer()
         WorkflowHistoryIconButton(label: "Open full error", symbol: "arrow.up.forward.square") {
           onOutput(.openText(error, "error.txt"))
@@ -94,7 +95,7 @@ struct WorkflowHistoryStepRow: View {
     }
     if attempt.state == .skipped {
       Text(attempt.branchExcluded == true ? "This branch was not selected." : "This step was skipped.")
-        .font(.caption).foregroundStyle(.secondary)
+        .interfaceFont(.caption).foregroundStyle(.secondary)
     }
     WorkflowHistoryExecutionView(
       definition: group.definition, attempt: attempt,
@@ -104,7 +105,8 @@ struct WorkflowHistoryStepRow: View {
       ForEach(Array(submissions.enumerated()), id: \.offset) { index, submission in
         if index == submissions.count - 1 {
           if submissions.count > 1 || !submission.accepted {
-            Text("Submission \(index + 1) · \(submission.statusLabel)").font(.caption).foregroundStyle(.secondary)
+            Text("Submission \(index + 1) · \(submission.statusLabel)").interfaceFont(.caption).foregroundStyle(
+              .secondary)
           }
           ForEach(submission.issues, id: \.self) { Text($0).foregroundStyle(.orange).lineLimit(3) }
           WorkflowHistoryDeliveryView(
@@ -132,7 +134,7 @@ struct WorkflowHistoryStepRow: View {
       } label: {
         Label("Diagnostics", systemImage: "terminal")
       }
-      .font(.caption)
+      .interfaceFont(.caption)
       .foregroundStyle(.secondary)
       .menuStyle(.borderlessButton)
       .fixedSize()

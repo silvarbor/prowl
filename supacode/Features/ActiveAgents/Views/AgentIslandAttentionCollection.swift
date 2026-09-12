@@ -101,7 +101,7 @@ struct AgentIslandAttentionCollection: View {
 
   private func overflowBadge(count: Int) -> some View {
     Text("+\(count)")
-      .font(.caption2.weight(.bold).monospacedDigit())
+      .interfaceFont(.caption2, weight: .bold).monospacedDigit()
       .foregroundStyle(.white.opacity(0.9))
       .padding(.horizontal, 5)
       .padding(.vertical, 2)
@@ -138,22 +138,22 @@ struct AgentIslandAttentionCollection: View {
         )
         VStack(alignment: .leading, spacing: 1) {
           Text(presentation.agentName)
-            .font(.caption.weight(.semibold))
+            .interfaceFont(.caption, weight: .semibold)
             .foregroundStyle(.primary)
             .lineLimit(1)
           Text(presentation.statusLabel)
-            .font(.caption2.weight(.medium))
+            .interfaceFont(.caption2, weight: .medium)
             .foregroundStyle(entry.displayState.foregroundStyle)
             .lineLimit(1)
         }
         Spacer(minLength: 3)
         VStack(alignment: .trailing, spacing: 1) {
           Text(presentation.repositoryName)
-            .font(.caption.weight(.medium))
+            .interfaceFont(.caption, weight: .medium)
             .foregroundStyle(.secondary)
             .lineLimit(1)
           Text(presentation.subtitle)
-            .font(.caption2)
+            .interfaceFont(.caption2)
             .foregroundStyle(.tertiary)
             .lineLimit(1)
         }

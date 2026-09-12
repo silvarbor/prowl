@@ -145,7 +145,7 @@ struct ShortcutSettingsEditor: View {
         Color.clear
           .frame(width: ShortcutTableLayout.actionColumnWidth, height: 1)
       }
-      .font(.caption.weight(.semibold))
+      .interfaceFont(.caption, weight: .semibold)
       .foregroundStyle(.secondary)
       .padding(.horizontal, 16)
 
@@ -160,7 +160,7 @@ struct ShortcutSettingsEditor: View {
           } header: {
             HStack(alignment: .center, spacing: 8) {
               Text(group.title)
-                .font(.caption.weight(.semibold))
+                .interfaceFont(.caption, weight: .semibold)
                 .foregroundStyle(.secondary)
               Spacer(minLength: 0)
               if hasOverrides(in: group) {
@@ -168,7 +168,7 @@ struct ShortcutSettingsEditor: View {
                   resetOverrides(in: group)
                 }
                 .buttonStyle(.link)
-                .font(.caption)
+                .interfaceFont(.caption)
               }
             }
           }
@@ -239,7 +239,7 @@ struct ShortcutSettingsEditor: View {
             requestResetOverride(for: command.id)
           } label: {
             Image(systemName: "arrow.counterclockwise")
-              .font(.caption.weight(.semibold))
+              .interfaceFont(.caption, weight: .semibold)
               .foregroundStyle(.secondary)
               .accessibilityHidden(true)
           }
@@ -268,17 +268,17 @@ struct ShortcutSettingsEditor: View {
           .buttonStyle(.link)
           .help("Cancel recording")
         }
-        .font(.caption)
+        .interfaceFont(.caption)
         .foregroundStyle(.secondary)
       }
 
       if let invalid = invalidMessageByCommandID[command.id] {
         Text(invalid)
-          .font(.caption)
+          .interfaceFont(.caption)
           .foregroundStyle(.red)
       } else if let availabilityMessage {
         Text(availabilityMessage)
-          .font(.caption)
+          .interfaceFont(.caption)
           .foregroundStyle(.red)
       }
     }
@@ -304,13 +304,13 @@ struct ShortcutSettingsEditor: View {
       HStack(spacing: 6) {
         if isRecording {
           Image(systemName: "record.circle.fill")
-            .font(.caption)
+            .interfaceFont(.caption)
             .foregroundStyle(Color.accentColor)
             .accessibilityHidden(true)
         }
 
         Text(shortcutRecorderTitle(resolvedBinding: resolvedBinding, isRecording: isRecording))
-          .font(.body.monospaced())
+          .interfaceFont(.body, design: .monospaced)
           .lineLimit(1)
           .truncationMode(.tail)
           .frame(maxWidth: .infinity, alignment: .leading)
@@ -372,7 +372,7 @@ struct ShortcutSettingsEditor: View {
     if isUnavailable {
       return AnyView(
         Text("Unavailable")
-          .font(.caption2.monospaced())
+          .interfaceFont(.caption2, design: .monospaced)
           .lineLimit(1)
           .minimumScaleFactor(0.8)
           .frame(width: ShortcutTableLayout.statusChipWidth, height: ShortcutTableLayout.statusChipHeight)
@@ -400,7 +400,7 @@ struct ShortcutSettingsEditor: View {
     let title = resolvedBinding == nil ? "Disabled" : "Defined"
     return AnyView(
       Text(title)
-        .font(.caption2.monospaced())
+        .interfaceFont(.caption2, design: .monospaced)
         .lineLimit(1)
         .minimumScaleFactor(0.8)
         .frame(width: ShortcutTableLayout.statusChipWidth, height: ShortcutTableLayout.statusChipHeight)

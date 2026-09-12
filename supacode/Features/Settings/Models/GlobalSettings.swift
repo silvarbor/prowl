@@ -48,6 +48,8 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   var externalDiffToolID: String = ExternalDiffTool.builtIn.settingsID
   var externalDiffCustomCommand: String = ""
   var detectRepositoryIconsAutomatically: Bool = true
+  var minimumTextSize: MinimumTextSize = .system
+  var interfaceTextScale: InterfaceTextScale = .system
 
   static let `default` = GlobalSettings(
     appearanceMode: .dark,
@@ -244,6 +246,8 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     try container.encode(externalDiffToolID, forKey: .externalDiffToolID)
     try container.encode(externalDiffCustomCommand, forKey: .externalDiffCustomCommand)
     try container.encode(detectRepositoryIconsAutomatically, forKey: .detectRepositoryIconsAutomatically)
+    try container.encode(minimumTextSize, forKey: .minimumTextSize)
+    try container.encode(interfaceTextScale, forKey: .interfaceTextScale)
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -296,12 +300,17 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     case externalDiffToolID
     case externalDiffCustomCommand
     case detectRepositoryIconsAutomatically
+    case minimumTextSize
+    case interfaceTextScale
     // Legacy keys for migration
     case automaticallyArchiveMergedWorktrees
     case notificationSoundEnabled
     case deleteBranchOnDeleteWorktree
   }
 
+  // Upstream's decode sits exactly at the 100-line ceiling, so the one line
+  // the interface text settings add puts it over. Local-only branch.
+  // swiftlint:disable:next function_body_length
   init(from decoder: any Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     appearanceMode = try container.decode(AppearanceMode.self, forKey: .appearanceMode)
@@ -398,6 +407,7 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     detectRepositoryIconsAutomatically =
       try container.decodeIfPresent(Bool.self, forKey: .detectRepositoryIconsAutomatically)
       ?? true
+    (minimumTextSize, interfaceTextScale) = try Self.decodeInterfaceTextSettings(from: container)
     let toolbarAndDock = try Self.decodeToolbarAndDockSettings(from: container)
     showRunButtonInToolbar = toolbarAndDock.showRunButtonInToolbar
     showDefaultEditorInToolbar = toolbarAndDock.showDefaultEditorInToolbar
@@ -542,6 +552,23 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     let showDefaultEditorInToolbar: Bool
     let dockBounceMode: DockBounceMode
     let showNotificationDotOnDock: Bool
+  }
+
+  /// Raw-string decode so a settings file written by a newer build with an
+  /// unknown size or scale falls back to the default instead of failing
+  /// wholesale.
+  private static func decodeInterfaceTextSettings(
+    from container: KeyedDecodingContainer<CodingKeys>
+  ) throws -> (MinimumTextSize, InterfaceTextScale) {
+    let minimum =
+      (try container.decodeIfPresent(String.self, forKey: .minimumTextSize))
+      .flatMap(MinimumTextSize.init(rawValue:))
+      ?? Self.default.minimumTextSize
+    let scale =
+      (try container.decodeIfPresent(String.self, forKey: .interfaceTextScale))
+      .flatMap(InterfaceTextScale.init(rawValue:))
+      ?? Self.default.interfaceTextScale
+    return (minimum, scale)
   }
 
   private static func decodeToolbarAndDockSettings(

@@ -71,7 +71,7 @@ private struct WorkflowStartCard: View {
           }
           if let error = store.submissionError {
             Label(error, systemImage: "exclamationmark.triangle.fill")
-              .font(.callout)
+              .interfaceFont(.callout)
               .foregroundStyle(.red)
               .fixedSize(horizontal: false, vertical: true)
           }
@@ -106,17 +106,17 @@ private struct WorkflowStartCard: View {
       VStack(alignment: .leading, spacing: 3) {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
           Text(store.context.item.name)
-            .font(.headline)
+            .interfaceFont(.headline)
           Spacer(minLength: 8)
           Label(store.context.worktreeName, systemImage: "arrow.triangle.branch")
-            .font(.caption)
+            .interfaceFont(.caption)
             .foregroundStyle(.secondary)
             .lineLimit(1)
             .help("This run works in the \(store.context.worktreeName) worktree.")
         }
         if let description = store.context.item.workflowDescription, !description.isEmpty {
           Text(description)
-            .font(.subheadline)
+            .interfaceFont(.subheadline)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
         }
@@ -146,7 +146,7 @@ private struct WorkflowStartCard: View {
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
     }
-    .font(.callout)
+    .interfaceFont(.callout)
   }
 
   /// Prowl is not listening for `prowl`, so participants could not deliver; the reason names
@@ -159,7 +159,7 @@ private struct WorkflowStartCard: View {
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
     }
-    .font(.callout)
+    .interfaceFont(.callout)
   }
 
   private var bundleApprovalBanner: some View {
@@ -169,7 +169,7 @@ private struct WorkflowStartCard: View {
       Button("Review Bundle…") { store.send(.reviewBundleTapped) }
         .help("Inspect the bundle and approve this version; approval does not start the workflow")
     }
-    .font(.callout)
+    .interfaceFont(.callout)
   }
 
   // MARK: - Sections
@@ -182,7 +182,7 @@ private struct WorkflowStartCard: View {
 
   private func sectionHeader(_ title: String, help: String) -> some View {
     Text(title)
-      .font(.subheadline.weight(.semibold))
+      .interfaceFont(.subheadline, weight: .semibold)
       .foregroundStyle(.secondary)
       .help(help)
   }
@@ -234,7 +234,7 @@ private struct WorkflowStartCard: View {
         roleControl(role, required: required)
         if role.source == .current, store.selectedSourceIsBareShell, store.sourceRequiresAgent {
           Text("Choose a pane with a running agent.")
-            .font(.footnote)
+            .interfaceFont(.footnote)
             .foregroundStyle(.orange)
             .help("A step sends this role instructions, so its pane must host a detected agent.")
         }
@@ -244,13 +244,13 @@ private struct WorkflowStartCard: View {
               "No profile can run this role. Check its agent requirements and Settings → Agents → Profiles, "
                 + "then reopen this setup."
             )
-            .font(.footnote)
+            .interfaceFont(.footnote)
             .foregroundStyle(.orange)
             .fixedSize(horizontal: false, vertical: true)
           }
           if let note = launch.rejectedNote {
             Text(note)
-              .font(.footnote)
+              .interfaceFont(.footnote)
               .foregroundStyle(.secondary)
           }
           if store.state.canCreateSuggestion(for: role.name), store.creatingSuggestionForRole != role.name {
@@ -258,7 +258,7 @@ private struct WorkflowStartCard: View {
               store.send(.createSuggestionTapped(role: role.name))
             }
             .buttonStyle(.link)
-            .font(.callout)
+            .interfaceFont(.callout)
             .help("Create a profile from this workflow's suggested agent configuration.")
           }
           if store.creatingSuggestionForRole == role.name {
@@ -360,7 +360,7 @@ private struct WorkflowStartCard: View {
       TextField("Profile name", text: suggestionNameBinding)
       if let suggestion = role.suggestion {
         Text(suggestionSummary(suggestion))
-          .font(.footnote)
+          .interfaceFont(.footnote)
           .foregroundStyle(.secondary)
       }
       HStack {
@@ -432,11 +432,11 @@ private struct WorkflowStartCard: View {
   private func stepRow(_ step: WorkflowStartPlan.Step) -> some View {
     HStack(alignment: .firstTextBaseline, spacing: 8) {
       Text(step.number, format: .number)
-        .font(.callout.monospacedDigit())
+        .interfaceFont(.callout).monospacedDigit()
         .foregroundStyle(.secondary)
         .frame(width: 18, alignment: .trailing)
       Image(systemName: stepSymbol(step))
-        .font(.callout)
+        .interfaceFont(.callout)
         .foregroundStyle(.secondary)
         .frame(width: 16)
         .accessibilityHidden(true)
@@ -445,14 +445,14 @@ private struct WorkflowStartCard: View {
         .truncationMode(.tail)
       if step.context != .always {
         Image(systemName: step.context == .conditional ? "arrow.triangle.branch" : "repeat")
-          .font(.caption)
+          .interfaceFont(.caption)
           .foregroundStyle(.tertiary)
           .accessibilityLabel(step.context == .conditional ? "Conditional" : "Repeats")
       }
       Spacer(minLength: 8)
       if let role = step.roleTitle {
         Text(role)
-          .font(.callout)
+          .interfaceFont(.callout)
           .foregroundStyle(.secondary)
       }
     }

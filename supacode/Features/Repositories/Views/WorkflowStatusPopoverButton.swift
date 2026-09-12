@@ -25,7 +25,7 @@ struct WorkflowStatusPopoverButton: View {
             .lineLimit(1)
           if presentation.activeRunCount > 1 {
             Text(presentation.activeRunCount, format: .number)
-              .font(.caption2.monospacedDigit())
+              .interfaceFont(.caption2).monospacedDigit()
               .padding(.horizontal, 5)
               .padding(.vertical, 1)
               .background(.quaternary, in: Capsule())
@@ -35,7 +35,7 @@ struct WorkflowStatusPopoverButton: View {
       }
     }
     .buttonStyle(.plain)
-    .font(.caption)
+    .interfaceFont(.caption)
     .contentShape(.rect)
     .help("Workflow status. Hover to preview or click to keep the run panel open.")
     .accessibilityLabel(accessibilityLabel)

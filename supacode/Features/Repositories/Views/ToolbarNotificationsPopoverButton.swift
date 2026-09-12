@@ -26,7 +26,8 @@ struct ToolbarNotificationsPopoverButton: View {
           .accessibilityHidden(true)
         if notificationCount > 0 {
           Text(notificationCount, format: .number)
-            .font(.caption.monospacedDigit())
+            .interfaceFont(.caption)
+            .monospacedDigit()
         }
       }
     }

@@ -46,7 +46,7 @@ struct WorkflowHistoryDisclosureStyle: DisclosureGroupStyle {
       } label: {
         HStack(spacing: 8) {
           Image(systemName: configuration.isExpanded ? "chevron.down" : "chevron.right")
-            .font(.caption2.weight(.semibold))
+            .interfaceFont(.caption2, weight: .semibold)
             .foregroundStyle(.secondary)
             .frame(width: 10)
             .accessibilityHidden(true)

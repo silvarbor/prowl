@@ -59,7 +59,7 @@ struct AgentIslandRosterContent: View {
                 repositoryColor: repositoryColor(for: entry),
                 isDimmed: isDimmed(entry)
               )
-              ShortcutHintView(text: "\(visibleIndex + 1)", color: .secondary, font: .caption)
+              ShortcutHintView(text: "\(visibleIndex + 1)", color: .secondary, style: .caption)
                 .monospaced()
                 .padding(.trailing, 10)
             }
@@ -104,7 +104,7 @@ struct AgentIslandRosterContent: View {
           .disabled(layout.pageIndex == 0)
 
           Text("\(layout.pageIndex + 1) / \(layout.pageCount)")
-            .font(.caption.monospacedDigit())
+            .interfaceFont(.caption).monospacedDigit()
             .foregroundStyle(.secondary)
 
           Button {
@@ -155,7 +155,7 @@ struct AgentIslandRosterContent: View {
         }
       }
       Text(action)
-        .font(.caption2)
+        .interfaceFont(.caption2)
         .foregroundStyle(.secondary)
     }
   }

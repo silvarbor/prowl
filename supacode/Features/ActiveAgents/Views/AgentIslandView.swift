@@ -263,7 +263,7 @@ struct AgentIslandView: View {
   private var floatingDragHandle: some View {
     ZStack {
       Image(systemName: "line.3.horizontal")
-        .font(.caption2.weight(.semibold))
+        .interfaceFont(.caption2, weight: .semibold)
         .foregroundStyle(.secondary)
       AgentIslandDragCaptureView { event in
         switch event {
@@ -311,7 +311,7 @@ struct AgentIslandView: View {
 
   private var compactChevron: some View {
     Image(systemName: agentsStore.isIslandRosterExpanded ? "chevron.up" : "chevron.down")
-      .font(.caption2.weight(.bold))
+      .interfaceFont(.caption2, weight: .bold)
       .foregroundStyle(.secondary)
       .accessibilityHidden(true)
   }
@@ -363,7 +363,7 @@ struct AgentIslandView: View {
     VStack(spacing: 0) {
       HStack {
         Text("Active Agents")
-          .font(.headline)
+          .interfaceFont(.headline)
         Spacer()
         Button {
           agentsStore.send(.islandOpenProwlTapped)

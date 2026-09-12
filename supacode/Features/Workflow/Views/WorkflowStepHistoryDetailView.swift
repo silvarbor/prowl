@@ -23,7 +23,7 @@ struct WorkflowStepHistoryDetailView: View {
       if !record.bindings.isEmpty { roles }
       if record.historyIsPartial == true {
         Text("Some control history was omitted after 10,000 records. Recorded outputs remain available.")
-          .font(.caption).foregroundStyle(.secondary)
+          .interfaceFont(.caption).foregroundStyle(.secondary)
       }
       Divider()
       ScrollView {
@@ -82,10 +82,10 @@ struct WorkflowStepHistoryDetailView: View {
   private var header: some View {
     VStack(alignment: .leading, spacing: 6) {
       HStack(alignment: .firstTextBaseline, spacing: 10) {
-        Text(record.run.workflowName).font(.headline).lineLimit(2)
+        Text(record.run.workflowName).interfaceFont(.headline).lineLimit(2)
         Spacer(minLength: 0)
         Text(WorkflowHistoryStatus.label(record.run.status.state))
-          .font(.subheadline).foregroundStyle(WorkflowHistoryStatus.tint(record.run.status.state))
+          .interfaceFont(.subheadline).foregroundStyle(WorkflowHistoryStatus.tint(record.run.status.state))
           .fixedSize()
       }
       if record.run.status.isTerminal {
@@ -100,7 +100,7 @@ struct WorkflowStepHistoryDetailView: View {
     let duration = WorkflowHistoryTiming.duration(date.timeIntervalSince(record.run.startedAt))
     let elapsed = record.run.status.isTerminal ? "Finished in \(duration)" : "Running for \(duration)"
     return Label("\(WorkflowHistoryTiming.timestamp(record.run.startedAt)) · \(elapsed)", systemImage: "clock")
-      .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+      .interfaceFont(.caption).monospacedDigit().foregroundStyle(.secondary)
       .lineLimit(1)
       .help("Started \(WorkflowHistoryTiming.timestamp(record.run.startedAt)) · \(elapsed)")
   }
@@ -117,7 +117,7 @@ struct WorkflowStepHistoryDetailView: View {
           }
         }
       }
-      .font(.caption)
+      .interfaceFont(.caption)
     }.scrollIndicators(.never)
   }
 
@@ -125,7 +125,7 @@ struct WorkflowStepHistoryDetailView: View {
     let presentation = WorkflowRunPresentation(run: run, now: Date())
     return VStack(alignment: .leading, spacing: 8) {
       if let attention = run.status.attention {
-        Text(attention.message).font(.callout).foregroundStyle(.orange).lineLimit(4)
+        Text(attention.message).interfaceFont(.callout).foregroundStyle(.orange).lineLimit(4)
       }
       ViewThatFits {
         controls(presentation, run: run)

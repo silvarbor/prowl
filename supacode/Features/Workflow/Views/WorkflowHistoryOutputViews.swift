@@ -10,7 +10,7 @@ struct WorkflowHistoryJSONView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
       HStack {
-        Text(title).font(.caption).foregroundStyle(.secondary)
+        Text(title).interfaceFont(.caption).foregroundStyle(.secondary)
         Spacer()
         WorkflowHistoryIconButton(label: "Open full JSON \(title.lowercased())", symbol: "arrow.up.forward.square") {
           onOutput(.openJSON(values))
@@ -25,7 +25,7 @@ struct WorkflowHistoryJSONView: View {
       }
       if values.count > 32 { Text("\(values.count - 32) more fields in full output").foregroundStyle(.secondary) }
     }
-    .font(.caption)
+    .interfaceFont(.caption)
   }
 }
 
@@ -44,7 +44,7 @@ private struct WorkflowHistoryOutputFieldView: View {
           } label: {
             HStack(spacing: 6) {
               Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                .font(.caption2).frame(width: 10).accessibilityHidden(true)
+                .interfaceFont(.caption2).frame(width: 10).accessibilityHidden(true)
               valueRow
             }.contentShape(.rect)
           }
@@ -92,7 +92,7 @@ private struct WorkflowHistoryOutputFieldView: View {
         .textSelection(.enabled)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .font(.caption.monospaced())
+    .interfaceFont(.caption, design: .monospaced)
     .lineLimit(1)
     .truncationMode(.middle)
   }
@@ -129,8 +129,8 @@ struct WorkflowHistoryTextFileView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
       HStack {
-        Text(label).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-        if let verdict { Text(verdict).font(.caption.weight(.medium)).lineLimit(1) }
+        Text(label).interfaceFont(.caption).foregroundStyle(.secondary).lineLimit(1)
+        if let verdict { Text(verdict).interfaceFont(.caption, weight: .medium).lineLimit(1) }
         Spacer(minLength: 8)
         HStack(spacing: 8) {
           WorkflowHistoryIconButton(label: "Open full \(contentName)", symbol: "arrow.up.forward.square") {

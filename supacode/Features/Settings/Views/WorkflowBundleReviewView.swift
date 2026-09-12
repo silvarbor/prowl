@@ -12,8 +12,8 @@ struct WorkflowBundleReviewView: View {
   var body: some View {
     if let review {
       VStack(alignment: .leading, spacing: 16) {
-        Text("Review Workflow Bundle").font(.title2.bold())
-        Text(review.snapshot.source.path).font(.callout.monospaced()).textSelection(.enabled)
+        Text("Review Workflow Bundle").interfaceFont(.title2, weight: .bold)
+        Text(review.snapshot.source.path).interfaceFont(.callout, design: .monospaced).textSelection(.enabled)
         Text(
           """
           Scripts can read and change files, use the network, and run programs with your permissions.
@@ -23,7 +23,7 @@ struct WorkflowBundleReviewView: View {
         .fixedSize(horizontal: false, vertical: true)
         ForEach(review.scripts, id: \.id) { script in
           LabeledContent(script.name, value: "\(script.interpreter) · actions/\(script.id)/\(script.entrypoint)")
-            .font(.callout)
+            .interfaceFont(.callout)
         }
         if !review.changes.isEmpty {
           Text("\(review.changes.count) file change(s). Previous approval does not cover this version.")
@@ -47,7 +47,7 @@ struct WorkflowBundleReviewView: View {
           }
           .frame(minWidth: 180, idealWidth: 220)
           ScrollView([.horizontal, .vertical]) {
-            Text(review.preview).font(.body.monospaced()).textSelection(.enabled)
+            Text(review.preview).interfaceFont(.body, design: .monospaced).textSelection(.enabled)
               .frame(maxWidth: .infinity, alignment: .topLeading).padding(8)
           }
           .frame(minWidth: 340)

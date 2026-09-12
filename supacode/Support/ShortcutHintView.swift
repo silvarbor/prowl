@@ -3,17 +3,17 @@ import SwiftUI
 struct ShortcutHintView: View {
   let text: String
   let color: Color
-  let font: Font
+  let style: Font.TextStyle
 
-  init(text: String, color: Color, font: Font = .caption2) {
+  init(text: String, color: Color, style: Font.TextStyle = .caption2) {
     self.text = text
     self.color = color
-    self.font = font
+    self.style = style
   }
 
   var body: some View {
     Text(text)
-      .font(font)
+      .interfaceFont(style)
       .lineLimit(1)
       .fixedSize(horizontal: true, vertical: false)
       .foregroundStyle(color)

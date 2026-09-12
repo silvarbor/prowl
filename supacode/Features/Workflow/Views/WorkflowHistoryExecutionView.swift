@@ -20,7 +20,7 @@ struct WorkflowHistoryExecutionView: View {
             role: invocation.role, binding: target, livePaneIDs: livePaneIDs, showsName: true, onFocus: onFocus)
         }
         if let status = WorkflowHistoryExecution.agentStatus(invocation) {
-          Text(status).font(.caption).foregroundStyle(.secondary)
+          Text(status).interfaceFont(.caption).foregroundStyle(.secondary)
         }
         if let directory, let url = WorkflowHistoryExecution.promptURL(invocation, directory: directory) {
           WorkflowHistoryTextFileView(
@@ -28,7 +28,7 @@ struct WorkflowHistoryExecutionView: View {
         }
       }
       if let action = definition.actionID {
-        LabeledContent("Action", value: action).font(.caption).textSelection(.enabled)
+        LabeledContent("Action", value: action).interfaceFont(.caption).textSelection(.enabled)
         if let directory, let execution = WorkflowHistoryTiming.diagnosticDirectory(attempt, directory: directory) {
           WorkflowHistoryActionInputView(
             directory: execution, worktree: worktree, onOutput: onOutput, revision: revision)
@@ -36,10 +36,10 @@ struct WorkflowHistoryExecutionView: View {
       }
       if let summary = attempt.summary {
         if definition.kind == "notify" {
-          Text("Sent to Prowl Notifications").font(.caption).foregroundStyle(.secondary)
+          Text("Sent to Prowl Notifications").interfaceFont(.caption).foregroundStyle(.secondary)
           WorkflowHistoryInlineTextView(text: summary, name: "notification", onOutput: onOutput)
         } else {
-          Text(summary).font(.caption).textSelection(.enabled)
+          Text(summary).interfaceFont(.caption).textSelection(.enabled)
         }
       }
     }
@@ -74,7 +74,7 @@ struct WorkflowHistoryRoleView: View {
       } else if presentation.agent == nil {
         Text("Not bound").foregroundStyle(.secondary)
       }
-    }.font(.caption)
+    }.interfaceFont(.caption)
   }
 }
 
@@ -91,7 +91,8 @@ private struct WorkflowHistoryActionInputView: View {
       if let inputs {
         WorkflowHistoryJSONView(values: inputs, worktree: worktree, onOutput: onOutput, title: "Input")
       } else {
-        Text(unavailable ? "No saved action input." : "Loading input…").font(.caption).foregroundStyle(.secondary)
+        Text(unavailable ? "No saved action input." : "Loading input…").interfaceFont(.caption).foregroundStyle(
+          .secondary)
       }
     }
     .task(id: WorkflowHistoryFileLoadKey(url: directory, revision: revision)) {

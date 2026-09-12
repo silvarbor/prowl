@@ -82,7 +82,7 @@ struct AgentIslandSettingsSection: View {
         commandID: AppShortcuts.CommandID.toggleAgentIsland
       )
       Text(ShortcutSettingsEditor.globalShortcutHelp)
-        .font(.callout)
+        .interfaceFont(.callout)
         .foregroundStyle(.secondary)
 
       LabeledContent {

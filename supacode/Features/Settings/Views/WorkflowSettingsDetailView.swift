@@ -66,7 +66,7 @@ struct WorkflowSettingsDetailView: View {
           .frame(width: 30, height: 30)
         VStack(alignment: .leading, spacing: 4) {
           Text(row.name)
-            .font(.headline)
+            .interfaceFont(.headline)
           if let description = row.description, !description.isEmpty {
             Text(description)
               .foregroundStyle(.secondary)
@@ -80,7 +80,7 @@ struct WorkflowSettingsDetailView: View {
       if let workflowID = row.workflowID {
         LabeledContent("ID") {
           Text(workflowID)
-            .font(.body.monospaced())
+            .interfaceFont(.body, design: .monospaced)
             .textSelection(.enabled)
         }
       }
@@ -144,7 +144,7 @@ struct WorkflowSettingsDetailView: View {
 
       if !canRun(row), let reason = unavailableRunReason(row) {
         Text(reason)
-          .font(.callout)
+          .interfaceFont(.callout)
           .foregroundStyle(.secondary)
       }
     }
@@ -157,15 +157,15 @@ struct WorkflowSettingsDetailView: View {
         VStack(alignment: .leading, spacing: 8) {
           HStack(alignment: .firstTextBaseline) {
             Text(role.name)
-              .font(.body.monospaced())
+              .interfaceFont(.body, design: .monospaced)
             Spacer()
             Text(sourceLabel(role.source))
-              .font(.callout)
+              .interfaceFont(.callout)
               .foregroundStyle(.secondary)
               .help(sourceHelp(role.source))
           }
           Text(role.behaviorDescription)
-            .font(.callout)
+            .interfaceFont(.callout)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
 
@@ -241,7 +241,7 @@ struct WorkflowSettingsDetailView: View {
       )
 
       Text(runSetupDescription(row))
-        .font(.callout)
+        .interfaceFont(.callout)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
     } header: {
@@ -282,7 +282,7 @@ struct WorkflowSettingsDetailView: View {
                 }
                 Text(diagnostic.code)
               }
-              .font(.caption.monospaced())
+              .interfaceFont(.caption, design: .monospaced)
               .foregroundStyle(.secondary)
             }
           }
@@ -316,7 +316,7 @@ struct WorkflowSettingsDetailView: View {
 
         if row.scope == .bundle {
           Text("Built-in · Read Only")
-            .font(.callout)
+            .interfaceFont(.callout)
             .foregroundStyle(.secondary)
         } else {
           Button("Delete Workflow…", role: .destructive) {
@@ -327,7 +327,7 @@ struct WorkflowSettingsDetailView: View {
       }
 
       Text(abbreviated(row.url))
-        .font(.callout.monospaced())
+        .interfaceFont(.callout, design: .monospaced)
         .foregroundStyle(.secondary)
         .textSelection(.enabled)
         .lineLimit(2)

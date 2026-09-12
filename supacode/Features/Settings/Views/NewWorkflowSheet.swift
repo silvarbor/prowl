@@ -58,19 +58,19 @@ struct NewWorkflowSheet: View {
             .help("Shown in the Command Palette, the Agents menu, and Workflow History")
           LabeledContent("ID") {
             TextField("ID", text: idBinding, prompt: Text("daily-check"))
-              .font(.body.monospaced())
+              .interfaceFont(.body, design: .monospaced)
               .labelsHidden()
               .help("Lowercase slug used by `prowl workflow run` and as the bundle folder name")
           }
           Text(idCaption)
-            .font(.caption)
+            .interfaceFont(.caption)
             .foregroundStyle(showsProblem ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
             .fixedSize(horizontal: false, vertical: true)
         }
       }
     } header: {
       Text("New Workflow")
-        .font(.headline)
+        .interfaceFont(.headline)
     }
   }
 
@@ -111,22 +111,22 @@ struct NewWorkflowSheet: View {
       HStack(alignment: .top, spacing: 12) {
         Image(systemName: selected ? "checkmark.circle.fill" : "circle")
           .foregroundStyle(selected ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.tertiary))
-          .font(.title3)
+          .interfaceFont(.title3)
           .accessibilityHidden(true)
         Image(systemName: kind.symbol)
-          .font(.title3)
+          .interfaceFont(.title3)
           .foregroundStyle(.secondary)
           .frame(width: 24)
           .accessibilityHidden(true)
         VStack(alignment: .leading, spacing: 3) {
           Text(kind.title)
-            .font(.body.weight(.medium))
+            .interfaceFont(.body, weight: .medium)
           Text(kind.summary)
-            .font(.callout)
+            .interfaceFont(.callout)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
           Text(kind.starterDescription)
-            .font(.caption)
+            .interfaceFont(.caption)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
         }

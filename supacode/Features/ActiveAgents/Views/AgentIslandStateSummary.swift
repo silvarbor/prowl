@@ -62,9 +62,9 @@ struct AgentIslandStateSummaryView: View {
       ForEach(summary.items) { item in
         HStack(spacing: size == .compact ? 2 : 3) {
           Image(systemName: item.state.islandSymbolName)
-            .font(size == .compact ? .caption2.weight(.bold) : .caption.weight(.bold))
+            .interfaceFont(size == .compact ? .caption2 : .caption, weight: .bold)
           Text("\(item.count)")
-            .font(size == .compact ? .caption.weight(.semibold) : .callout.weight(.semibold))
+            .interfaceFont(size == .compact ? .caption : .callout, weight: .semibold)
             .monospacedDigit()
         }
         .foregroundStyle(item.state.foregroundStyle)

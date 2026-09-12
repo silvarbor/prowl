@@ -32,7 +32,7 @@ struct ToolbarStatusView: View {
           ProgressView()
             .controlSize(.small)
           Text(message)
-            .font(.footnote)
+            .interfaceFont(.footnote)
             .foregroundStyle(.secondary)
         }
         .transition(.opacity)
@@ -42,7 +42,7 @@ struct ToolbarStatusView: View {
             .foregroundStyle(.green)
             .accessibilityHidden(true)
           Text(message)
-            .font(.footnote)
+            .interfaceFont(.footnote)
             .foregroundStyle(.secondary)
         }
         .transition(.opacity)
@@ -52,7 +52,7 @@ struct ToolbarStatusView: View {
             .foregroundStyle(.orange)
             .accessibilityHidden(true)
           Text(message)
-            .font(.footnote)
+            .interfaceFont(.footnote)
             .foregroundStyle(.secondary)
         }
         .transition(.opacity)
@@ -115,11 +115,10 @@ private struct MotivationalStatusView: View {
       HStack(spacing: 8) {
         Image(systemName: style.icon)
           .foregroundStyle(style.color)
-          .font(.callout)
+          .interfaceFont(.callout)
           .accessibilityHidden(true)
         Text("\(context.date, format: .dateTime.hour().minute()) – \(commandPaletteHint)")
-          .font(.footnote)
-          .monospaced()
+          .interfaceFont(.footnote, design: .monospaced)
           .foregroundStyle(.secondary)
       }
     }

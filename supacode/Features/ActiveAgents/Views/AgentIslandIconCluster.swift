@@ -61,7 +61,7 @@ struct AgentIslandIconCluster: View {
 
       if projection.overflowCount > 0 {
         Text("+\(projection.overflowCount)")
-          .font(.system(size: 8, weight: .bold, design: .rounded))
+          .fixedInterfaceFont(.system(size: 8, weight: .bold, design: .rounded))
           .foregroundStyle(.white.opacity(0.82))
           .padding(.horizontal, 2)
           .background(.black.opacity(0.92), in: Capsule())
@@ -142,7 +142,7 @@ struct AgentIslandRuntimeIcon: View {
           TabIconImage(rawName: source.storageString, pointSize: pointSize - 5)
         } else {
           Image(systemName: "sparkle")
-            .font(.system(size: pointSize * 0.56, weight: .semibold))
+            .fixedInterfaceFont(.system(size: pointSize * 0.56, weight: .semibold))
             .accessibilityHidden(true)
         }
       }
