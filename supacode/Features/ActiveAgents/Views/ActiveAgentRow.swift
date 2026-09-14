@@ -139,6 +139,14 @@ struct BaguaWorkingIndicator: View {
     return cycleIndex < frames.count ? cycleIndex : cycleLength - cycleIndex
   }
 
+  /// Key times for a discrete keyframe animation over `cycleFrames`. Core
+  /// Animation wants one more entry than there are values, running 0 to 1, so
+  /// that each glyph holds for exactly `frameDuration`; without them it spreads
+  /// N values over N - 1 intervals and the last glyph never shows.
+  static var cycleKeyTimes: [NSNumber] {
+    (0...cycleLength).map { NSNumber(value: Double($0) / Double(cycleLength)) }
+  }
+
   /// How far into the current cycle wall-clock time sits, used to start the
   /// layer animation in phase with every other spinner.
   static func cycleOffset(at date: Date) -> TimeInterval {
@@ -227,6 +235,7 @@ private final class BaguaIndicatorNSView: NSView {
     }
     let animation = CAKeyframeAnimation(keyPath: "contents")
     animation.values = images
+    animation.keyTimes = BaguaWorkingIndicator.cycleKeyTimes
     animation.calculationMode = .discrete
     animation.duration = BaguaWorkingIndicator.cycleDuration
     animation.repeatCount = .infinity
