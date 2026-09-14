@@ -34,6 +34,20 @@ struct BaguaWorkingIndicatorTests {
     #expect(BaguaWorkingIndicator.cycleFrames.last == "☱")
   }
 
+  @Test func cycleKeyTimesGiveEveryFrameOneFrameDuration() {
+    // Discrete keyframes want N + 1 key times from 0 to 1. With N, Core
+    // Animation spreads the values over N - 1 intervals and drops the last one.
+    let keyTimes = BaguaWorkingIndicator.cycleKeyTimes.map(\.doubleValue)
+    let length = BaguaWorkingIndicator.cycleLength
+    #expect(keyTimes.count == length + 1)
+    #expect(keyTimes.first == 0)
+    #expect(keyTimes.last == 1)
+    for index in 0..<length {
+      let interval = keyTimes[index + 1] - keyTimes[index]
+      #expect(abs(interval - 1.0 / Double(length)) < 1e-9)
+    }
+  }
+
   @Test func cycleOffsetTracksPositionWithinTheCycle() {
     let duration = BaguaWorkingIndicator.frameDuration
     let cycle = BaguaWorkingIndicator.cycleDuration
