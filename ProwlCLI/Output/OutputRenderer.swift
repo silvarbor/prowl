@@ -32,7 +32,7 @@ enum OutputRenderer {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     if let data = try? encoder.encode(response),
-       let jsonString = String(data: data, encoding: .utf8)
+      let jsonString = String(data: data, encoding: .utf8)
     {
       print(jsonString)
     }
@@ -43,40 +43,40 @@ enum OutputRenderer {
   private static func renderText(_ response: CommandResponse) {
     if response.ok {
       if response.command == "list",
-         let data = response.data,
-         let payload = try? data.decode(as: ListCommandPayload.self)
+        let data = response.data,
+        let payload = try? data.decode(as: ListCommandPayload.self)
       {
         print(renderList(payload))
         return
       }
 
       if response.command == "send",
-         let data = response.data,
-         let payload = try? data.decode(as: SendCommandPayload.self)
+        let data = response.data,
+        let payload = try? data.decode(as: SendCommandPayload.self)
       {
         print(renderSend(payload))
         return
       }
 
       if response.command == "agents",
-         let data = response.data,
-         let payload = try? data.decode(as: AgentsCommandPayload.self)
+        let data = response.data,
+        let payload = try? data.decode(as: AgentsCommandPayload.self)
       {
         print(renderAgents(payload))
         return
       }
 
       if response.command == "agents.read",
-         let data = response.data,
-         let payload = try? data.decode(as: AgentReadCommandPayload.self)
+        let data = response.data,
+        let payload = try? data.decode(as: AgentReadCommandPayload.self)
       {
         renderAgentsRead(payload)
         return
       }
 
       if response.command == "agents.signal",
-         let data = response.data,
-         let payload = try? data.decode(as: AgentSignalCommandPayload.self)
+        let data = response.data,
+        let payload = try? data.decode(as: AgentSignalCommandPayload.self)
       {
         print(agentSignalText(payload))
         for line in agentSignalWarningLines(payload) {
@@ -86,88 +86,88 @@ enum OutputRenderer {
       }
 
       if response.command == "agents.dispatch",
-         let data = response.data,
-         let payload = try? data.decode(as: AgentDispatchCommandPayload.self)
+        let data = response.data,
+        let payload = try? data.decode(as: AgentDispatchCommandPayload.self)
       {
         print(dispatchText(payload))
         return
       }
 
       if response.command == "agents.dispatch-complete",
-         let data = response.data,
-         let payload = try? data.decode(as: DispatchCompleteCommandPayload.self)
+        let data = response.data,
+        let payload = try? data.decode(as: DispatchCompleteCommandPayload.self)
       {
         print(dispatchCompleteText(payload))
         return
       }
 
       if response.command == "agents.dispatch-abandon",
-         let data = response.data,
-         let payload = try? data.decode(as: DispatchAbandonCommandPayload.self)
+        let data = response.data,
+        let payload = try? data.decode(as: DispatchAbandonCommandPayload.self)
       {
         print(dispatchAbandonText(payload))
         return
       }
 
       if response.command == "agents.wait",
-         let data = response.data,
-         let payload = try? data.decode(as: AgentWaitCommandPayload.self)
+        let data = response.data,
+        let payload = try? data.decode(as: AgentWaitCommandPayload.self)
       {
         print(agentWaitText(payload))
         return
       }
 
       if response.command == "profiles",
-         let data = response.data,
-         let payload = try? data.decode(as: ProfilesCommandPayload.self)
+        let data = response.data,
+        let payload = try? data.decode(as: ProfilesCommandPayload.self)
       {
         print(renderProfiles(payload))
         return
       }
 
       if response.command == "skills",
-         let data = response.data,
-         let payload = try? data.decode(as: SkillsCommandPayload.self)
+        let data = response.data,
+        let payload = try? data.decode(as: SkillsCommandPayload.self)
       {
         renderSkills(payload)
         return
       }
 
       if response.command == "workflow",
-         let data = response.data,
-         let payload = try? data.decode(as: WorkflowCommandPayload.self)
+        let data = response.data,
+        let payload = try? data.decode(as: WorkflowCommandPayload.self)
       {
         renderWorkflow(payload)
         return
       }
 
       if response.command == "focus",
-         let data = response.data,
-         let payload = try? data.decode(as: FocusCommandPayload.self)
+        let data = response.data,
+        let payload = try? data.decode(as: FocusCommandPayload.self)
       {
         print(renderFocus(payload))
         return
       }
 
       if response.command == "key",
-         let data = response.data,
-         let payload = try? data.decode(as: KeyCommandPayload.self)
+        let data = response.data,
+        let payload = try? data.decode(as: KeyCommandPayload.self)
       {
         print(renderKey(payload))
         return
       }
 
       if response.command == "read",
-         let data = response.data,
-         let payload = try? data.decode(as: ReadCommandPayload.self)
+        let data = response.data,
+        let payload = try? data.decode(as: ReadCommandPayload.self)
       {
         print(renderRead(payload))
         return
       }
 
       if response.command == "create" || response.command == "close",
-         let data = response.data,
-         let payload = try? data.decode(as: LifecycleCommandPayload.self)
+        let data = response.data,
+        let payload = try? data.decode(as: LifecycleCommandPayload.self)
       {
         print(renderLifecycle(payload, command: response.command))
         renderLifecycleWarnings(payload)
@@ -175,16 +175,16 @@ enum OutputRenderer {
       }
 
       if response.command == "tab",
-         let data = response.data,
-         let payload = try? data.decode(as: TabCommandPayload.self)
+        let data = response.data,
+        let payload = try? data.decode(as: TabCommandPayload.self)
       {
         print(renderTab(payload))
         return
       }
 
       if response.command == "pane",
-         let data = response.data,
-         let payload = try? data.decode(as: PaneCommandPayload.self)
+        let data = response.data,
+        let payload = try? data.decode(as: PaneCommandPayload.self)
       {
         print(renderPane(payload))
         return
@@ -586,7 +586,7 @@ enum OutputRenderer {
     var lines: [String] = []
     lines.append(
       "\(verb) \(projectName.cyan.bold)\(":".dim)\(wt.name) → \(tab.title.yellow)"
-      + "  \(tab.id.dim)"
+        + "  \(tab.id.dim)"
     )
     lines.append("  \("pane:".dim) \(pane.title.green)  \(pane.id.dim)")
     if let cwd = pane.cwd {
@@ -654,7 +654,7 @@ enum OutputRenderer {
     var lines: [String] = []
     lines.append(
       "\(verb) \(projectName.cyan.bold)\(":".dim)\(wt.name) → \(pane.title.green)"
-      + "  \(pane.id.dim)"
+        + "  \(pane.id.dim)"
     )
     if let cwd = pane.cwd {
       lines.append("  \("cwd:".dim) \(cwd)")
@@ -672,15 +672,15 @@ enum OutputRenderer {
 
     lines.append(
       "Sent to \(projectName.cyan.bold)\(":".dim)\(wt.name) → \(pane.title.green)"
-      + "  \(pane.id.dim)"
+        + "  \(pane.id.dim)"
     )
 
     let enterLabel = input.trailingEnterSent ? "yes".green : "no".dim
     lines.append(
       "  \("source:".dim) \(input.source)"
-      + "  \("chars:".dim) \(input.characters)"
-      + "  \("bytes:".dim) \(input.bytes)"
-      + "  \("enter:".dim) \(enterLabel)"
+        + "  \("chars:".dim) \(input.characters)"
+        + "  \("bytes:".dim) \(input.bytes)"
+        + "  \("enter:".dim) \(enterLabel)"
     )
 
     if let wait = payload.wait {
@@ -700,7 +700,7 @@ enum OutputRenderer {
       let truncLabel = capture.truncated ? " (truncated)".yellow : ""
       lines.append(
         "  \("capture:".dim) \(capture.lineCount) lines"
-        + " (\(capture.source.rawValue)\(truncLabel))"
+          + " (\(capture.source.rawValue)\(truncLabel))"
       )
       if !capture.text.isEmpty {
         lines.append("  \("--- output ---".dim)")
@@ -730,12 +730,12 @@ enum OutputRenderer {
     var lines: [String] = []
     lines.append(
       "Focused \(projectName.cyan.bold)\(":".dim)\(wt.name) → \(pane.title.green)"
-      + "  \(pane.id.dim)"
+        + "  \(pane.id.dim)"
     )
     lines.append(
       "  \("requested:".dim) \(payload.requested.selector.rawValue)=\(requestedValue)"
-      + "  \("resolved:".dim) \(payload.resolvedVia.rawValue)"
-      + "  \("front:".dim) \(frontLabel)"
+        + "  \("resolved:".dim) \(payload.resolvedVia.rawValue)"
+        + "  \("front:".dim) \(frontLabel)"
     )
     lines.append("  \("tab:".dim) \(tab.title)  \(tab.id.dim)")
     if let cwd = pane.cwd {
@@ -753,7 +753,7 @@ enum OutputRenderer {
 
     lines.append(
       "Key sent to \(projectName.cyan.bold)\(":".dim)\(wt.name) → \(pane.title.green)"
-      + "  \(pane.id.dim)"
+        + "  \(pane.id.dim)"
     )
 
     let categoryLabel = payload.key.category.rawValue
@@ -763,9 +763,9 @@ enum OutputRenderer {
       : "\(payload.delivery.delivered)".red.bold
     lines.append(
       "  \("token:".dim) \(payload.key.normalized)"
-      + "  \("category:".dim) \(categoryLabel)"
-      + "  \("repeat:".dim) \(payload.requested.repeat)"
-      + "  \("delivered:".dim) \(deliveredLabel)/\(payload.delivery.attempted)"
+        + "  \("category:".dim) \(categoryLabel)"
+        + "  \("repeat:".dim) \(payload.requested.repeat)"
+        + "  \("delivered:".dim) \(deliveredLabel)/\(payload.delivery.attempted)"
     )
 
     return lines.joined(separator: "\n")
@@ -787,22 +787,22 @@ enum OutputRenderer {
     var lines: [String] = []
     lines.append(
       "Read from \(projectName.cyan.bold)\(":".dim)\(wt.name) → \(pane.title.green)"
-      + "  \(pane.id.dim)"
+        + "  \(pane.id.dim)"
     )
     lines.append(
       "  \("mode:".dim) \(payload.mode.rawValue)"
-      + " (\(requestedLabel))"
-      + "  \("source:".dim) \(payload.source.rawValue)"
-      + "  \("truncated:".dim) \(truncatedLabel)"
-      + "  \("lines:".dim) \(payload.lineCount)"
+        + " (\(requestedLabel))"
+        + "  \("source:".dim) \(payload.source.rawValue)"
+        + "  \("truncated:".dim) \(truncatedLabel)"
+        + "  \("lines:".dim) \(payload.lineCount)"
     )
 
     if let stabilized = payload.stabilized {
       let stableLabel = stabilized ? "yes".green : "timed out".yellow
       lines.append(
         "  \("stable:".dim) \(stableLabel)"
-        + "  \("waited:".dim) \(formatDurationMs(payload.waitedMs ?? 0))"
-        + "  \("samples:".dim) \(payload.samples ?? 0)"
+          + "  \("waited:".dim) \(formatDurationMs(payload.waitedMs ?? 0))"
+          + "  \("samples:".dim) \(payload.samples ?? 0)"
       )
     }
 

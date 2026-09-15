@@ -1,4 +1,5 @@
 import Testing
+
 @testable import ProwlCLIShared
 @testable import prowl
 
@@ -25,7 +26,8 @@ struct WorkflowNamingTests {
 
   @Test func verdictDiagnosticsNameTheDeclarationKey() throws {
     for values in ["[clean]", "[clean, clean]"] {
-      let parsed = WorkflowDocumentParser.parse("""
+      let parsed = WorkflowDocumentParser.parse(
+        """
         schema: prowl.workflow/v1
         id: naming
         name: Naming
@@ -51,7 +53,8 @@ struct WorkflowNamingTests {
 
   @Test func retiredExpectationKeysAreRejected() {
     for fields in ["output: brief", "verdict: [ready, blocked]"] {
-      let parsed = WorkflowDocumentParser.parse("""
+      let parsed = WorkflowDocumentParser.parse(
+        """
         schema: prowl.workflow/v1
         id: naming
         name: Naming
@@ -71,7 +74,8 @@ struct WorkflowNamingTests {
       ("context.run.directory", false), ("context.source.pane_id", false),
       ("context.roles.author.name", false), ("context.roles.author.pane", false),
     ] {
-      let parsed = WorkflowDocumentParser.parse("""
+      let parsed = WorkflowDocumentParser.parse(
+        """
         schema: prowl.workflow/v1
         id: naming
         name: Naming
@@ -103,7 +107,8 @@ struct WorkflowNamingTests {
   }
 
   @Test func acceptsDeliveryAndPluralVerdictDeclaration() {
-    let parsed = WorkflowDocumentParser.parse("""
+    let parsed = WorkflowDocumentParser.parse(
+      """
       schema: prowl.workflow/v1
       id: naming
       name: Naming

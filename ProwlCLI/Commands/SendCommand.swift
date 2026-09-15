@@ -1,13 +1,14 @@
 // ProwlCLI/Commands/SendCommand.swift
 
-#if canImport(Darwin)
-import Darwin
-#elseif canImport(Glibc)
-import Glibc
-#endif
 import ArgumentParser
 import Foundation
 import ProwlCLIShared
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
 
 struct SendCommand: ParsableCommand {
   /// Check if stdin has readable data using poll(2) with zero timeout.
@@ -74,7 +75,7 @@ struct SendCommand: ParsableCommand {
 
       let sel = try selector.resolve(positionalTarget: positionalTarget)
 
-      if let timeout, (timeout < 1 || timeout > 300) {
+      if let timeout, timeout < 1 || timeout > 300 {
         throw ExitError(
           code: CLIErrorCode.invalidArgument,
           message: "Timeout must be between 1 and 300 seconds."
@@ -110,8 +111,8 @@ struct SendCommand: ParsableCommand {
         source = .argv
       } else if stdinIsPiped {
         guard let stdinData = try? FileHandle.standardInput.readToEnd(),
-              let stdinText = String(data: stdinData, encoding: .utf8),
-              !stdinText.isEmpty
+          let stdinText = String(data: stdinData, encoding: .utf8),
+          !stdinText.isEmpty
         else {
           throw ExitError(
             code: CLIErrorCode.emptyInput,
@@ -129,15 +130,16 @@ struct SendCommand: ParsableCommand {
 
       let envelope = CommandEnvelope(
         output: options.outputMode,
-        command: .send(SendInput(
-          selector: sel,
-          text: inputText,
-          trailingEnter: !noEnter,
-          source: source,
-          wait: !noWait,
-          timeoutSeconds: timeout,
-          captureOutput: capture
-        ))
+        command: .send(
+          SendInput(
+            selector: sel,
+            text: inputText,
+            trailingEnter: !noEnter,
+            source: source,
+            wait: !noWait,
+            timeoutSeconds: timeout,
+            captureOutput: capture
+          ))
       )
       try CLIRunner.execute(envelope)
     }

@@ -42,7 +42,8 @@ final class AgentReadOutputRendererTests: XCTestCase {
     AgentReadCommandPayload(
       outputMode: outputMode,
       target: ReadTarget(
-        worktree: ReadTargetWorktree(id: "/tmp/project", name: "main", path: "/tmp/project", rootPath: "/tmp/project", kind: "git"),
+        worktree: ReadTargetWorktree(
+          id: "/tmp/project", name: "main", path: "/tmp/project", rootPath: "/tmp/project", kind: "git"),
         tab: ReadTargetTab(id: "2FC00CF0-3974-4E1B-BEF8-7A08A8E3B7C0", title: "Agent", selected: true),
         pane: ReadTargetPane(id: "6E1A2A10-D99F-4E3F-920C-D93AA3C05764", title: "Claude", cwd: nil, focused: false)
       ),

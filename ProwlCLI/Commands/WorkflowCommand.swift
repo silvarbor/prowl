@@ -312,9 +312,9 @@ enum WorkflowCommandRunner {
   }
 }
 
-
 struct WorkflowTestActionCommand: ParsableCommand {
-  static let configuration = CommandConfiguration(commandName: "test-action",
+  static let configuration = CommandConfiguration(
+    commandName: "test-action",
     abstract: "Run one action from an installed workflow bundle with the same native approval policy.")
 
   @Argument(help: "Workflow id or unique name.") var workflow: String
@@ -330,9 +330,13 @@ struct WorkflowTestActionCommand: ParsableCommand {
     else { throw ValidationError("--input-json must be a JSON object of at most 16 MiB.") }
     try WorkflowJSON.validate(value)
     try WorkflowSocketCommand.execute(options: options) {
-      CommandEnvelope(output: options.outputMode, command: .workflow(WorkflowInput(action: .run,
-        target: try selector.resolve(positionalTarget: source), workflow: workflow,
-        testAction: action, actionInputs: inputs)))
+      CommandEnvelope(
+        output: options.outputMode,
+        command: .workflow(
+          WorkflowInput(
+            action: .run,
+            target: try selector.resolve(positionalTarget: source), workflow: workflow,
+            testAction: action, actionInputs: inputs)))
     }
   }
 }
@@ -350,8 +354,9 @@ struct WorkflowReadCommand: ParsableCommand {
     try WorkflowSocketCommand.execute(options: options) {
       CommandEnvelope(
         output: options.outputMode,
-        command: .workflow(WorkflowInput(
-          action: .read, invocation: invocation, contentOffset: offset, contentResource: resource, runID: runID)))
+        command: .workflow(
+          WorkflowInput(
+            action: .read, invocation: invocation, contentOffset: offset, contentResource: resource, runID: runID)))
     }
   }
 }

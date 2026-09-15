@@ -12,8 +12,9 @@ extension OutputRenderer {
       if content.encoding == "base64" { print("Encoding: base64 (use --json for byte-preserving transfer)") }
       print(content.body)
       if let next = content.nextOffset {
-        print("\nMore content: prowl workflow read \(content.resource) --run \(content.run) "
-          + "--invocation \(content.invocation) --offset \(next)")
+        print(
+          "\nMore content: prowl workflow read \(content.resource) --run \(content.run) "
+            + "--invocation \(content.invocation) --offset \(next)")
       }
       if !content.resources.isEmpty {
         print("\nAssigned resources:")

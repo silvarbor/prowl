@@ -9,7 +9,8 @@ final class WorkflowCommandExecutorTests: XCTestCase {
   private var home: URL!
 
   override func setUpWithError() throws {
-    root = FileManager.default.temporaryDirectory
+    root =
+      FileManager.default.temporaryDirectory
       .appending(path: "prowl-workflow-executor-\(UUID().uuidString)", directoryHint: .isDirectory)
       .standardizedFileURL
     home = root.appending(path: "home", directoryHint: .isDirectory)

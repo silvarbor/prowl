@@ -33,8 +33,10 @@ final class DispatchSchemaTests: XCTestCase {
   }
 
   func testSchemaAcceptsStrictDispatchSuccessAndWaitFailureFixtures() throws {
-    let completion = #"{"ok":true,"command":"agents.dispatch-complete","schema_version":"prowl.cli.agents.dispatch-complete.v1","data":{"target":{"worktree":{"id":"wt","name":"main","path":"/Projects/Prowl","root_path":"/Projects/Prowl","kind":"git"},"tab":{"id":"tab","title":"Tab","selected":true},"pane":{"id":"pane","title":"Pane","cwd":"/Projects/Prowl","focused":true}},"receipt":{"id":"d1","state":"completed","outcome":"succeeded","summary":"Done","created_at":"2026-08-23T02:00:00.000Z","completed_at":"2026-08-23T02:01:00.000Z"},"replayed":false}}"#
-    let timeout = #"{"ok":false,"command":"agents.wait","schema_version":"prowl.cli.agents.wait.v1","error":{"code":"WAIT_TIMEOUT","message":"Timed out.","details":{"mode":"dispatch","waited_ms":600000,"target":{"worktree":{"id":"wt","name":"main","path":"/Projects/Prowl","root_path":"/Projects/Prowl","kind":"git"},"tab":{"id":"tab","title":"Tab","selected":true},"pane":{"id":"pane","title":"Pane","cwd":"/Projects/Prowl","focused":true}},"record":{"id":"d1","state":"pending","created_at":"2026-08-23T02:00:00.000Z"},"screen":{"status":"unavailable","requested_lines":20,"source":"detection","waited_ms":0}}}}"#
+    let completion =
+      #"{"ok":true,"command":"agents.dispatch-complete","schema_version":"prowl.cli.agents.dispatch-complete.v1","data":{"target":{"worktree":{"id":"wt","name":"main","path":"/Projects/Prowl","root_path":"/Projects/Prowl","kind":"git"},"tab":{"id":"tab","title":"Tab","selected":true},"pane":{"id":"pane","title":"Pane","cwd":"/Projects/Prowl","focused":true}},"receipt":{"id":"d1","state":"completed","outcome":"succeeded","summary":"Done","created_at":"2026-08-23T02:00:00.000Z","completed_at":"2026-08-23T02:01:00.000Z"},"replayed":false}}"#
+    let timeout =
+      #"{"ok":false,"command":"agents.wait","schema_version":"prowl.cli.agents.wait.v1","error":{"code":"WAIT_TIMEOUT","message":"Timed out.","details":{"mode":"dispatch","waited_ms":600000,"target":{"worktree":{"id":"wt","name":"main","path":"/Projects/Prowl","root_path":"/Projects/Prowl","kind":"git"},"tab":{"id":"tab","title":"Tab","selected":true},"pane":{"id":"pane","title":"Pane","cwd":"/Projects/Prowl","focused":true}},"record":{"id":"d1","state":"pending","created_at":"2026-08-23T02:00:00.000Z"},"screen":{"status":"unavailable","requested_lines":20,"source":"detection","waited_ms":0}}}}"#
 
     try assertValid(completion)
     try assertValid(timeout)
@@ -44,19 +46,24 @@ final class DispatchSchemaTests: XCTestCase {
     let target =
       #"{"worktree":{"id":"wt","name":"main","path":"/Projects/Prowl","root_path":"/Projects/Prowl","kind":"git"},"tab":{"id":"tab","title":"Tab","selected":true},"pane":{"id":"pane","title":"Pane","cwd":"/Projects/Prowl","focused":true}}"#
     let success =
-      #"{"ok":true,"command":"agents.dispatch","schema_version":"prowl.cli.agents.dispatch.v1","data":{"target":"# + target
+      #"{"ok":true,"command":"agents.dispatch","schema_version":"prowl.cli.agents.dispatch.v1","data":{"target":"#
+      + target
       + #","dispatch":{"id":"d2","state":"pending","created_at":"2026-08-29T02:00:00.000Z"}}}"#
     let pending =
-      #"{"ok":false,"command":"agents.dispatch","schema_version":"prowl.cli.agents.dispatch.v1","error":{"code":"DISPATCH_PENDING","message":"Pending.","details":{"target":"# + target
+      #"{"ok":false,"command":"agents.dispatch","schema_version":"prowl.cli.agents.dispatch.v1","error":{"code":"DISPATCH_PENDING","message":"Pending.","details":{"target":"#
+      + target
       + #","record":{"id":"d1","state":"pending","created_at":"2026-08-29T02:00:00.000Z"}}}}"#
     let busy =
-      #"{"ok":false,"command":"agents.dispatch","schema_version":"prowl.cli.agents.dispatch.v1","error":{"code":"DISPATCH_TARGET_BUSY","message":"Busy.","details":{"target":"# + target
+      #"{"ok":false,"command":"agents.dispatch","schema_version":"prowl.cli.agents.dispatch.v1","error":{"code":"DISPATCH_TARGET_BUSY","message":"Busy.","details":{"target":"#
+      + target
       + #","observation":{"status":"working","raw_state":"working","source":"detection","confidence":"heuristic","at":"2026-08-29T02:00:00.000Z","revision":3},"signals":{"channels":[]}}}}"#
     let unknown =
-      #"{"ok":false,"command":"agents.dispatch","schema_version":"prowl.cli.agents.dispatch.v1","error":{"code":"DISPATCH_PENDING","message":"Pending.","details":{"target":"# + target
+      #"{"ok":false,"command":"agents.dispatch","schema_version":"prowl.cli.agents.dispatch.v1","error":{"code":"DISPATCH_PENDING","message":"Pending.","details":{"target":"#
+      + target
       + #","waited_ms":1}}}"#
     let extraData =
-      #"{"ok":true,"command":"agents.dispatch","schema_version":"prowl.cli.agents.dispatch.v1","data":{"target":"# + target
+      #"{"ok":true,"command":"agents.dispatch","schema_version":"prowl.cli.agents.dispatch.v1","data":{"target":"#
+      + target
       + #","dispatch":{"id":"d2","state":"pending","created_at":"2026-08-29T02:00:00.000Z"},"delivered":true}}"#
 
     try assertValid(success)
@@ -67,8 +74,10 @@ final class DispatchSchemaTests: XCTestCase {
   }
 
   func testSchemaRejectsCrossVariantFieldsAndUnknownWaitDetails() throws {
-    let invalidRecord = #"{"ok":true,"command":"agents.dispatch-complete","schema_version":"prowl.cli.agents.dispatch-complete.v1","data":{"target":{"worktree":{"id":"wt","name":"main","path":"/Projects/Prowl","root_path":"/Projects/Prowl","kind":"git"},"tab":{"id":"tab","title":"Tab","selected":true},"pane":{"id":"pane","title":"Pane","cwd":"/Projects/Prowl","focused":true}},"receipt":{"id":"d1","state":"completed","outcome":"succeeded","summary":"Done","created_at":"now","completed_at":"later","gone_at":"illegal"},"replayed":false}}"#
-    let invalidDetails = #"{"ok":false,"command":"agents.wait","schema_version":"prowl.cli.agents.wait.v1","error":{"code":"WAIT_TIMEOUT","message":"Timed out.","details":{"mode":"dispatch","waited_ms":1,"unexpected":true}}}"#
+    let invalidRecord =
+      #"{"ok":true,"command":"agents.dispatch-complete","schema_version":"prowl.cli.agents.dispatch-complete.v1","data":{"target":{"worktree":{"id":"wt","name":"main","path":"/Projects/Prowl","root_path":"/Projects/Prowl","kind":"git"},"tab":{"id":"tab","title":"Tab","selected":true},"pane":{"id":"pane","title":"Pane","cwd":"/Projects/Prowl","focused":true}},"receipt":{"id":"d1","state":"completed","outcome":"succeeded","summary":"Done","created_at":"now","completed_at":"later","gone_at":"illegal"},"replayed":false}}"#
+    let invalidDetails =
+      #"{"ok":false,"command":"agents.wait","schema_version":"prowl.cli.agents.wait.v1","error":{"code":"WAIT_TIMEOUT","message":"Timed out.","details":{"mode":"dispatch","waited_ms":1,"unexpected":true}}}"#
 
     try assertInvalid(invalidRecord)
     try assertInvalid(invalidDetails)

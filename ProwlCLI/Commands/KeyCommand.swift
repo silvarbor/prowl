@@ -70,12 +70,13 @@ struct KeyCommand: ParsableCommand {
 
       let envelope = CommandEnvelope(
         output: options.outputMode,
-        command: .key(KeyInput(
-          selector: sel,
-          rawToken: rawToken,
-          token: normalized,
-          repeatCount: self.repeat
-        ))
+        command: .key(
+          KeyInput(
+            selector: sel,
+            rawToken: rawToken,
+            token: normalized,
+            repeatCount: self.repeat
+          ))
       )
       try CLIRunner.execute(envelope)
     }

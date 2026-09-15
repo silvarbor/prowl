@@ -34,7 +34,9 @@ final class DispatchWireModelTests: XCTestCase {
         output: .json,
         command: .agentsDispatchComplete(DispatchCompleteInput(dispatchID: nil, outcome: .succeeded, summary: "Done"))
       ))
-    guard case .agentsDispatchComplete(let decoded) = try JSONDecoder().decode(CommandEnvelope.self, from: withoutID).command
+    guard
+      case .agentsDispatchComplete(let decoded) = try JSONDecoder().decode(CommandEnvelope.self, from: withoutID)
+        .command
     else {
       return XCTFail("Expected agents.dispatch-complete")
     }
@@ -44,7 +46,9 @@ final class DispatchWireModelTests: XCTestCase {
     let legacy = Data(
       #"{"output":"json","command":{"agentsDispatchComplete":{"_0":{"dispatch_id":"d1","outcome":"failed","summary":"No"}}}}"#
         .utf8)
-    guard case .agentsDispatchComplete(let legacyInput) = try JSONDecoder().decode(CommandEnvelope.self, from: legacy).command
+    guard
+      case .agentsDispatchComplete(let legacyInput) = try JSONDecoder().decode(CommandEnvelope.self, from: legacy)
+        .command
     else {
       return XCTFail("Expected agents.dispatch-complete")
     }
@@ -130,7 +134,8 @@ final class DispatchWireModelTests: XCTestCase {
       #"{"id":"d1","state":"pending","created_at":"now","summary":"illegal"}"#.utf8
     )
     let unknown = Data(
-      #"{"id":"d1","state":"gone","created_at":"now","gone_at":"later","gone_reason":"surface_closed","extra":true}"#.utf8
+      #"{"id":"d1","state":"gone","created_at":"now","gone_at":"later","gone_reason":"surface_closed","extra":true}"#
+        .utf8
     )
 
     XCTAssertThrowsError(try JSONDecoder().decode(DispatchRecordPayload.self, from: crossVariant))
@@ -139,7 +144,8 @@ final class DispatchWireModelTests: XCTestCase {
       try JSONDecoder().decode(
         DispatchCompletedRecord.self,
         from: Data(
-          #"{"id":"d1","state":"pending","outcome":"succeeded","summary":"Done","created_at":"now","completed_at":"later"}"#.utf8
+          #"{"id":"d1","state":"pending","outcome":"succeeded","summary":"Done","created_at":"now","completed_at":"later"}"#
+            .utf8
         )
       )
     )
@@ -200,7 +206,8 @@ final class DispatchWireModelTests: XCTestCase {
     XCTAssertThrowsError(try JSONDecoder().decode(AgentWaitCommandPayload.self, from: illegal))
 
     let wrongScreenSource = Data(
-      #"{"status":"captured","requested_lines":1,"source":"viewport","waited_ms":800,"text":"Done","line_count":1,"stabilized":true}"#.utf8
+      #"{"status":"captured","requested_lines":1,"source":"viewport","waited_ms":800,"text":"Done","line_count":1,"stabilized":true}"#
+        .utf8
     )
     XCTAssertThrowsError(try JSONDecoder().decode(AgentWaitScreenPayload.self, from: wrongScreenSource))
   }
@@ -234,7 +241,8 @@ final class DispatchWireModelTests: XCTestCase {
       pane: AgentsCommandPane(id: "pane-1", index: 0, title: "Pane", cwd: "/Projects/Prowl", focused: true),
       signals: signals
     )
-    XCTAssertEqual(try JSONDecoder().decode(AgentsCommandAgent.self, from: JSONEncoder().encode(agent)).signals, signals)
+    XCTAssertEqual(
+      try JSONDecoder().decode(AgentsCommandAgent.self, from: JSONEncoder().encode(agent)).signals, signals)
   }
 
   private static let target = TabTarget(

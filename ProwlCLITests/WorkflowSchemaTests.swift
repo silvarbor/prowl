@@ -53,9 +53,10 @@ final class WorkflowSchemaTests: XCTestCase {
   }
 
   func testReadSchemaRejectsInvalidEncodingAndMissingInvocation() throws {
-    let payload = WorkflowCommandPayload.read(WorkflowContentPayload(
-      run: UUID().uuidString, invocation: 1, role: "author", step: "brief", resource: "resource-1",
-      body: "AA==", encoding: "base64", resources: [], offset: 4, totalBytes: 5))
+    let payload = WorkflowCommandPayload.read(
+      WorkflowContentPayload(
+        run: UUID().uuidString, invocation: 1, role: "author", step: "brief", resource: "resource-1",
+        body: "AA==", encoding: "base64", resources: [], offset: 4, totalBytes: 5))
     let response = try CommandResponse(
       ok: true, command: "workflow", schemaVersion: "prowl.cli.workflow.v1", data: RawJSON(encoding: payload))
     let data = try JSONEncoder().encode(response)
@@ -112,7 +113,8 @@ final class WorkflowSchemaTests: XCTestCase {
       updatedAt: "2026-08-30T01:02:03Z",
       finishedAt: nil,
       selfInitiated: WorkflowSelfInitiatedPayload(
-        line: "[Prowl] Read /r/prompts/brief.1.md and follow it — finish with: PROWL_WORKFLOW_TOKEN=T prowl workflow deliver -",
+        line:
+          "[Prowl] Read /r/prompts/brief.1.md and follow it — finish with: PROWL_WORKFLOW_TOKEN=T prowl workflow deliver -",
         promptPath: "/r/prompts/brief.1.md",
         completion: ["PROWL_WORKFLOW_TOKEN=T prowl workflow deliver -"]))
     let runObject = try XCTUnwrap(JSONSerialization.jsonObject(with: encoder.encode(run)) as? [String: Any])
@@ -198,7 +200,8 @@ final class WorkflowSchemaTests: XCTestCase {
     XCTAssertEqual(try JSONDecoder().decode(WorkflowCommandPayload.self, from: data), validate)
 
     let list = WorkflowCommandPayload.list(
-      WorkflowListPayload(worktree: nil, sources: WorkflowListSources(bundle: nil, user: "/u", repo: nil), workflows: []))
+      WorkflowListPayload(
+        worktree: nil, sources: WorkflowListSources(bundle: nil, user: "/u", repo: nil), workflows: []))
     XCTAssertEqual(
       String(decoding: try encoder.encode(list), as: UTF8.self),
       #"{"action":"list","sources":{"user":"/u"},"workflows":[]}"#)
@@ -225,7 +228,8 @@ final class WorkflowSchemaTests: XCTestCase {
     let badMax = WorkflowFixtures.minimal(
       extraSteps: "  - id: loop\n    repeat: { max: 21 }\n    steps:\n      - id: x\n        notify: hi")
     let launchInLoop = WorkflowFixtures.minimal(
-      extraSteps: "  - id: loop\n    repeat: { max: 2 }\n    steps:\n      - id: l\n        launch: r\n        prompt: go",
+      extraSteps:
+        "  - id: loop\n    repeat: { max: 2 }\n    steps:\n      - id: l\n        launch: r\n        prompt: go",
       extraRoles: "  r:\n    source: launch")
     let orphanPolicy = WorkflowFixtures.minimal(
       extraSteps: "  - id: b\n    message: author\n    prompt: hi\n    expect: { on_timeout: skip }")

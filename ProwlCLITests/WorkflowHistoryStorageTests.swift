@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+
 @testable import ProwlCLIShared
 
 struct WorkflowHistoryStorageTests {
@@ -66,7 +67,9 @@ struct WorkflowHistoryStorageTests {
     defer { owner.close() }
     let process = Process()
     process.executableURL = URL(filePath: "/usr/bin/python3")
-    process.arguments = ["-c", """
+    process.arguments = [
+      "-c",
+      """
       import fcntl, sys
       with open(sys.argv[1], 'r+') as stream:
           try:
@@ -74,7 +77,8 @@ struct WorkflowHistoryStorageTests {
           except BlockingIOError:
               sys.exit(0)
           sys.exit(1)
-      """, directory.appending(path: ".occupancy.lock").path]
+      """, directory.appending(path: ".occupancy.lock").path,
+    ]
     try process.run()
     process.waitUntilExit()
     #expect(process.terminationStatus == 0)

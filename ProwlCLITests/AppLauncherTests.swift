@@ -1,5 +1,6 @@
-@testable import prowl
 import XCTest
+
+@testable import prowl
 
 final class AppLauncherTests: XCTestCase {
   func testProwlBundleIdentifierMatchingIncludesDebugBuild() {

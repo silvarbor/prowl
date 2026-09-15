@@ -26,13 +26,15 @@ struct CreateCommand: ParsableCommand {
     else {
       throw ExitError(
         code: CLIErrorCode.createFailed,
-        message: "The running Prowl app did not honor the Profile launch. An ordinary shell may have been created; inspect prowl list and close it before retrying. Update or restart Prowl."
+        message:
+          "The running Prowl app did not honor the Profile launch. An ordinary shell may have been created; inspect prowl list and close it before retrying. Update or restart Prowl."
       )
     }
     guard requestedLaunch.prompt == nil || payload.dispatch != nil else {
       throw ExitError(
         code: CLIErrorCode.createFailed,
-        message: "The running Prowl app did not create a dispatch receipt for the prompted launch. Inspect prowl list and close the created resource before retrying. Update or restart Prowl."
+        message:
+          "The running Prowl app did not create a dispatch receipt for the prompted launch. Inspect prowl list and close the created resource before retrying. Update or restart Prowl."
       )
     }
   }
@@ -204,8 +206,8 @@ struct CreatePaneCommand: ParsableCommand {
   }
 }
 
-private extension String {
-  func trimmingTrailingSlash() -> String {
+extension String {
+  fileprivate func trimmingTrailingSlash() -> String {
     var value = self
     while value.count > 1, value.hasSuffix("/") {
       value.removeLast()

@@ -513,14 +513,17 @@ _test-agent-contract-export: ensure-ghostty embed-cli-debug embed-docs embed-ski
 		2>&1 | mise exec -- xcsift -w --format toon
 
 format: # Format all Swift code with swift-format (full-tree cleanup)
-	swift-format -p --in-place --recursive --configuration ./.swift-format.json supacode supacodeTests
+	swift-format -p --in-place --recursive --configuration ./.swift-format.json \
+		supacode supacodeTests ProwlCLI ProwlCLITests ProwlCLIContracts
 
 format-changed: # Format Swift files changed from FORMAT_BASE_REF (default: origin/main)
 	@base="$$(git merge-base HEAD "$(FORMAT_BASE_REF)" 2>/dev/null || git rev-parse HEAD)"; \
 	mapfile -t files < <( \
 		{ \
-			git diff --name-only --diff-filter=ACMR "$$base" -- supacode supacodeTests; \
-			git ls-files --others --exclude-standard -- supacode supacodeTests; \
+			git diff --name-only --diff-filter=ACMR "$$base" -- \
+				supacode supacodeTests ProwlCLI ProwlCLITests ProwlCLIContracts; \
+			git ls-files --others --exclude-standard -- \
+				supacode supacodeTests ProwlCLI ProwlCLITests ProwlCLIContracts; \
 		} | awk '/\.swift$$/' | sort -u \
 	); \
 	if [ "$${#files[@]}" -eq 0 ]; then \
@@ -531,7 +534,8 @@ format-changed: # Format Swift files changed from FORMAT_BASE_REF (default: orig
 	fi
 
 format-lint: # Check Swift formatting without rewriting files
-	swift-format lint --strict --recursive --configuration ./.swift-format.json supacode supacodeTests
+	swift-format lint --strict --recursive --configuration ./.swift-format.json \
+		supacode supacodeTests ProwlCLI ProwlCLITests ProwlCLIContracts
 
 lint: # Lint code with swiftlint
 	mise exec -- swiftlint lint --quiet --config .swiftlint.yml

@@ -34,7 +34,9 @@ final class WorkflowDiscoveryTests: XCTestCase {
     let user = try directory("user")
     try write(WorkflowFixtures.minimal(id: "demo"), to: user, name: "demo.pwlworkflow")
     try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: user.path(percentEncoded: false))
-    defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: user.path(percentEncoded: false)) }
+    defer {
+      try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: user.path(percentEncoded: false))
+    }
     XCTAssertThrowsError(try WorkflowDiscovery.files(in: user, scope: .user, context: context(.user)))
     XCTAssertThrowsError(
       try WorkflowDiscovery.catalog(sources: WorkflowSources(bundle: nil, user: user, repo: nil), context: context))
@@ -85,7 +87,9 @@ final class WorkflowDiscoveryTests: XCTestCase {
 
     let catalog = try WorkflowDiscovery.catalog(
       sources: WorkflowSources(bundle: bundle, user: user, repo: repo), context: context)
-    let rows = catalog.map { "\($0.file.id ?? "-") \($0.file.scope.rawValue) \($0.file.url.lastPathComponent) \($0.shadowed ? "shadowed" : ($0.file.isValid ? "wins" : "invalid"))" }
+    let rows = catalog.map {
+      "\($0.file.id ?? "-") \($0.file.scope.rawValue) \($0.file.url.lastPathComponent) \($0.shadowed ? "shadowed" : ($0.file.isValid ? "wins" : "invalid"))"
+    }
     XCTAssertEqual(
       rows,
       [
@@ -106,14 +110,17 @@ final class WorkflowDiscoveryTests: XCTestCase {
     try write(WorkflowFixtures.minimal(id: "demo"), to: user, name: "a.pwlworkflow")
     let catalog = try WorkflowDiscovery.catalog(
       sources: WorkflowSources(bundle: nil, user: user, repo: nil), context: context)
-    XCTAssertEqual(catalog.map { "\($0.file.url.lastPathComponent) \($0.shadowed)" }, ["a.pwlworkflow false", "b.pwlworkflow true"])
+    XCTAssertEqual(
+      catalog.map { "\($0.file.url.lastPathComponent) \($0.shadowed)" }, ["a.pwlworkflow false", "b.pwlworkflow true"])
   }
 
   func testInvalidFilesNeverShadowValidOnes() throws {
     let user = try directory("user")
     let repo = try directory("repo")
     try write(WorkflowFixtures.minimal(id: "demo"), to: user, name: "demo.pwlworkflow")
-    try write(WorkflowFixtures.minimal(id: "demo", extraSteps: "  - id: x\n    close: ghost"), to: repo, name: "demo.pwlworkflow")
+    try write(
+      WorkflowFixtures.minimal(id: "demo", extraSteps: "  - id: x\n    close: ghost"), to: repo,
+      name: "demo.pwlworkflow")
     let catalog = try WorkflowDiscovery.catalog(
       sources: WorkflowSources(bundle: nil, user: user, repo: repo), context: context)
     XCTAssertEqual(
@@ -124,18 +131,22 @@ final class WorkflowDiscoveryTests: XCTestCase {
   func testSymlinksAndSpecialFilesAreReportedAsInvalidBundles() throws {
     let user = try directory("user")
     try write(WorkflowFixtures.minimal(id: "real"), to: user, name: "real.pwlworkflow")
-    try FileManager.default.createDirectory(at: user.appending(path: "folder.pwlworkflow"), withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(
+      at: user.appending(path: "folder.pwlworkflow"), withIntermediateDirectories: true)
     let elsewhere = try directory("elsewhere")
     try write(WorkflowFixtures.minimal(id: "linked"), to: elsewhere, name: "source.pwlworkflow")
     try FileManager.default.createSymbolicLink(
       at: user.appending(path: "link.pwlworkflow"), withDestinationURL: elsewhere.appending(path: "source.pwlworkflow"))
     try FileManager.default.createSymbolicLink(
-      at: user.appending(path: "dangling.pwlworkflow"), withDestinationURL: elsewhere.appending(path: "missing.pwlworkflow"))
+      at: user.appending(path: "dangling.pwlworkflow"),
+      withDestinationURL: elsewhere.appending(path: "missing.pwlworkflow"))
 
     XCTAssertEqual(mkfifo(user.appending(path: "pipe.pwlworkflow").path(percentEncoded: false), 0o644), 0)
 
     let files = try WorkflowDiscovery.files(in: user, scope: .user, context: context(.user))
-    XCTAssertEqual(files.map(\.url.lastPathComponent), ["dangling.pwlworkflow", "folder.pwlworkflow", "link.pwlworkflow", "pipe.pwlworkflow", "real.pwlworkflow"])
+    XCTAssertEqual(
+      files.map(\.url.lastPathComponent),
+      ["dangling.pwlworkflow", "folder.pwlworkflow", "link.pwlworkflow", "pipe.pwlworkflow", "real.pwlworkflow"])
     XCTAssertEqual(files.map(\.id), [nil, nil, nil, nil, "real"])
   }
 
@@ -143,7 +154,8 @@ final class WorkflowDiscoveryTests: XCTestCase {
     let home = URL(filePath: "/Users/me", directoryHint: .isDirectory)
     XCTAssertEqual(WorkflowSources.userDirectory(home: home).path(percentEncoded: false), "/Users/me/.prowl/workflows/")
     let repo = URL(filePath: "/Projects/App", directoryHint: .isDirectory)
-    XCTAssertEqual(WorkflowSources.repoDirectory(root: repo).path(percentEncoded: false), "/Projects/App/.prowl/workflows/")
+    XCTAssertEqual(
+      WorkflowSources.repoDirectory(root: repo).path(percentEncoded: false), "/Projects/App/.prowl/workflows/")
     let resources = URL(filePath: "/Applications/Prowl.app/Contents/Resources", directoryHint: .isDirectory)
     XCTAssertEqual(
       WorkflowSources.bundleDirectory(resourcesURL: resources).path(percentEncoded: false),

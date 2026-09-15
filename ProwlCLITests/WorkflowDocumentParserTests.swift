@@ -47,14 +47,17 @@ final class WorkflowDocumentParserTests: XCTestCase {
     let reviewer = try XCTUnwrap(workflow.roles[1].launch)
     XCTAssertEqual(reviewer.kind, .interactive)
     XCTAssertEqual(reviewer.agents, ["codex", "claude"])
-    XCTAssertEqual(reviewer.suggest, WorkflowProfileSuggestion(agent: "codex", reasoningEffort: "xhigh", executionMode: "standard"))
+    XCTAssertEqual(
+      reviewer.suggest, WorkflowProfileSuggestion(agent: "codex", reasoningEffort: "xhigh", executionMode: "standard"))
     XCTAssertEqual(reviewer.bind, .ask)
     XCTAssertEqual(reviewer.placement, .split)
     XCTAssertEqual(reviewer.direction, .right)
     XCTAssertFalse(reviewer.background)
 
     XCTAssertEqual(workflow.steps.map(\.id), ["brief", "launch", "remember", "rounds", "context", "done", "cleanup"])
-    XCTAssertEqual(workflow.flattenedSteps.map(\.id), ["brief", "launch", "remember", "rounds", "fix", "rereview", "retain", "context", "done", "cleanup"])
+    XCTAssertEqual(
+      workflow.flattenedSteps.map(\.id),
+      ["brief", "launch", "remember", "rounds", "fix", "rereview", "retain", "context", "done", "cleanup"])
 
     guard case .message(let role, let prompt, let briefExpect) = workflow.steps[0].action else {
       return XCTFail("brief should be an instruction message")
@@ -68,7 +71,9 @@ final class WorkflowDocumentParserTests: XCTestCase {
     XCTAssertNil(briefExpect?.verdicts)
     XCTAssertEqual(workflow.steps[0].deliveryName, "brief")
 
-    guard case .launch("reviewer", let prompt, "prowl.adversarial-reviewer", let launchExpect) = workflow.steps[1].action else {
+    guard
+      case .launch("reviewer", let prompt, "prowl.adversarial-reviewer", let launchExpect) = workflow.steps[1].action
+    else {
       return XCTFail("launch should target reviewer with a skill")
     }
     XCTAssertTrue(prompt.contains("{{ deliveries.brief.path }}"))
@@ -116,7 +121,8 @@ final class WorkflowDocumentParserTests: XCTestCase {
   func testMissingRequiredKeysAndUnsupportedSchema() {
     XCTAssertEqual(WorkflowFixtures.parseCodes("id: demo\nname: Demo\n"), ["missing_key", "missing_key"])
     XCTAssertEqual(
-      WorkflowFixtures.parseCodes("schema: prowl.workflow/v99\nid: demo\nname: Demo\nsteps:\n  - id: a\n    notify: hi\n"),
+      WorkflowFixtures.parseCodes(
+        "schema: prowl.workflow/v99\nid: demo\nname: Demo\nsteps:\n  - id: a\n    notify: hi\n"),
       ["unsupported_schema"])
   }
 
@@ -128,7 +134,8 @@ final class WorkflowDocumentParserTests: XCTestCase {
   }
 
   func testQuotedScalarsAreStringsAndPlainScalarsAreTyped() {
-    let quoted = WorkflowFixtures.minimal()
+    let quoted =
+      WorkflowFixtures.minimal()
       + "inputs:\n  n: { type: integer, default: \"5\" }\n"
     XCTAssertEqual(WorkflowFixtures.parseCodes(quoted), ["type_mismatch"])
     let quotedBool = WorkflowFixtures.minimal(extraRoles: "  r:\n    source: launch\n    background: \"true\"")
@@ -183,8 +190,6 @@ final class WorkflowDocumentParserTests: XCTestCase {
     }
   }
 
-
-
   func testDurationsAndOnTimeout() {
     XCTAssertEqual(WorkflowDocumentParser.parseDuration("90s"), 90)
     XCTAssertEqual(WorkflowDocumentParser.parseDuration("10m"), 600)
@@ -214,7 +219,7 @@ final class WorkflowDocumentParserTests: XCTestCase {
   func testHugeDurationsDoNotOverflow() {
     XCTAssertNil(WorkflowDocumentParser.parseDuration("9223372036854775807h"))
     XCTAssertNil(WorkflowDocumentParser.parseDuration("99999999999999999999s"))
-    XCTAssertEqual(WorkflowDocumentParser.parseDuration("2562047788015215h"), 2562047788015215 * 3600)
+    XCTAssertEqual(WorkflowDocumentParser.parseDuration("2562047788015215h"), 2_562_047_788_015_215 * 3600)
     let overflow = WorkflowFixtures.minimal(
       extraSteps: "  - id: b\n    message: author\n    prompt: hi\n    expect: { timeout: 9223372036854775807h }")
     XCTAssertEqual(WorkflowFixtures.parseCodes(overflow), ["timeout_syntax"])
@@ -232,11 +237,16 @@ final class WorkflowDocumentParserTests: XCTestCase {
       WorkflowFixtures.parseCodes("schema: prowl.workflow/v1\nid: 1\nname: Demo\nsteps:\n  - id: a\n    notify: hi\n"),
       ["type_mismatch"])
     XCTAssertEqual(
-      WorkflowFixtures.parseCodes("schema: prowl.workflow/v1\nid: demo\nname: 1.5\nsteps:\n  - id: a\n    notify: hi\n"),
+      WorkflowFixtures.parseCodes(
+        "schema: prowl.workflow/v1\nid: demo\nname: 1.5\nsteps:\n  - id: a\n    notify: hi\n"),
       ["type_mismatch"])
-    XCTAssertEqual(WorkflowFixtures.parseCodes(WorkflowFixtures.minimal(extraSteps: "  - id: b\n    notify: true")), ["type_mismatch"])
-    XCTAssertEqual(WorkflowFixtures.parseCodes(WorkflowFixtures.minimal(extraSteps: "  - id: b\n    notify: \"true\"")), [])
-    XCTAssertEqual(WorkflowFixtures.parseCodes(WorkflowFixtures.minimal(extraSteps: "  - id: b\n    notify: Round 1")), [])
+    XCTAssertEqual(
+      WorkflowFixtures.parseCodes(WorkflowFixtures.minimal(extraSteps: "  - id: b\n    notify: true")),
+      ["type_mismatch"])
+    XCTAssertEqual(
+      WorkflowFixtures.parseCodes(WorkflowFixtures.minimal(extraSteps: "  - id: b\n    notify: \"true\"")), [])
+    XCTAssertEqual(
+      WorkflowFixtures.parseCodes(WorkflowFixtures.minimal(extraSteps: "  - id: b\n    notify: Round 1")), [])
   }
 
   func testUntilAndTimeoutFollowTheSchemaPatternsExactly() {
@@ -245,7 +255,8 @@ final class WorkflowDocumentParserTests: XCTestCase {
     let paddedTimeout = WorkflowFixtures.minimal(
       extraSteps: "  - id: b\n    message: author\n    prompt: hi\n    expect: { timeout: \" 10m\" }")
     XCTAssertEqual(WorkflowFixtures.parseCodes(paddedTimeout), ["timeout_syntax"])
-    let legacy = WorkflowFixtures.minimal(extraSteps: "  - id: loop\n    repeat: {max: 2}\n    steps: [{id: x, notify: hi}]")
+    let legacy = WorkflowFixtures.minimal(
+      extraSteps: "  - id: loop\n    repeat: {max: 2}\n    steps: [{id: x, notify: hi}]")
     XCTAssertEqual(WorkflowFixtures.parseCodes(legacy), ["step_verb"])
   }
 }

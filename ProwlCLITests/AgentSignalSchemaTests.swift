@@ -6,8 +6,10 @@ import XCTest
 
 final class AgentSignalSchemaTests: XCTestCase {
   func testAgentSignalSchemaAcceptsBindingAndUnboundWarning() throws {
-    let bound = #"{"ok":true,"command":"agents.signal","schema_version":"prowl.cli.agents.signal.v1","data":{"pane":{"id":"D2719F02-5F27-4D46-A62F-0FAF49410D4D","worktree_id":"wt"},"signal":{"event":"turn-ended","source":"cooperative_cli","confidence":"exact","binding":"current","at":"2026-08-24T00:00:00.000Z"}}}"#
-    let unbound = #"{"ok":true,"command":"agents.signal","schema_version":"prowl.cli.agents.signal.v1","data":{"pane":{"id":"D2719F02-5F27-4D46-A62F-0FAF49410D4D","worktree_id":"wt"},"signal":{"event":"needs-input","source":"cooperative_cli","confidence":"exact","binding":"unbound","at":"2026-08-24T00:00:00.000Z"},"warnings":[{"code":"signal_unbound","message":"Recorded as diagnostic only."}]}}"#
+    let bound =
+      #"{"ok":true,"command":"agents.signal","schema_version":"prowl.cli.agents.signal.v1","data":{"pane":{"id":"D2719F02-5F27-4D46-A62F-0FAF49410D4D","worktree_id":"wt"},"signal":{"event":"turn-ended","source":"cooperative_cli","confidence":"exact","binding":"current","at":"2026-08-24T00:00:00.000Z"}}}"#
+    let unbound =
+      #"{"ok":true,"command":"agents.signal","schema_version":"prowl.cli.agents.signal.v1","data":{"pane":{"id":"D2719F02-5F27-4D46-A62F-0FAF49410D4D","worktree_id":"wt"},"signal":{"event":"needs-input","source":"cooperative_cli","confidence":"exact","binding":"unbound","at":"2026-08-24T00:00:00.000Z"},"warnings":[{"code":"signal_unbound","message":"Recorded as diagnostic only."}]}}"#
     let staleBinding = bound.replacingOccurrences(of: #""binding":"current""#, with: #""binding":"stale""#)
     let unknownWarningField = unbound.replacingOccurrences(
       of: #""message":"Recorded as diagnostic only.""#,
@@ -23,7 +25,8 @@ final class AgentSignalSchemaTests: XCTestCase {
   }
 
   func testAgentSignalSchemaRequiresBindingAndPairsUnboundWithItsWarning() throws {
-    let bound = #"{"ok":true,"command":"agents.signal","schema_version":"prowl.cli.agents.signal.v1","data":{"pane":{"id":"D2719F02-5F27-4D46-A62F-0FAF49410D4D","worktree_id":"wt"},"signal":{"event":"turn-ended","source":"cooperative_cli","confidence":"exact","binding":"current","at":"2026-08-24T00:00:00.000Z"}}}"#
+    let bound =
+      #"{"ok":true,"command":"agents.signal","schema_version":"prowl.cli.agents.signal.v1","data":{"pane":{"id":"D2719F02-5F27-4D46-A62F-0FAF49410D4D","worktree_id":"wt"},"signal":{"event":"turn-ended","source":"cooperative_cli","confidence":"exact","binding":"current","at":"2026-08-24T00:00:00.000Z"}}}"#
     let missingBinding = bound.replacingOccurrences(of: #""binding":"current","#, with: "")
     let unboundWithoutWarning = bound.replacingOccurrences(of: #""binding":"current""#, with: #""binding":"unbound""#)
     let currentWithWarning = bound.replacingOccurrences(

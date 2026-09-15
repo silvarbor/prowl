@@ -1,9 +1,11 @@
 import Testing
+
 @testable import ProwlCLIShared
 
 struct WorkflowBundleParserTests {
   @Test func launchesInsideLoopsAreRejectedEvenInsideBranches() {
-    let parsed = WorkflowDocumentParser.parse("""
+    let parsed = WorkflowDocumentParser.parse(
+      """
       schema: prowl.workflow/v1
       id: loop-launch
       name: Loop Launch
@@ -24,7 +26,8 @@ struct WorkflowBundleParserTests {
   }
 
   @Test func parsesTypedActionInputsAndNestedControlFlow() throws {
-    let result = WorkflowDocumentParser.parse("""
+    let result = WorkflowDocumentParser.parse(
+      """
       schema: prowl.workflow/v1
       id: sample
       name: Sample
@@ -56,9 +59,11 @@ struct WorkflowBundleParserTests {
   }
 
   @Test func rejectsUnknownSchemaAndLoopControlOutsideLoop() {
-    let unknown = WorkflowDocumentParser.parse("schema: prowl.workflow/v99\nid: old\nname: Old\nsteps: [{id: end, notify: done}]")
+    let unknown = WorkflowDocumentParser.parse(
+      "schema: prowl.workflow/v99\nid: old\nname: Old\nsteps: [{id: end, notify: done}]")
     #expect(unknown.diagnostics.contains { $0.code == "unsupported_schema" })
-    let invalid = WorkflowDocumentParser.parse("schema: prowl.workflow/v1\nid: bad\nname: Bad\nsteps: [{id: end, break: true}]")
+    let invalid = WorkflowDocumentParser.parse(
+      "schema: prowl.workflow/v1\nid: bad\nname: Bad\nsteps: [{id: end, break: true}]")
     #expect(invalid.diagnostics.contains { $0.code == "loop_control_outside_loop" })
   }
 }

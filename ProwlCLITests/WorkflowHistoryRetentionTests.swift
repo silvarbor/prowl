@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+
 @testable import ProwlCLIShared
 
 struct WorkflowHistoryRetentionTests {
@@ -76,7 +77,8 @@ struct WorkflowHistoryRetentionTests {
     let old = try write(history, days: 40)
     let live = try write(history, days: 0.1, state: "needs_attention")
     let result = try history.clear(now: now)
-    #expect(Set(result.removed) == [UUID(uuidString: fresh.lastPathComponent)!, UUID(uuidString: old.lastPathComponent)!])
+    #expect(
+      Set(result.removed) == [UUID(uuidString: fresh.lastPathComponent)!, UUID(uuidString: old.lastPathComponent)!])
     #expect(result.failures.isEmpty)
     #expect(!FileManager.default.fileExists(atPath: fresh.path))
     #expect(!FileManager.default.fileExists(atPath: old.path))
@@ -188,7 +190,9 @@ struct WorkflowHistoryRetentionTests {
     let metadata = WorkflowHistoryMetadata(
       id: UUID(uuidString: directory.lastPathComponent)!, name: "Test", root: "/project", state: "running",
       startedAt: now, finishedAt: nil)
-    #expect(throws: (any Error).self) { try metadata.write(record: Data(), directory: directory, storage: history.storage) }
+    #expect(throws: (any Error).self) {
+      try metadata.write(record: Data(), directory: directory, storage: history.storage)
+    }
     #expect(!FileManager.default.fileExists(atPath: directory.appending(path: WorkflowHistoryMetadata.fileName).path))
     #expect(try history.preview(now: now).candidates.isEmpty)
   }
@@ -207,8 +211,10 @@ struct WorkflowHistoryRetentionTests {
     try history.storage.prepare(directory)
     let object: [String: Any] = [
       "version": 1,
-      "run": ["id": id.uuidString, "workflow_name": "Test", "status": ["state": state],
-              "started_at": date.ISO8601Format(), "finished_at": date.ISO8601Format()],
+      "run": [
+        "id": id.uuidString, "workflow_name": "Test", "status": ["state": state],
+        "started_at": date.ISO8601Format(), "finished_at": date.ISO8601Format(),
+      ],
       "worktree": ["path": "/project"],
     ]
     try WorkflowHistoryMetadata(

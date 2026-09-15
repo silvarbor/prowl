@@ -68,7 +68,9 @@ final class MarkdownArtifactNormalizerTests: XCTestCase {
     let indented = "# Handoff\n    ## Objective\n    ## Current State\n    ## Next Steps\n"
     XCTAssertEqual(MarkdownArtifactNormalizer.headings(outsideFences: indented), ["# Handoff"])
     XCTAssertFalse(MarkdownArtifactNormalizer.hasSections(["## Objective"], in: indented))
-    XCTAssertEqual(MarkdownArtifactNormalizer.headings(outsideFences: "   ## Three spaces\n#nospace\n####### seven\n#\n"), ["## Three spaces", "#"])
+    XCTAssertEqual(
+      MarkdownArtifactNormalizer.headings(outsideFences: "   ## Three spaces\n#nospace\n####### seven\n#\n"),
+      ["## Three spaces", "#"])
     let wrapped = "Intro\n```markdown\n   ## Objective\ntext\n```\n"
     XCTAssertEqual(MarkdownArtifactNormalizer.normalized(wrapped), "## Objective\ntext")
   }

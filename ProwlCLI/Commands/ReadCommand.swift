@@ -73,15 +73,16 @@ struct ReadCommand: ParsableCommand {
       let requestedSource = source.inputSource
       let envelope = CommandEnvelope(
         output: options.outputMode,
-        command: .read(ReadInput(
-          selector: sel,
-          last: last,
-          source: requestedSource,
-          waitStable: waitStable,
-          stableIntervalMs: stableInterval,
-          stablePeriodMs: stablePeriod,
-          waitTimeoutSeconds: waitTimeout
-        ))
+        command: .read(
+          ReadInput(
+            selector: sel,
+            last: last,
+            source: requestedSource,
+            waitStable: waitStable,
+            stableIntervalMs: stableInterval,
+            stablePeriodMs: stablePeriod,
+            waitTimeoutSeconds: waitTimeout
+          ))
       )
       try CLIRunner.execute(envelope) { response in
         try Self.validate(response: response, requestedSource: requestedSource)

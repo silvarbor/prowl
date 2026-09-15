@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+
 @testable import ProwlCLIShared
 
 struct WorkflowBundleTests {
@@ -16,7 +17,8 @@ struct WorkflowBundleTests {
   @Test func rejectsSymlinksEvenWhenTheyStayInsideBundle() throws {
     let root = try makeBundle()
     defer { try? FileManager.default.removeItem(at: root) }
-    try FileManager.default.createSymbolicLink(atPath: root.appending(path: "link").path, withDestinationPath: "helper.txt")
+    try FileManager.default.createSymbolicLink(
+      atPath: root.appending(path: "link").path, withDestinationPath: "helper.txt")
     #expect(throws: (any Error).self) { try WorkflowBundleSnapshot.read(root) }
   }
 
@@ -48,9 +50,10 @@ struct WorkflowBundleTests {
     let files = try WorkflowDiscovery.files(in: directory, scope: .user, context: .init(scope: .user))
     #expect(files.count == 2)
     #expect(files.first { $0.url.lastPathComponent == "demo.pwlworkflow" }?.isValid == true)
-    #expect(files.first { $0.url.lastPathComponent == "old.yaml" }?.diagnostics.contains {
-      $0.code == "unsupported_format"
-    } == true)
+    #expect(
+      files.first { $0.url.lastPathComponent == "old.yaml" }?.diagnostics.contains {
+        $0.code == "unsupported_format"
+      } == true)
   }
 
   private func makeBundle() throws -> URL {

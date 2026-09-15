@@ -7,7 +7,8 @@ final class WorkflowPromptContractTests: XCTestCase {
       let result = WorkflowDocumentParser.parse(document("message: author\n    \(prompt)"))
       XCTAssertEqual(result.diagnostics, [])
       let definition = try XCTUnwrap(result.definition)
-      XCTAssertEqual(WorkflowValidator.validate(definition, context: .init(scope: .user)).filter { $0.severity == .error }, [])
+      XCTAssertEqual(
+        WorkflowValidator.validate(definition, context: .init(scope: .user)).filter { $0.severity == .error }, [])
     }
   }
 

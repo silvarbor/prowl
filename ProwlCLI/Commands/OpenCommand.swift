@@ -31,11 +31,12 @@ struct OpenCommand: ParsableCommand {
 
       let envelope = CommandEnvelope(
         output: options.outputMode,
-        command: .open(OpenInput(
-          path: resolvedPath,
-          invocation: invocation,
-          appLaunched: appLaunched
-        ))
+        command: .open(
+          OpenInput(
+            path: resolvedPath,
+            invocation: invocation,
+            appLaunched: appLaunched
+          ))
       )
       try CLIRunner.execute(envelope)
     }

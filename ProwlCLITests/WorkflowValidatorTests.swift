@@ -61,7 +61,8 @@ final class WorkflowValidatorTests: XCTestCase {
   }
 
   func testUndefinedRolesAndRoleSources() {
-    XCTAssertEqual(WorkflowFixtures.codes(minimal(steps: "  - id: b\n    message: ghost\n    prompt: hi")), ["undefined_role"])
+    XCTAssertEqual(
+      WorkflowFixtures.codes(minimal(steps: "  - id: b\n    message: ghost\n    prompt: hi")), ["undefined_role"])
     XCTAssertEqual(WorkflowFixtures.codes(minimal(steps: "  - id: b\n    close: ghost")), ["undefined_role"])
     XCTAssertEqual(WorkflowFixtures.codes(minimal(steps: "  - id: b\n    close: author")), ["close_role_source"])
     XCTAssertEqual(
@@ -75,7 +76,8 @@ final class WorkflowValidatorTests: XCTestCase {
       ["message_before_launch"])
     let twice = "  - id: l1\n    launch: r\n    prompt: go\n  - id: l2\n    launch: r\n    prompt: again"
     XCTAssertEqual(WorkflowFixtures.codes(minimal(steps: twice, roles: role)), ["launch_twice"])
-    let ordered = "  - id: l1\n    launch: r\n    prompt: go\n  - id: m\n    message: r\n    prompt: \"pane {{ context.roles.r.pane_id }}\""
+    let ordered =
+      "  - id: l1\n    launch: r\n    prompt: go\n  - id: m\n    message: r\n    prompt: \"pane {{ context.roles.r.pane_id }}\""
     XCTAssertEqual(WorkflowFixtures.codes(minimal(steps: ordered, roles: role)), [])
   }
 
@@ -99,7 +101,8 @@ final class WorkflowValidatorTests: XCTestCase {
     XCTAssertEqual(
       WorkflowFixtures.codes(minimal() + "inputs:\n  n: { type: integer, min: 5, max: 1 }\n"), ["input_range"])
     XCTAssertEqual(
-      WorkflowFixtures.codes(minimal() + "inputs:\n  m: { type: enum, values: [a, b], default: c }\n"), ["enum_default"])
+      WorkflowFixtures.codes(minimal() + "inputs:\n  m: { type: enum, values: [a, b], default: c }\n"), ["enum_default"]
+    )
     XCTAssertEqual(
       WorkflowFixtures.codes(minimal() + "inputs:\n  m: { type: enum, values: [a, a] }\n"), ["enum_values_duplicate"])
     XCTAssertEqual(
@@ -117,8 +120,13 @@ final class WorkflowValidatorTests: XCTestCase {
     func codes(_ text: String, roles: String = "") -> [String] {
       WorkflowFixtures.codes(minimal(steps: "  - id: b\n    notify: \"\(text)\"", roles: roles))
     }
-    XCTAssertEqual(codes("{{ context.run.id }} {{ context.run.path }} {{ context.worktree.path }} {{ context.worktree.branch }}"), [])
-    XCTAssertEqual(codes("{{ context.roles.author.display_name }} {{ context.roles.author.agent }} {{ context.roles.author.pane_id }}"), [])
+    XCTAssertEqual(
+      codes("{{ context.run.id }} {{ context.run.path }} {{ context.worktree.path }} {{ context.worktree.branch }}"), []
+    )
+    XCTAssertEqual(
+      codes(
+        "{{ context.roles.author.display_name }} {{ context.roles.author.agent }} {{ context.roles.author.pane_id }}"),
+      [])
     XCTAssertEqual(codes("{{ nope.x }}"), ["unknown_variable"])
     XCTAssertEqual(codes("{{ context.worktree.owner }}"), ["unknown_variable"])
     XCTAssertEqual(codes("{{ inputs.missing }}"), ["unknown_variable"])
@@ -168,7 +176,8 @@ final class WorkflowValidatorTests: XCTestCase {
   func testActionInputsFollowTheRegistry() {
     XCTAssertEqual(WorkflowFixtures.codes(minimal(steps: "  - id: b\n    action: fs.delete")), ["unknown_action"])
     XCTAssertEqual(
-      WorkflowFixtures.codes(minimal(steps: "  - id: b\n    action: builtin:collect-worktree-context\n    with: { depth: 3 }")),
+      WorkflowFixtures.codes(
+        minimal(steps: "  - id: b\n    action: builtin:collect-worktree-context\n    with: { depth: 3 }")),
       ["unknown_action_input"])
     XCTAssertEqual(
       WorkflowFixtures.codes(minimal(steps: "  - id: b\n    action: removed.action\n    with: { from: author }")),
@@ -176,9 +185,6 @@ final class WorkflowValidatorTests: XCTestCase {
   }
 
   // MARK: - Repeat and until
-
-
-
 
   func testVerdictRules() {
     func expect(_ verdict: String) -> String {
@@ -250,7 +256,6 @@ final class WorkflowValidatorTests: XCTestCase {
       WorkflowFixtures.codes(minimal(steps: "  - id: b\n    message: author\n    prompt: \"a\\tb\"")), [])
   }
 
-
   func testVerdictReferencesFollowTheLatestProducer() {
     let stale = """
         - id: first
@@ -280,10 +285,10 @@ final class WorkflowValidatorTests: XCTestCase {
     XCTAssertEqual(WorkflowFixtures.codes(minimal(steps: refreshed)), [])
   }
 
-
   func testSuggestWarnsWhenNoEnabledProfileMatches() {
     let role = "  r:\n    source: launch\n    suggest: { agent: codex, reasoning_effort: xhigh }"
-    let codexHigh = WorkflowProfileSuggestion(agent: "codex", model: "gpt-5", reasoningEffort: "xhigh", executionMode: "standard")
+    let codexHigh = WorkflowProfileSuggestion(
+      agent: "codex", model: "gpt-5", reasoningEffort: "xhigh", executionMode: "standard")
     let claude = WorkflowProfileSuggestion(agent: "claude", model: nil, reasoningEffort: nil, executionMode: "standard")
     XCTAssertEqual(WorkflowFixtures.codes(minimal(roles: role), enabledProfiles: [claude]), ["suggest_unmatched"])
     XCTAssertEqual(WorkflowFixtures.codes(minimal(roles: role), enabledProfiles: [claude, codexHigh]), [])
@@ -292,15 +297,15 @@ final class WorkflowValidatorTests: XCTestCase {
 
   // MARK: - Round 2 review findings
 
-
-
-
   func testBlankNamesAndTokensAreRejectedLikeTheSchemaDoes() {
     XCTAssertEqual(
-      WorkflowFixtures.codes("schema: prowl.workflow/v1\nid: demo\nname: \"\"\nroles:\n  author:\n    source: current\nsteps:\n  - id: a\n    notify: hi\n"),
+      WorkflowFixtures.codes(
+        "schema: prowl.workflow/v1\nid: demo\nname: \"\"\nroles:\n  author:\n    source: current\nsteps:\n  - id: a\n    notify: hi\n"
+      ),
       ["name_empty"])
     XCTAssertEqual(
-      WorkflowFixtures.codes(minimal(roles: "  r:\n    source: launch\n    agents: [\"\", codex]")), ["agent_token_empty"])
+      WorkflowFixtures.codes(minimal(roles: "  r:\n    source: launch\n    agents: [\"\", codex]")),
+      ["agent_token_empty"])
     XCTAssertEqual(
       WorkflowFixtures.codes(minimal() + "inputs:\n  m: { type: enum, values: [\"\", b] }\n"), ["enum_value_empty"])
   }

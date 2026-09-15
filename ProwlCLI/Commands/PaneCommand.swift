@@ -8,7 +8,7 @@ struct PaneCommand: ParsableCommand {
     commandName: "pane",
     abstract: "[Deprecated] Manage terminal panes. Use `prowl close`.",
     subcommands: [
-      PaneCloseCommand.self,
+      PaneCloseCommand.self
     ]
   )
 }

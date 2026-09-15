@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+
 @testable import ProwlCLIShared
 
 struct WorkflowActionContractTests {
@@ -26,16 +27,21 @@ struct WorkflowActionContractTests {
     """
 
   @Test func scriptEnvironmentDisablesBytecodeAndKeepsOnlyAllowedValues() throws {
-    let source = yaml.replacing("entrypoint: main.py", with:
-      "entrypoint: main.py\n  inherit_env: [SELECTED_VALUE, PYTHONDONTWRITEBYTECODE]")
+    let source = yaml.replacing(
+      "entrypoint: main.py",
+      with:
+        "entrypoint: main.py\n  inherit_env: [SELECTED_VALUE, PYTHONDONTWRITEBYTECODE]")
     let action = try WorkflowScriptAction.parse(source, id: "count")
-    let environment = WorkflowPreparedBundle.environment(for: action, inherited: [
-      "PATH": "/usr/bin:/bin", "SELECTED_VALUE": "included", "UNSELECTED_VALUE": "excluded",
-      "PROWL_WORKFLOW_TOKEN": "excluded", "PYTHONDONTWRITEBYTECODE": "",
-    ])
-    #expect(environment == [
-      "PATH": "/usr/bin:/bin", "SELECTED_VALUE": "included", "PYTHONDONTWRITEBYTECODE": "1",
-    ])
+    let environment = WorkflowPreparedBundle.environment(
+      for: action,
+      inherited: [
+        "PATH": "/usr/bin:/bin", "SELECTED_VALUE": "included", "UNSELECTED_VALUE": "excluded",
+        "PROWL_WORKFLOW_TOKEN": "excluded", "PYTHONDONTWRITEBYTECODE": "",
+      ])
+    #expect(
+      environment == [
+        "PATH": "/usr/bin:/bin", "SELECTED_VALUE": "included", "PYTHONDONTWRITEBYTECODE": "1",
+      ])
   }
 
   @Test func validatesTypesWithoutApplyingDefaults() throws {
@@ -58,9 +64,11 @@ struct WorkflowActionContractTests {
   }
   @Test func resolvesPackageSchemasWithoutNetworkAccess() throws {
     let source = yaml.replacing("count: {type: integer}", with: "count: {$ref: ../../schemas/count.json}")
-    let action = try WorkflowScriptAction.parse(source, id: "count", files: [
-      "schemas/count.json": Data(#"{"type":"integer","minimum":1}"#.utf8)
-    ])
+    let action = try WorkflowScriptAction.parse(
+      source, id: "count",
+      files: [
+        "schemas/count.json": Data(#"{"type":"integer","minimum":1}"#.utf8)
+      ])
     try action.validateInput(.object(["count": .integer(2)]))
     #expect(throws: (any Error).self) { try action.validateInput(.object(["count": .integer(0)])) }
     #expect(throws: (any Error).self) { try WorkflowScriptAction.parse(source, id: "count") }

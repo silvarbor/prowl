@@ -22,7 +22,8 @@ struct CloseCommand: ParsableCommand {
     try CLIExecution.run(command: "close", output: options.outputMode, colorEnabled: options.colorEnabled) {
       let envelope = CommandEnvelope(
         output: options.outputMode,
-        command: .close(CloseInput(selector: try selector.resolveTerminalTarget(positionalTarget: target), force: force))
+        command: .close(
+          CloseInput(selector: try selector.resolveTerminalTarget(positionalTarget: target), force: force))
       )
       try CLIRunner.execute(envelope)
     }

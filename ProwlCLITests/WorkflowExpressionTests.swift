@@ -1,13 +1,17 @@
 import Foundation
 import Testing
+
 @testable import ProwlCLIShared
 
 struct WorkflowExpressionTests {
   @Test func arithmeticAndTypedValues() throws {
     #expect(try WorkflowExpression.evaluate("2 + 3 * 4", values: [:]) == .integer(14))
-    #expect(try WorkflowExpression.evaluate("state.items[1]", values: [
-      "state": .object(["items": .array([.boolean(false), .boolean(true)])])
-    ]) == .boolean(true))
+    #expect(
+      try WorkflowExpression.evaluate(
+        "state.items[1]",
+        values: [
+          "state": .object(["items": .array([.boolean(false), .boolean(true)])])
+        ]) == .boolean(true))
     #expect(try WorkflowExpression.evaluate("append([1], 2)", values: [:]) == .array([.integer(1), .integer(2)]))
   }
 

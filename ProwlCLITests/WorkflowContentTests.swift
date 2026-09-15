@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+
 @testable import ProwlCLIShared
 @testable import prowl
 
@@ -28,7 +29,9 @@ struct WorkflowContentTests {
   }
 
   @Test func readCommandUsesRunAndInvocation() throws {
-    let command = try WorkflowCommand.parseAsRoot(["read", "resource-1", "--run", UUID().uuidString, "--invocation", "3", "--json"])
+    let command = try WorkflowCommand.parseAsRoot([
+      "read", "resource-1", "--run", UUID().uuidString, "--invocation", "3", "--json",
+    ])
     #expect(command is WorkflowReadCommand)
   }
 }
