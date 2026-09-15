@@ -268,8 +268,8 @@ private enum GhosttySearchCorner {
   }
 }
 
-private struct GhosttySearchOverlayShape: Shape {
-  nonisolated func path(in rect: CGRect) -> Path {
+private nonisolated struct GhosttySearchOverlayShape: Shape {
+  func path(in rect: CGRect) -> Path {
     ConcentricRectangle(corners: .concentric(minimum: 8), isUniform: true).path(in: rect)
   }
 }
