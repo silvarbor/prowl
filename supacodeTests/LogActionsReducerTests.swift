@@ -38,7 +38,7 @@ struct LogActionsReducerTests {
   }
 
   /// A no-op action leaves state untouched, so the diff branch has nothing to
-  /// print; the reducer must still return the base's effect and state.
+  /// log; the reducer must still return the base's effect and state.
   @Test func leavesStateUnchangedForActionsThatDoNotMutate() async {
     let store = TestStore(initialState: Counter.State(count: 5, label: "keep")) {
       LogActionsReducer(base: Counter())

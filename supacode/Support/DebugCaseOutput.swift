@@ -40,7 +40,7 @@ struct LogActionsReducer<Base: Reducer>: Reducer where Base.State: Equatable {
       let previousState = state
       let effects = base._reduce(into: &state, action: action)
       if previousState != state, let diff = CustomDump.diff(previousState, state) {
-        print(diff)
+        logger.notice("State diff:\n\(diff)")
       }
       return effects
     #else
