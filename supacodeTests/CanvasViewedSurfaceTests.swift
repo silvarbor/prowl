@@ -6,6 +6,19 @@ import Testing
 
 @MainActor
 struct CanvasViewedSurfaceTests {
+  @Test func surfaceVisibilityTracksTheRenderedViewport() {
+    let fixture = Fixture()
+
+    #expect(fixture.state.isVisibleSurface(fixture.surface.id))
+
+    fixture.surface.setFrameOrigin(NSPoint(x: 2_000, y: 2_000))
+    #expect(!fixture.state.isVisibleSurface(fixture.surface.id))
+
+    fixture.surface.setFrameOrigin(NSPoint(x: 20, y: 20))
+    fixture.window.reportsVisible = false
+    #expect(!fixture.state.isVisibleSurface(fixture.surface.id))
+  }
+
   @Test func actualCanvasFocusDoesNotDependOnNormalModeSelectionOrWindowCache() {
     let fixture = Fixture()
 
@@ -80,10 +93,13 @@ struct CanvasViewedSurfaceTests {
     fixture.state.surfaceAgentStates[fixture.surface.id] = PaneAgentState(
       detectedAgent: .claude, state: .working, seen: true
     )
-    fixture.state.agentDetectionPresenceBySurface[fixture.surface.id] = AgentDetectionPresence(currentAgent: .claude)
-    fixture.state.lastAgentScreenScanBySurface[fixture.surface.id] = WorktreeTerminalState.AgentScreenScan(
-      agent: .claude, text: "", detection: AgentScreenDetection(state: .idle, reason: .legacyDetector)
-    )
+    fixture.state.agentDetectionPresenceBySurface[fixture.surface.id] = AgentDetectionPresence(
+      currentAgent: .claude)
+    fixture.state.lastAgentScreenScanBySurface[fixture.surface.id] =
+      WorktreeTerminalState.AgentScreenScan(
+        agent: .claude, text: "",
+        detection: AgentScreenDetection(state: .idle, reason: .legacyDetector)
+      )
 
     #expect(await fixture.state.detectAgentState(for: fixture.surface, tabId: fixture.tabID))
     #expect(fixture.state.surfaceAgentStates[fixture.surface.id]?.displayState == .done)
@@ -131,10 +147,13 @@ struct CanvasViewedSurfaceTests {
     fixture.state.surfaceAgentStates[fixture.surface.id] = PaneAgentState(
       detectedAgent: .claude, state: .idle, seen: false
     )
-    fixture.state.agentDetectionPresenceBySurface[fixture.surface.id] = AgentDetectionPresence(currentAgent: .claude)
-    fixture.state.lastAgentScreenScanBySurface[fixture.surface.id] = WorktreeTerminalState.AgentScreenScan(
-      agent: .claude, text: "", detection: AgentScreenDetection(state: .idle, reason: .legacyDetector)
-    )
+    fixture.state.agentDetectionPresenceBySurface[fixture.surface.id] = AgentDetectionPresence(
+      currentAgent: .claude)
+    fixture.state.lastAgentScreenScanBySurface[fixture.surface.id] =
+      WorktreeTerminalState.AgentScreenScan(
+        agent: .claude, text: "",
+        detection: AgentScreenDetection(state: .idle, reason: .legacyDetector)
+      )
     fixture.window.makeFirstResponder(nil)
     #expect(await fixture.state.detectAgentState(for: fixture.surface, tabId: fixture.tabID))
     #expect(fixture.state.surfaceAgentStates[fixture.surface.id]?.displayState == .done)

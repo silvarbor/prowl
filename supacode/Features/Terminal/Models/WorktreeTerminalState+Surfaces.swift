@@ -284,7 +284,10 @@ extension WorktreeTerminalState {
     }
   }
 
-  func performSplitOperation(_ operation: TerminalSplitTreeView.Operation, in tabId: TerminalTabID) {
+  func performSplitOperation(
+    _ operation: TerminalSplitTreeView.Operation,
+    in tabId: TerminalTabID
+  ) {
     guard var tree = trees[tabId] else { return }
 
     switch operation {
@@ -373,11 +376,13 @@ extension WorktreeTerminalState {
     )
     let view = GhosttySurfaceView(
       runtime: runtime,
-      workingDirectory: workingDirectoryOverride ?? inherited.workingDirectory ?? worktree.workingDirectory,
+      workingDirectory: workingDirectoryOverride ?? inherited.workingDirectory
+        ?? worktree.workingDirectory,
       initialInput: initialInput,
       fontSize: resolvedFontSize,
       context: context,
-      environment: worktree.scriptEnvironment.merging(additionalEnvironment) { _, patched in patched },
+      environment: worktree.scriptEnvironment.merging(additionalEnvironment) { _, patched in patched
+      },
       skipsSurfaceCreationForTesting: skipsSurfaceCreationForTesting,
       failsSurfaceCreationForTesting: failsSurfaceCreationForTesting,
       defersSurfaceCreation: defersSurfaceCreation
@@ -687,6 +692,20 @@ extension WorktreeTerminalState {
     return focusedSurfaceIdByTab[selectedTabId] == surfaceId
   }
 
+  /// Whether the terminal surface occupies a visible part of an on-screen window.
+  /// This intentionally does not require focus: background split panes still render.
+  func isVisibleSurface(_ surfaceId: UUID) -> Bool {
+    guard let view = surfaces[surfaceId], !view.isHiddenOrHasHiddenAncestor,
+      let window = view.window, window.occlusionState.contains(.visible)
+    else { return false }
+
+    guard view.bounds.width > 0, view.bounds.height > 0,
+      view.visibleRect.width > 0, view.visibleRect.height > 0
+    else { return false }
+
+    return view.bounds.intersects(view.visibleRect)
+  }
+
   /// Whether the user is actively looking at this worktree right now. Unknown window
   /// state (`nil`) is treated as not-viewed so a notification is never silently
   /// dropped. Canvas mode is also treated as not-viewed: the normal-mode window
@@ -704,12 +723,10 @@ extension WorktreeTerminalState {
       // Its logical focus callback runs before requestFocus actually installs the responder.
       // Panning preserves focus. visibleRect can extend outside bounds on non-clipping views.
       guard isFocusedSurface(surfaceId), let view = surfaces[surfaceId],
-        view.focused, !view.isHiddenOrHasHiddenAncestor,
+        view.focused, isVisibleSurface(surfaceId),
         let window = view.window
       else { return false }
-      let visibleBounds = view.bounds.intersection(view.visibleRect)
-      return !visibleBounds.isEmpty && window.isKeyWindow && window.occlusionState.contains(.visible)
-        && window.firstResponder === view
+      return window.isKeyWindow && window.firstResponder === view
     }
     return isViewingWorktree() && isFocusedSurface(surfaceId)
   }
@@ -776,7 +793,9 @@ extension WorktreeTerminalState {
     }
   }
 
-  func mapGhosttySplitDirection(_ direction: GhosttySplitAction.NewDirection) -> UserCustomSplitDirection {
+  func mapGhosttySplitDirection(_ direction: GhosttySplitAction.NewDirection)
+    -> UserCustomSplitDirection
+  {
     switch direction {
     case .left:
       return .left
@@ -839,7 +858,9 @@ extension WorktreeTerminalState {
   }
 
   @discardableResult
-  func closeSurface(id surfaceID: UUID, confirmation: TerminalCloseConfirmationMode = .prompt(.pane)) -> Bool {
+  func closeSurface(
+    id surfaceID: UUID, confirmation: TerminalCloseConfirmationMode = .prompt(.pane)
+  ) -> Bool {
     guard let view = surfaces[surfaceID] else { return false }
     return closeSurface(view, confirmation: confirmation)
   }
@@ -851,7 +872,9 @@ extension WorktreeTerminalState {
   }
 
   @discardableResult
-  private func closeSurface(_ view: GhosttySurfaceView, confirmation: TerminalCloseConfirmationMode) -> Bool {
+  private func closeSurface(_ view: GhosttySurfaceView, confirmation: TerminalCloseConfirmationMode)
+    -> Bool
+  {
     guard surfaces[view.id] != nil else { return false }
     guard confirmCloseIfNeeded(surfaceIDs: [view.id], mode: confirmation) else { return false }
     guard let tabId = tabId(containing: view.id), let tree = trees[tabId] else {
