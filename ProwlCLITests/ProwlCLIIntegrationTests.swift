@@ -1288,7 +1288,8 @@ final class ProwlCLIIntegrationTests: XCTestCase {
     let payload = WorkflowCommandPayload.list(
       WorkflowListPayload(
         worktree: WorkflowListWorktree(id: "wt", name: "main", path: "/Projects/App", rootPath: "/Projects/App"),
-        sources: WorkflowListSources(bundle: nil, user: "/Users/me/.prowl/workflows", repo: "/Projects/App/.prowl/workflows"),
+        sources: WorkflowListSources(
+          bundle: nil, user: "/Users/me/.prowl/workflows", repo: "/Projects/App/.prowl/workflows"),
         workflows: [
           WorkflowListEntry(
             id: "demo", name: "Demo", description: nil, scope: .repo, path: "/Projects/App/.prowl/workflows/demo.yaml",
@@ -1309,7 +1310,8 @@ final class ProwlCLIIntegrationTests: XCTestCase {
 
     let text = try runWithMockServer(
       socketPath: temporarySocketPath(suffix: "workflow-list-text"), response: response,
-      args: ["workflow", "list", "--no-color"]).1
+      args: ["workflow", "list", "--no-color"]
+    ).1
     XCTAssertEqual(text.exitCode, 0, text.stderr)
     XCTAssertTrue(text.stdout.contains("demo"), text.stdout)
     XCTAssertTrue(text.stdout.contains("[repo]"), text.stdout)
@@ -1336,10 +1338,11 @@ final class ProwlCLIIntegrationTests: XCTestCase {
 
   func testWorkflowReadRoundTripsPagedContentWithoutAToken() throws {
     let runID = UUID().uuidString
-    let payload = WorkflowCommandPayload.read(WorkflowContentPayload(
-      run: runID, invocation: 3, role: "author", step: "brief", resource: "resource-1",
-      body: "AA==", encoding: "base64", resources: [.init(id: "resource-1", name: "deliveries/brief.md")],
-      offset: 4, nextOffset: 5, totalBytes: 8))
+    let payload = WorkflowCommandPayload.read(
+      WorkflowContentPayload(
+        run: runID, invocation: 3, role: "author", step: "brief", resource: "resource-1",
+        body: "AA==", encoding: "base64", resources: [.init(id: "resource-1", name: "deliveries/brief.md")],
+        offset: 4, nextOffset: 5, totalBytes: 8))
     let response = try CommandResponse(
       ok: true, command: "workflow", schemaVersion: "prowl.cli.workflow.v1", data: RawJSON(encoding: payload))
     let (request, result) = try runWithMockServer(
@@ -1396,7 +1399,8 @@ final class ProwlCLIIntegrationTests: XCTestCase {
       updatedAt: "2026-08-30T01:00:00.000Z",
       finishedAt: nil,
       selfInitiated: WorkflowSelfInitiatedPayload(
-        line: "[Prowl] Read /Projects/App/.prowl/workflow-runs/R/prompts/brief.1.md and follow it — finish with: PROWL_WORKFLOW_TOKEN=T prowl workflow deliver -",
+        line:
+          "[Prowl] Read /Projects/App/.prowl/workflow-runs/R/prompts/brief.1.md and follow it — finish with: PROWL_WORKFLOW_TOKEN=T prowl workflow deliver -",
         promptPath: "/Projects/App/.prowl/workflow-runs/R/prompts/brief.1.md",
         completion: ["PROWL_WORKFLOW_TOKEN=T prowl workflow deliver -"]))
     let runResponse = try CommandResponse(
@@ -1404,7 +1408,9 @@ final class ProwlCLIIntegrationTests: XCTestCase {
       data: RawJSON(encoding: WorkflowCommandPayload.run(run)))
     let (runRequest, runResult) = try runWithMockServer(
       socketPath: temporarySocketPath(suffix: "workflow-run"), response: runResponse,
-      args: ["workflow", "run", "review", "p3", "--role", "reviewer=Codex", "--input", "rounds=2", "--skip", "x", "--json"])
+      args: [
+        "workflow", "run", "review", "p3", "--role", "reviewer=Codex", "--input", "rounds=2", "--skip", "x", "--json",
+      ])
     XCTAssertEqual(runResult.exitCode, 0, runResult.stderr)
     let runEnvelope = try JSONDecoder().decode(CommandEnvelope.self, from: runRequest)
     guard case .workflow(let runInput) = runEnvelope.command else { return XCTFail("Expected a workflow envelope") }
@@ -1424,11 +1430,13 @@ final class ProwlCLIIntegrationTests: XCTestCase {
     XCTAssertEqual(actionInput.actionInputs, ["count": .integer(3)])
     XCTAssertEqual(actionInput.target, .auto("p3"))
     let runOutput = try jsonObject(from: runResult.stdout)
-    XCTAssertEqual(((runOutput["data"] as? [String: Any])?["self_initiated"] as? [String: Any])?["prompt_path"] as? String,
+    XCTAssertEqual(
+      ((runOutput["data"] as? [String: Any])?["self_initiated"] as? [String: Any])?["prompt_path"] as? String,
       "/Projects/App/.prowl/workflow-runs/R/prompts/brief.1.md")
     let runText = try runWithMockServer(
       socketPath: temporarySocketPath(suffix: "workflow-run-text"), response: runResponse,
-      args: ["workflow", "run", "review", "--no-color"]).1
+      args: ["workflow", "run", "review", "--no-color"]
+    ).1
     XCTAssertEqual(runText.exitCode, 0, runText.stderr)
     XCTAssertTrue(runText.stdout.contains("Run: 0BADCAFE-0000-4000-8000-000000000042"), runText.stdout)
     XCTAssertTrue(runText.stdout.contains("Follow this line yourself"), runText.stdout)
@@ -1441,7 +1449,9 @@ final class ProwlCLIIntegrationTests: XCTestCase {
             run: run,
             delivery: WorkflowDeliveryPayload(
               state: .provisional, ordinal: 1, step: "brief", role: "author", record: output,
-              warnings: [WorkflowDeliveryWarningPayload(code: "missing_sections", message: "missing section(s) ## Claims")])
+              warnings: [
+                WorkflowDeliveryWarningPayload(code: "missing_sections", message: "missing section(s) ## Claims")
+              ])
           ))))
     let (deliverRequest, deliverResult) = try runWithMockServer(
       socketPath: temporarySocketPath(suffix: "workflow-deliver"), response: deliverResponse,
@@ -1450,7 +1460,9 @@ final class ProwlCLIIntegrationTests: XCTestCase {
       environment: [WorkflowSchema.tokenEnvironmentKey: "T"])
     XCTAssertEqual(deliverResult.exitCode, 0, deliverResult.stderr)
     let deliverEnvelope = try JSONDecoder().decode(CommandEnvelope.self, from: deliverRequest)
-    guard case .workflow(let deliverInput) = deliverEnvelope.command else { return XCTFail("Expected a workflow envelope") }
+    guard case .workflow(let deliverInput) = deliverEnvelope.command else {
+      return XCTFail("Expected a workflow envelope")
+    }
     XCTAssertEqual(deliverInput.action, .deliver)
     XCTAssertEqual(deliverInput.body, "## Scope\nOnly the scope.\n")
     XCTAssertEqual(deliverInput.verdict, "clean")
@@ -1459,12 +1471,14 @@ final class ProwlCLIIntegrationTests: XCTestCase {
     XCTAssertFalse(deliverInput.force)
     let deliverText = try runWithMockServer(
       socketPath: temporarySocketPath(suffix: "workflow-deliver-text"), response: deliverResponse,
-      args: ["workflow", "deliver", "-", "--no-color"], stdinData: Data("x".utf8)).1
+      args: ["workflow", "deliver", "-", "--no-color"], stdinData: Data("x".utf8)
+    ).1
     XCTAssertEqual(deliverText.exitCode, 0, deliverText.stderr)
     XCTAssertTrue(deliverText.stdout.contains("Provisional"), deliverText.stdout)
     XCTAssertTrue(deliverText.stdout.contains("missing_sections"), deliverText.stdout)
 
-    let noStdin = try runProwl(args: ["workflow", "deliver", "-"], environment: [ProwlSocket.environmentKey: "/nonexistent.sock"])
+    let noStdin = try runProwl(
+      args: ["workflow", "deliver", "-"], environment: [ProwlSocket.environmentKey: "/nonexistent.sock"])
     XCTAssertNotEqual(noStdin.exitCode, 0)
   }
 
@@ -2045,7 +2059,8 @@ final class ProwlCLIIntegrationTests: XCTestCase {
                 handle: 8,
                 title: "zsh",
                 cwd: "/Users/onevcat/Projects/Prowl",
-                focused: true
+                focused: true,
+                visible: true
               ),
               task: ListTask(status: "running")
             )
@@ -2189,7 +2204,8 @@ final class ProwlCLIIntegrationTests: XCTestCase {
                 path: "/Projects/Alpha", rootPath: "/Projects/Alpha", kind: "git"
               ),
               tab: ListTab(id: "t1", title: "Tab A", selected: true),
-              pane: ListPane(id: "p1", title: "zsh", cwd: "/Projects/Alpha", focused: true),
+              pane: ListPane(
+                id: "p1", title: "zsh", cwd: "/Projects/Alpha", focused: true, visible: true),
               task: ListTask(status: "running")
             ),
             ListResponseItem(
@@ -2198,7 +2214,8 @@ final class ProwlCLIIntegrationTests: XCTestCase {
                 path: "/Projects/Beta", rootPath: "/Projects/Beta", kind: "git"
               ),
               tab: ListTab(id: "t2", title: "Tab B", selected: true),
-              pane: ListPane(id: "p2", title: "zsh", cwd: "/Projects/Beta", focused: false),
+              pane: ListPane(
+                id: "p2", title: "zsh", cwd: "/Projects/Beta", focused: false, visible: true),
               task: ListTask(status: "idle")
             ),
           ]
@@ -2237,7 +2254,8 @@ final class ProwlCLIIntegrationTests: XCTestCase {
                 path: "/Projects/App", rootPath: "/Projects/App", kind: "git"
               ),
               tab: ListTab(id: "t1", title: "Tab 1", selected: true),
-              pane: ListPane(id: "p-same", title: "zsh", cwd: "/Projects/App", focused: true),
+              pane: ListPane(
+                id: "p-same", title: "zsh", cwd: "/Projects/App", focused: true, visible: true),
               task: ListTask(status: "idle")
             ),
             ListResponseItem(
@@ -2246,7 +2264,8 @@ final class ProwlCLIIntegrationTests: XCTestCase {
                 path: "/Projects/App", rootPath: "/Projects/App", kind: "git"
               ),
               tab: ListTab(id: "t1", title: "Tab 1", selected: true),
-              pane: ListPane(id: "p-diff", title: "zsh", cwd: "/Users/onevcat", focused: false),
+              pane: ListPane(
+                id: "p-diff", title: "zsh", cwd: "/Users/onevcat", focused: false, visible: true),
               task: ListTask(status: "idle")
             ),
           ]
@@ -2289,7 +2308,8 @@ final class ProwlCLIIntegrationTests: XCTestCase {
                 path: "/Projects/App", rootPath: "/Projects/App", kind: "git"
               ),
               tab: ListTab(id: "tab-a", title: "Tab A", selected: false),
-              pane: ListPane(id: "pa1", title: "zsh", cwd: "/Projects/App", focused: false),
+              pane: ListPane(
+                id: "pa1", title: "zsh", cwd: "/Projects/App", focused: false, visible: false),
               task: ListTask(status: "idle")
             ),
             ListResponseItem(
@@ -2298,7 +2318,8 @@ final class ProwlCLIIntegrationTests: XCTestCase {
                 path: "/Projects/App", rootPath: "/Projects/App", kind: "git"
               ),
               tab: ListTab(id: "tab-b", title: "Tab B", selected: true),
-              pane: ListPane(id: "pb1", title: "vim", cwd: "/Projects/App", focused: true),
+              pane: ListPane(
+                id: "pb1", title: "vim", cwd: "/Projects/App", focused: true, visible: true),
               task: ListTask(status: "idle")
             ),
             ListResponseItem(
@@ -2307,7 +2328,8 @@ final class ProwlCLIIntegrationTests: XCTestCase {
                 path: "/Projects/App", rootPath: "/Projects/App", kind: "git"
               ),
               tab: ListTab(id: "tab-b", title: "Tab B", selected: true),
-              pane: ListPane(id: "pb2", title: "htop", cwd: "/Projects/App", focused: false),
+              pane: ListPane(
+                id: "pb2", title: "htop", cwd: "/Projects/App", focused: false, visible: true),
               task: ListTask(status: "idle")
             ),
           ]
@@ -2343,7 +2365,8 @@ final class ProwlCLIIntegrationTests: XCTestCase {
                 path: "/Projects/App", rootPath: "/Projects/App", kind: "git"
               ),
               tab: ListTab(id: "t1", title: "Tab A", selected: true),
-              pane: ListPane(id: "p1", title: "zsh", cwd: "/Projects/App", focused: true),
+              pane: ListPane(
+                id: "p1", title: "zsh", cwd: "/Projects/App", focused: true, visible: true),
               task: ListTask(status: "running")
             )
           ]
@@ -3256,7 +3279,6 @@ final class ProwlCLIIntegrationTests: XCTestCase {
 
   // MARK: - Helpers
 
-
   private func runWithMockServer(
     socketPath: String,
     response: CommandResponse,
@@ -3628,6 +3650,7 @@ private struct ListPane: Encodable {
   let title: String
   let cwd: String?
   let focused: Bool
+  let visible: Bool
   let agent: String?
 
   init(
@@ -3636,6 +3659,7 @@ private struct ListPane: Encodable {
     title: String,
     cwd: String?,
     focused: Bool,
+    visible: Bool,
     agent: String? = nil
   ) {
     self.id = id
@@ -3643,6 +3667,7 @@ private struct ListPane: Encodable {
     self.title = title
     self.cwd = cwd
     self.focused = focused
+    self.visible = visible
     self.agent = agent
   }
 }
