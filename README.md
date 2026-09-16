@@ -121,7 +121,7 @@ A personal fork of [Supacode](https://github.com/supabitapp/supacode), built on 
 ```bash
 make build-ghostty-xcframework   # Build GhosttyKit from Zig source
 make build-app                   # Build the macOS app (Debug)
-make run-app                     # Build, install, and launch Debug from /Applications/Prowl Debug.app
+make run-app                     # Build and launch Debug from the Xcode build products directory
 make install-debug               # Build Debug and install to /Applications/Prowl Debug.app
 make install-dev-build           # Alias-compatible Debug install target
 make install-release             # Build Release, sign locally, install to /Applications
