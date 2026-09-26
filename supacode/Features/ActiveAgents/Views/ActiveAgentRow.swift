@@ -171,8 +171,8 @@ private struct BaguaIndicatorLayerView: NSViewRepresentable {
   }
 }
 
-private final class BaguaIndicatorNSView: NSView {
-  private static let animationKey = "bagua.frames"
+final class BaguaIndicatorNSView: NSView {
+  static let animationKey = "bagua.frames"
 
   var color: NSColor {
     didSet {
@@ -183,10 +183,14 @@ private final class BaguaIndicatorNSView: NSView {
     }
   }
 
-  private let glyphLayer = CALayer()
+  let glyphLayer = CALayer()
+  /// Core Animation's media time. Injected so tests can mount indicators at
+  /// chosen moments.
+  private let mediaTime: () -> CFTimeInterval
 
-  init(color: NSColor) {
+  init(color: NSColor, mediaTime: @escaping () -> CFTimeInterval = CACurrentMediaTime) {
     self.color = color
+    self.mediaTime = mediaTime
     super.init(frame: .zero)
     wantsLayer = true
     layer?.addSublayer(glyphLayer)
@@ -246,7 +250,7 @@ private final class BaguaIndicatorNSView: NSView {
     animation.isRemovedOnCompletion = false
     // The indicator's ancestors are plain view layers, so its local time is
     // media time, the clock `beginTime` is measured on.
-    animation.beginTime = BaguaWorkingIndicator.cycleStart(containing: CACurrentMediaTime())
+    animation.beginTime = BaguaWorkingIndicator.cycleStart(containing: mediaTime())
     glyphLayer.contents = images[0]
     glyphLayer.removeAnimation(forKey: Self.animationKey)
     glyphLayer.add(animation, forKey: Self.animationKey)

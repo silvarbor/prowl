@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import Testing
 
 @testable import supacode
@@ -66,6 +66,74 @@ struct BaguaWorkingIndicatorTests {
     let nextCycle = BaguaWorkingIndicator.cycleStart(containing: cycle * 6 + duration * 3)
     #expect(early == late)
     #expect((nextCycle - early).isApproximatelyEqual(to: cycle))
+  }
+}
+
+/// Mounts real indicator views in a window, the path that installs the layer
+/// animation, with media time injected so two mounts land at chosen moments.
+@MainActor
+struct BaguaIndicatorLayerTests {
+  @Test func indicatorsMountedAtDifferentMomentsShowTheSameGlyph() throws {
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 100, height: 40),
+      styleMask: [.borderless], backing: .buffered, defer: false
+    )
+    window.isReleasedWhenClosed = false
+    defer { window.close() }
+
+    // The second mount lands 3.37 s later: mid-frame, and not a whole number
+    // of cycles, so an animation phased from its own mount time would drift.
+    var now: CFTimeInterval = 5_000.05
+    let first = BaguaIndicatorNSView(color: .orange, mediaTime: { now })
+    window.contentView?.addSubview(first)
+    now += 3.37
+    let second = BaguaIndicatorNSView(color: .orange, mediaTime: { now })
+    window.contentView?.addSubview(second)
+
+    let animations = try [first, second].map { view in
+      try #require(
+        view.glyphLayer.animation(forKey: BaguaIndicatorNSView.animationKey) as? CAKeyframeAnimation
+      )
+    }
+    for animation in animations {
+      #expect(animation.keyPath == "contents")
+      #expect(animation.calculationMode == .discrete)
+      #expect(animation.values?.count == BaguaWorkingIndicator.cycleLength)
+      #expect(animation.keyTimes == BaguaWorkingIndicator.cycleKeyTimes)
+      #expect(animation.duration == BaguaWorkingIndicator.cycleDuration)
+      #expect(animation.repeatCount == .infinity)
+      #expect(animation.speed == 1)
+      #expect(animation.timeOffset == 0)
+    }
+
+    // Sample one full cycle after both mounts, mid-frame so no sample sits on
+    // a float boundary. Each layer's local time is media time minus its
+    // beginTime; the glyph it shows must be the one `frame(at:)` gives for
+    // that media time, for both layers alike.
+    let duration = BaguaWorkingIndicator.frameDuration
+    let firstTick = Int((now / duration).rounded(.up))
+    for tick in firstTick..<(firstTick + BaguaWorkingIndicator.cycleLength) {
+      let sample = duration * (Double(tick) + 0.5)
+      let expected = BaguaWorkingIndicator.frame(at: sample)
+      for animation in animations {
+        #expect(shownGlyph(of: animation, at: sample) == expected)
+      }
+    }
+  }
+
+  /// The glyph a discrete keyframe animation shows at `mediaTime`, read from
+  /// the animation's own timing and key times.
+  private func shownGlyph(of animation: CAKeyframeAnimation, at mediaTime: CFTimeInterval) -> String? {
+    let local = (mediaTime - animation.beginTime) * Double(animation.speed) + animation.timeOffset
+    let fraction = local.truncatingRemainder(dividingBy: animation.duration) / animation.duration
+    guard let keyTimes = animation.keyTimes?.map(\.doubleValue) else {
+      return nil
+    }
+    guard let index = keyTimes.lastIndex(where: { $0 <= fraction }), index < BaguaWorkingIndicator.cycleLength
+    else {
+      return nil
+    }
+    return BaguaWorkingIndicator.cycleFrames[index]
   }
 }
 
