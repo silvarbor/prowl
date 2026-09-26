@@ -11,7 +11,7 @@ extension Reducer where State: Equatable {
 }
 
 /// When set, `LogActionsReducer` labels every action and logs it to the unified
-/// log, plus prints a `CustomDump` state diff. Off by default: the label
+/// log, followed by a `CustomDump` state diff. Off by default: the label
 /// reflection (`debugCaseOutput`) together with a full app-state snapshot and a
 /// deep `==` compare run on *every* action, which stack sampling measured as a
 /// steady main-thread cost under heavy action throughput. Enable per launch with
@@ -40,7 +40,10 @@ struct LogActionsReducer<Base: Reducer>: Reducer where Base.State: Equatable {
       let previousState = state
       let effects = base._reduce(into: &state, action: action)
       if previousState != state, let diff = CustomDump.diff(previousState, state) {
-        print(diff)
+        let chunks = stateDiffLogChunks(diff)
+        for (index, chunk) in chunks.enumerated() {
+          logger.notice("State diff \(index + 1)/\(chunks.count):\n\(chunk)")
+        }
       }
       return effects
     #else
@@ -53,6 +56,56 @@ struct LogActionsReducer<Base: Reducer>: Reducer where Base.State: Equatable {
       return base._reduce(into: &state, action: action)
     #endif
   }
+}
+
+/// The unified log keeps the first 1015 bytes of a message and replaces the
+/// rest with "<…>". A full app-state diff is far longer, so it is
+/// logged in chunks. The budget leaves room for the "State diff n/m:" label.
+let stateDiffChunkByteBudget = 900
+
+/// Splits `diff` into chunks of at most `byteBudget` UTF-8 bytes, breaking at
+/// line ends where it can. A line longer than the budget is split between
+/// characters. Concatenating the chunks in order reproduces `diff` exactly.
+func stateDiffLogChunks(_ diff: String, byteBudget: Int = stateDiffChunkByteBudget) -> [String] {
+  var chunks: [String] = []
+  var current = ""
+  var currentBytes = 0
+  func append(_ piece: Substring) {
+    let bytes = piece.utf8.count
+    if currentBytes + bytes > byteBudget, !current.isEmpty {
+      chunks.append(current)
+      current = ""
+      currentBytes = 0
+    }
+    current += piece
+    currentBytes += bytes
+  }
+  var lineStart = diff.startIndex
+  while lineStart < diff.endIndex {
+    let lineEnd = diff[lineStart...].firstIndex(of: "\n").map { diff.index(after: $0) } ?? diff.endIndex
+    let line = diff[lineStart..<lineEnd]
+    if line.utf8.count <= byteBudget {
+      append(line)
+    } else {
+      var pieceStart = line.startIndex
+      var pieceBytes = 0
+      for index in line.indices {
+        let characterBytes = line[index].utf8.count
+        if pieceBytes + characterBytes > byteBudget, pieceStart < index {
+          append(line[pieceStart..<index])
+          pieceStart = index
+          pieceBytes = 0
+        }
+        pieceBytes += characterBytes
+      }
+      append(line[pieceStart...])
+    }
+    lineStart = lineEnd
+  }
+  if !current.isEmpty {
+    chunks.append(current)
+  }
+  return chunks
 }
 
 func debugCaseOutput(

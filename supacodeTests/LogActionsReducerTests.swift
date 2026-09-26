@@ -50,3 +50,57 @@ struct LogActionsReducerTests {
     #expect(store.state.label == "keep")
   }
 }
+
+struct StateDiffLogChunksTests {
+  @Test func keepsAShortDiffInOneChunk() {
+    let diff = "  Counter.State(\n-   count: 0,\n+   count: 1,\n  )\n"
+
+    #expect(stateDiffLogChunks(diff) == [diff])
+  }
+
+  @Test func returnsNoChunksForAnEmptyDiff() {
+    #expect(stateDiffLogChunks("").isEmpty)
+  }
+
+  @Test func breaksALongDiffAtLineEnds() {
+    let diff = (0..<200).map { "+   item\($0): \"value \($0)\",\n" }.joined()
+
+    let chunks = stateDiffLogChunks(diff, byteBudget: 256)
+
+    #expect(chunks.count > 1)
+    #expect(chunks.joined() == diff)
+    for chunk in chunks {
+      #expect(chunk.utf8.count <= 256)
+      #expect(chunk.hasSuffix("\n"))
+    }
+  }
+
+  @Test func splitsALineLongerThanTheBudget() {
+    let line = String(repeating: "x", count: 1_000)
+    let diff = "- before\n+ \(line)\n  after"
+
+    let chunks = stateDiffLogChunks(diff, byteBudget: 64)
+
+    #expect(chunks.joined() == diff)
+    #expect(chunks.allSatisfy { $0.utf8.count <= 64 })
+  }
+
+  @Test func neverSplitsInsideACharacter() {
+    // "é" is two UTF-8 bytes and the family emoji is one character of 25 bytes,
+    // so an odd budget would cut both if splitting counted bytes alone.
+    let diff = String(repeating: "é", count: 40) + String(repeating: "👨‍👩‍👧‍👦", count: 4)
+
+    let chunks = stateDiffLogChunks(diff, byteBudget: 27)
+
+    #expect(chunks.joined() == diff)
+    #expect(chunks.allSatisfy { $0.utf8.count <= 27 })
+    #expect(chunks.allSatisfy { chunk in chunk.allSatisfy { $0 == "é" || $0 == "👨‍👩‍👧‍👦" } })
+  }
+
+  @Test func leavesRoomForTheLabelUnderTheLogLimit() {
+    // The unified log keeps the first 1015 bytes of a message.
+    let label = "State diff 999/999:\n"
+
+    #expect(label.utf8.count + stateDiffChunkByteBudget <= 1_015)
+  }
+}
