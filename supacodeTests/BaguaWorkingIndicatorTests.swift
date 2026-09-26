@@ -11,12 +11,12 @@ struct BaguaWorkingIndicatorTests {
   @Test func frameSelectionLoopsByDuration() {
     let duration = BaguaWorkingIndicator.frameDuration
 
-    #expect(BaguaWorkingIndicator.frame(at: Date(timeIntervalSinceReferenceDate: 0)) == "☰")
-    #expect(BaguaWorkingIndicator.frame(at: Date(timeIntervalSinceReferenceDate: duration)) == "☱")
-    #expect(BaguaWorkingIndicator.frame(at: Date(timeIntervalSinceReferenceDate: duration * 7)) == "☷")
-    #expect(BaguaWorkingIndicator.frame(at: Date(timeIntervalSinceReferenceDate: duration * 8)) == "☶")
-    #expect(BaguaWorkingIndicator.frame(at: Date(timeIntervalSinceReferenceDate: duration * 13)) == "☱")
-    #expect(BaguaWorkingIndicator.frame(at: Date(timeIntervalSinceReferenceDate: duration * 14)) == "☰")
+    #expect(BaguaWorkingIndicator.frame(at: 0) == "☰")
+    #expect(BaguaWorkingIndicator.frame(at: duration) == "☱")
+    #expect(BaguaWorkingIndicator.frame(at: duration * 7) == "☷")
+    #expect(BaguaWorkingIndicator.frame(at: duration * 8) == "☶")
+    #expect(BaguaWorkingIndicator.frame(at: duration * 13) == "☱")
+    #expect(BaguaWorkingIndicator.frame(at: duration * 14) == "☰")
   }
 
   @Test func cycleFramesMatchTheClockDrivenSequence() {
@@ -25,7 +25,7 @@ struct BaguaWorkingIndicatorTests {
     // truncates into the previous tick, so a boundary sample would compare the
     // keyframe order against a float artifact rather than against the sequence.
     let expected = (0..<BaguaWorkingIndicator.cycleLength).map { tick in
-      BaguaWorkingIndicator.frame(at: Date(timeIntervalSinceReferenceDate: duration * (Double(tick) + 0.5)))
+      BaguaWorkingIndicator.frame(at: duration * (Double(tick) + 0.5))
     }
 
     #expect(BaguaWorkingIndicator.cycleFrames == expected)
@@ -48,21 +48,24 @@ struct BaguaWorkingIndicatorTests {
     }
   }
 
-  @Test func cycleOffsetTracksPositionWithinTheCycle() {
+  @Test func cycleStartAnchorsEveryMountToTheSameCycleBoundary() {
     let duration = BaguaWorkingIndicator.frameDuration
     let cycle = BaguaWorkingIndicator.cycleDuration
 
-    #expect(BaguaWorkingIndicator.cycleOffset(at: Date(timeIntervalSinceReferenceDate: 0)) == 0)
+    #expect(BaguaWorkingIndicator.cycleStart(containing: 0) == 0)
+    #expect(BaguaWorkingIndicator.cycleStart(containing: duration * 3) == 0)
     #expect(
-      BaguaWorkingIndicator.cycleOffset(at: Date(timeIntervalSinceReferenceDate: duration * 3))
-        .isApproximatelyEqual(to: duration * 3)
+      BaguaWorkingIndicator.cycleStart(containing: cycle * 5 + duration * 3)
+        .isApproximatelyEqual(to: cycle * 5)
     )
-    // A whole cycle later the animation must be back at the same phase, which is
-    // what keeps every spinner on screen showing the same glyph.
-    #expect(
-      BaguaWorkingIndicator.cycleOffset(at: Date(timeIntervalSinceReferenceDate: cycle + duration * 3))
-        .isApproximatelyEqual(to: duration * 3)
-    )
+    // Two mounts inside the same cycle anchor to the same boundary, and a mount a
+    // cycle later anchors exactly one cycle later, which is what keeps every
+    // spinner on screen showing the same glyph.
+    let early = BaguaWorkingIndicator.cycleStart(containing: cycle * 5 + duration * 0.5)
+    let late = BaguaWorkingIndicator.cycleStart(containing: cycle * 5 + duration * 13.5)
+    let nextCycle = BaguaWorkingIndicator.cycleStart(containing: cycle * 6 + duration * 3)
+    #expect(early == late)
+    #expect((nextCycle - early).isApproximatelyEqual(to: cycle))
   }
 }
 

@@ -93,9 +93,11 @@ struct ActiveAgentRow: View {
 /// all main-thread work. A layer animation runs on the render server and never
 /// touches the graph again.
 ///
-/// Frame selection stays a pure function of wall-clock time, and the animation
-/// is started with a matching `timeOffset`, so every spinner on screen shows
-/// the same glyph as before.
+/// Frame selection is a pure function of Core Animation's media time
+/// (`CACurrentMediaTime`), and every animation begins at a cycle boundary on
+/// that clock, so every spinner on screen shows the same glyph at the same
+/// moment however far apart they were mounted. Media time is monotonic, so a
+/// change to the system clock cannot split the phase.
 struct BaguaWorkingIndicator: View {
   static let frames = ["☰", "☱", "☲", "☳", "☴", "☵", "☶", "☷"]
   static let frameDuration = 0.12
@@ -126,12 +128,13 @@ struct BaguaWorkingIndicator: View {
     (0..<cycleLength).map { frames[frameIndex(atTick: $0)] }
   }
 
-  static func frame(at date: Date) -> String {
-    frames[frameIndex(at: date)]
+  /// The glyph shown at `mediaTime`, in seconds on Core Animation's clock.
+  static func frame(at mediaTime: CFTimeInterval) -> String {
+    frames[frameIndex(at: mediaTime)]
   }
 
-  static func frameIndex(at date: Date) -> Int {
-    frameIndex(atTick: Int(date.timeIntervalSinceReferenceDate / frameDuration))
+  static func frameIndex(at mediaTime: CFTimeInterval) -> Int {
+    frameIndex(atTick: Int((mediaTime / frameDuration).rounded(.down)))
   }
 
   static func frameIndex(atTick tick: Int) -> Int {
@@ -147,11 +150,12 @@ struct BaguaWorkingIndicator: View {
     (0...cycleLength).map { NSNumber(value: Double($0) / Double(cycleLength)) }
   }
 
-  /// How far into the current cycle wall-clock time sits, used to start the
-  /// layer animation in phase with every other spinner.
-  static func cycleOffset(at date: Date) -> TimeInterval {
-    let elapsed = date.timeIntervalSinceReferenceDate
-    return elapsed.truncatingRemainder(dividingBy: cycleDuration)
+  /// The start of the cycle containing `mediaTime`. Used as the animation's
+  /// `beginTime`, it puts the animation's local time a whole number of cycles
+  /// behind media time, so the glyph it shows is `frame(at:)` of the current
+  /// media time whenever the animation was added.
+  static func cycleStart(containing mediaTime: CFTimeInterval) -> CFTimeInterval {
+    (mediaTime / cycleDuration).rounded(.down) * cycleDuration
   }
 }
 
@@ -240,7 +244,9 @@ private final class BaguaIndicatorNSView: NSView {
     animation.duration = BaguaWorkingIndicator.cycleDuration
     animation.repeatCount = .infinity
     animation.isRemovedOnCompletion = false
-    animation.timeOffset = BaguaWorkingIndicator.cycleOffset(at: Date())
+    // The indicator's ancestors are plain view layers, so its local time is
+    // media time, the clock `beginTime` is measured on.
+    animation.beginTime = BaguaWorkingIndicator.cycleStart(containing: CACurrentMediaTime())
     glyphLayer.contents = images[0]
     glyphLayer.removeAnimation(forKey: Self.animationKey)
     glyphLayer.add(animation, forKey: Self.animationKey)
