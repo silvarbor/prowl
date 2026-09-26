@@ -59,8 +59,10 @@ struct RepositorySectionView: View {
           iconTint: appearance.color?.color ?? .accentColor,
           repositoryRootURL: repository.rootURL,
           nameTooltip: repository.capabilities.supportsWorktrees
-            ? (isExpanded ? "Collapse" : "Expand")
-            : (repository.isWorkspace ? "Open terminal in workspace" : "Open terminal in folder")
+            ? (isExpanded ? String(localized: "Collapse") : String(localized: "Expand"))
+            : (repository.isWorkspace
+              ? String(localized: "Open terminal in workspace")
+              : String(localized: "Open terminal in folder"))
         )
         // Expanded git repos move the count into the worktree rows, so the
         // header stays quiet. Workspaces keep the header badge even when
@@ -254,6 +256,12 @@ struct RepositorySectionView: View {
             onShowOutgoingChanges: { childID in
               store.send(
                 .delegate(.showOutgoingChanges(.workspaceChild(workspaceID: repository.id, path: childID))))
+            },
+            onEditWorkspace: {
+              store.send(.workspaceEditing(.promptRequested(repository.id, removingChildID: nil)))
+            },
+            onRemoveFromWorkspace: { childID in
+              store.send(.workspaceEditing(.promptRequested(repository.id, removingChildID: childID)))
             }
           )
         } else {
@@ -302,6 +310,13 @@ struct RepositorySectionView: View {
       }
     }
     Divider()
+    if repository.isWorkspace {
+      Button("Edit Workspace…") {
+        store.send(.workspaceEditing(.promptRequested(repository.id, removingChildID: nil)))
+      }
+      .help("Edit the workspace title, description, links, and repositories")
+      .disabled(isRemovingRepository)
+    }
     Button("Repo Settings…") {
       openRepoSettings()
     }

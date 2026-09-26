@@ -1,6 +1,7 @@
 import ComposableArchitecture
 import Foundation
 import IdentifiedCollections
+import ProwlCLIShared
 
 extension RepositoriesFeature.State {
   var selectedWorktreeID: Worktree.ID? {
@@ -661,5 +662,11 @@ struct WorktreeRowSections: Equatable {
     rows.append(contentsOf: pending)
     rows.append(contentsOf: unpinned)
     return rows
+  }
+}
+
+extension RepositoriesFeature.State {
+  var canEnterShelf: Bool {
+    repositories.contains(where: { $0.kind == .plain }) || !orderedWorktreeRows().isEmpty
   }
 }

@@ -8,7 +8,7 @@ extension GhosttySurfaceView {
       accessibilityPaneIndexHelp = nil
       return
     }
-    accessibilityPaneIndexHelp = "Pane \(index) of \(total)"
+    accessibilityPaneIndexHelp = String(localized: "Pane \(index) of \(total)")
   }
 
   override func isAccessibilityElement() -> Bool {
@@ -30,7 +30,7 @@ extension GhosttySurfaceView {
     if !pwd.isEmpty {
       return pwd
     }
-    return "Terminal pane"
+    return String(localized: "Terminal pane")
   }
 
   override func accessibilityValue() -> Any? {
@@ -150,6 +150,15 @@ extension GhosttySurfaceView {
       topLeftTag: GHOSTTY_POINT_VIEWPORT,
       bottomRightTag: GHOSTTY_POINT_VIEWPORT
     )
+  }
+
+  func readStyledSnapshotForCLI() -> String? {
+    guard let surface else { return nil }
+    var text = ghostty_text_s()
+    guard ghostty_surface_read_snapshot(surface, &text) else { return nil }
+    defer { ghostty_surface_free_text(surface, &text) }
+    guard text.text_len <= 4 * 1024 * 1024 else { return nil }
+    return Self.string(from: text)
   }
 
   func readActiveContentsForCLI() -> String? {

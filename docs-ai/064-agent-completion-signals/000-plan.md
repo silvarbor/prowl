@@ -2,17 +2,21 @@
 
 | | |
 | --- | --- |
-| **Status** | In progress — S1 #715, S2 #718, S3 wave 1 #721/#723/#725/#728, and follow-ups #732/#736 shipped in v2026.8.29; #733 re-dispatch and #726 T0 scheduled in R2a, #726 T1 in R2b; S4/S5 planned |
+| **Status** | In progress — S1 #715, S2 #718, S3 wave 1 #721/#723/#725/#728, and follow-ups #732/#736 shipped in v2026.8.29; #733 re-dispatch (#741) and #726 T0 (#739) shipped in R2a; #726 T1a inventory/configuration preflight implemented in [016](016-t1-contract-test-plan.md) for R2b; eight-runtime headless checks verified; T1 verification and scoped publication merged (#769); S4/S5 planned |
 | **Anchor date** | 2026-08-22 |
-| **Primary PRs** | #715 (S1); #718 (S2); #721, #723 (S3a); #725 (S3b); #728 (S3c); #732 (012); #736 (013) |
+| **Primary PRs** | #715 (S1); #718 (S2); #721, #723 (S3a); #725 (S3b); #728 (S3c); #732 (012); #736 (013); #741 (re-dispatch); #739 (T0); #767 (runtime contracts, merged) |
 | **Related** | [063 agent-workflows](../063-agent-workflows/000-plan.md) (consumer; defines the `ObservedAgentState` observer this entry feeds), [030 agent-status-detection](../030-agent-status-detection/000-plan.md), [045 native-agent-session-detection](../045-native-agent-session-detection/000-plan.md), [055 agent-profile-runtimes](../055-agent-profile-runtimes/000-plan.md), [059 agent-transcript-snapshots](../059-agent-transcript-snapshots/000-plan.md), [060 cli-targeting-and-contract-governance](../060-prowl-cli-targeting-and-contract-governance/000-plan.md), [#473](https://github.com/onevcat/Prowl/issues/473), [#676](https://github.com/onevcat/Prowl/issues/676), `docs/components/agent-detection.md`, `docs/components/cli.md` |
+
+Current state-provider architecture and per-runtime migration plans are maintained in
+[068 — Agent State Providers](../068-agent-state-providers/000-plan.md). This entry retains its original scope and history.
 
 ## Background
 
 Prowl's per-pane agent status (`working` / `blocked` / `idle` / `done`) comes from
-heuristic screen and process detection (030/045, `supacode/Domain/AgentDetection/PaneAgentState.swift`)
-plus the 3 s working hold. It is good enough for the sidebar and Active Agents, and #676
-documents the states it still misreports. Two consumers need something stronger:
+heuristic screen and process detection (030/045, `supacode/Domain/AgentDetection/PaneAgentState.swift`).
+Explicit screen states apply immediately since 030.015 retired the former 3 s Working hold.
+The detector is good enough for the sidebar and Active Agents, and #676 documents the states
+it still misreports. Two consumers need something stronger:
 
 - An agent orchestrating other agents through the `prowl` CLI (the "route B" flow that
   onevcat runs daily and that 063 formalizes) has to *wait* for a sibling agent to finish.
@@ -32,7 +36,7 @@ at launch and have the agent report to Prowl through the bundled `prowl` binary.
 
 - Introduce one **agent signal bus** per pane that merges four layers of evidence, each
   tagged with `source` and `confidence`:
-  0. cooperative signals — `prowl agents signal` (and 063's `prowl workflow done`);
+  0. cooperative signals — `prowl agents signal` (and 063's `prowl workflow deliver`);
   1. native hooks installed by Prowl at launch (agent-reported, exact);
   2. deterministic observations — native transcript turn-end markers (059), agent process
      exit, OSC progress/notification sequences the CLI emits itself;
@@ -59,7 +63,7 @@ at launch and have the agent report to Prowl through the bundled `prowl` binary.
   Hooks are attached only through launch-scoped flags/config the adapter has verified; a
   runtime without such a channel simply stays at layers 2–3.
 - Waiting semantics inside 063 workflows: the runner still completes steps only on
-  `prowl workflow done`; this entry improves its watchdog and enables 063's V2 observe mode.
+  `prowl workflow deliver`; this entry improves its watchdog and enables 063's V2 observe mode.
 
 ## Design / Approach
 
@@ -99,6 +103,11 @@ observer) see identical events. Registration and snapshot capture stay one main-
 Each subscriber is independently bounded. If it falls behind, state churn is recovered from
 a new snapshot; signal or lifecycle overflow is explicit and S2's waiter re-subscribes before
 surfacing an error. Critical events are never silently discarded.
+
+The planned log/screen extension separates signal production from final state decisions:
+providers supply evidence and one state machine owns precedence and transitions. See
+[017 — Unified state decision](017-agent-state-decision.md) for the agreed architecture
+and the unresolved foreground-identity and history-baseline gates.
 
 ### `prowl agents wait`
 
@@ -346,3 +355,37 @@ opencode; partial for qodercli/qwen/amp; docs/bundle for the rest). Key conclusi
   environment that S3 will extend; A2 intentionally injects no hooks. With that dependency
   ready, S1 (signal bus, multicast observer, and `agents signal`) is the next R1 critical-path
   slice, followed by S2 and S3 wave 1.
+
+- Updated 2026-09-05 (#726 T1 planning): Inventoried all eight newer-than-attested binaries and researched low-cost/BYOK routes. Proposed a zero-inference default, scoped live evidence, and explicit attestation publication in [016-t1-contract-test-plan.md](016-t1-contract-test-plan.md); repeatable operations live in [agent-contracts-runbook.md](agent-contracts-runbook.md). Implementation and inference verification remain pending.
+
+- Updated 2026-09-05 (#726 T1a): Implemented the zero-inference entry point, strict model policy, private reports, and production configuration preflight with receipt/test-count checks; [016](016-t1-contract-test-plan.md) records validation and the [runbook](agent-contracts-runbook.md) now contains working commands. Live contracts and attestation publication remain pending.
+
+- Updated 2026-09-05 (#726 live checks): Eight runtimes passed the production headless preparation/real bridge suite in #767, including the Codex absent-notifier fix found during execution. See [016](016-t1-contract-test-plan.md) for scoped results and remaining publication work and separate D2 interactive acceptance.
+
+- Updated 2026-09-05 (T1 closure): Full eight-runtime verification and explicit scoped publication passed; the baseline and matrix were advanced while preserving interactive history. Release guidance now uses `verify` then `publish`. See [064.016](016-t1-contract-test-plan.md). Merge this closure, then proceed to D2; GUI E2E is outside #726 T1.
+
+- Updated 2026-09-05 (release order): T1 #769 merged. R2b now proceeds to 063-D3 handoff/checkpoint and first built-in E2E, with 063-D2 adversarial review deferred to R3. T1 remains prerequisite to both; S4 scheduling/dependencies are unchanged.
+
+- Updated 2026-09-12: Agreed independent log/screen providers and one state decision component;
+  recorded local identity findings and open implementation gates in
+  [017-agent-state-decision.md](017-agent-state-decision.md). Implementation remains planned.
+
+- Updated 2026-09-12: Verified same-PID resume without log changes and background writes
+  defeating mtime selection; recorded direct-child lifecycle events and the requirement
+  to retain Working after parent completion while children run in
+  [018-foreground-and-subagent-findings.md](018-foreground-and-subagent-findings.md).
+- Updated 2026-09-12: Defined selected main-session identity as the log attachment
+  gate and audited current self-report and resolver limits in
+  [019-foreground-identity-contract.md](019-foreground-identity-contract.md).
+- Updated 2026-09-12: Completed public-source and real-TUI selection research;
+  verified configured title/footer identity and specified screen fallback gates in
+  [020-selection-channel-research.md](020-selection-channel-research.md).
+- Updated 2026-09-12: Ended selection research and accepted main-turn activity-window
+  attribution with screen fallback; designed all-agent provider migration and pure
+  state-machine testing in [021-provider-state-machine-design.md](021-provider-state-machine-design.md).
+
+- Updated 2026-09-12: Implemented shared state decisions and the first optional log provider — see [022 implementation](022-provider-implementation.md).
+
+- Updated 2026-09-12: Hardened observation ordering, recovery, completion fences, and decision diagnostics — see [023 continuity](023-provider-continuity-hardening.md).
+
+- Updated 2026-09-12: Corrected capture ordering, diagnostic emission, suspended completion, and CLI contracts — see [024 follow-up](024-observation-order-and-emission.md).

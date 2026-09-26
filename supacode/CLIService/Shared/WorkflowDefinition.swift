@@ -8,9 +8,8 @@ nonisolated public enum WorkflowSchema {
   public static let identifier = "prowl.workflow/v1"
   /// `prowl.*` ids are reserved for definitions shipped inside the app bundle.
   public static let reservedIDPrefix = "prowl."
-  public static let repeatMaximum = 20
   public static let verdictRange = 2...4
-  /// Carries an activation's delivery token to `prowl workflow done`: typed as the line's
+  /// Carries an activation's delivery token to `prowl workflow deliver`: typed as the line's
   /// environment prefix for a `message` step, set in the child environment for a `launch` step.
   public static let tokenEnvironmentKey = "PROWL_WORKFLOW_TOKEN"
   /// Cross-check hints in a launched surface's child environment; the dispatch store stays the authority.
@@ -18,7 +17,7 @@ nonisolated public enum WorkflowSchema {
   public static let roleEnvironmentKey = "PROWL_WORKFLOW_ROLE"
   /// Workflow and skill ids may contain dots; a leading alphanumeric rules out `.` and `..`.
   public static var workflowIDPattern: Regex<Substring> { /^[a-z0-9][a-z0-9_.-]{0,63}$/ }
-  /// Step ids, role names, output names, input names, and verdict values become path
+  /// Step ids, role names, delivery names, input names, and verdict values become path
   /// components and CLI arguments.
   public static var slugPattern: Regex<Substring> { /^[a-z0-9][a-z0-9_-]{0,63}$/ }
 
@@ -28,6 +27,10 @@ nonisolated public enum WorkflowSchema {
 
   public static func isSlug(_ value: String) -> Bool {
     value.wholeMatch(of: slugPattern) != nil
+  }
+
+  public static func isActionID(_ value: String) -> Bool {
+    value.utf8.count <= 64 && value.wholeMatch(of: /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/) != nil
   }
 }
 
@@ -91,6 +94,7 @@ nonisolated public struct WorkflowDefinition: Equatable, Sendable {
   public let inputs: [WorkflowInputDefinition]
   public let roles: [WorkflowRoleDefinition]
   public let steps: [WorkflowStepDefinition]
+  public let state: [String: WorkflowStateDeclaration]
 
   public init(
     id: String,
@@ -99,7 +103,8 @@ nonisolated public struct WorkflowDefinition: Equatable, Sendable {
     icon: String? = nil,
     inputs: [WorkflowInputDefinition] = [],
     roles: [WorkflowRoleDefinition] = [],
-    steps: [WorkflowStepDefinition] = []
+    steps: [WorkflowStepDefinition] = [],
+    state: [String: WorkflowStateDeclaration] = [:]
   ) {
     self.id = id
     self.name = name
@@ -108,6 +113,7 @@ nonisolated public struct WorkflowDefinition: Equatable, Sendable {
     self.inputs = inputs
     self.roles = roles
     self.steps = steps
+    self.state = state
   }
 
   public func role(named name: String) -> WorkflowRoleDefinition? {
@@ -121,10 +127,10 @@ nonisolated public struct WorkflowDefinition: Equatable, Sendable {
   /// Every step in document order, `repeat` bodies inlined after their `repeat` step.
   public var flattenedSteps: [WorkflowStepDefinition] {
     steps.flatMap { step -> [WorkflowStepDefinition] in
-      if case .repeat(_, _, let body) = step.action {
-        return [step] + body
-      }
-      return [step]
+      [step]
+        + step.action.children.flatMap { child in
+          [child] + child.action.descendants
+        }
     }
   }
 }
@@ -281,7 +287,7 @@ nonisolated public struct WorkflowRoleDefinition: Equatable, Sendable {
 
 // MARK: - Steps
 
-nonisolated public enum WorkflowOutputFormat: String, Equatable, Sendable, Codable {
+nonisolated public enum WorkflowDeliveryFormat: String, Equatable, Sendable, Codable {
   case markdown
   case text
   case json
@@ -294,34 +300,34 @@ nonisolated public enum WorkflowTimeoutPolicy: String, Equatable, Sendable, Coda
 }
 
 nonisolated public struct WorkflowExpectation: Equatable, Sendable {
-  /// Output name; nil means the step id (see `WorkflowStepDefinition.outputName`).
-  public let output: String?
-  public let format: WorkflowOutputFormat
+  /// Delivery name; nil means the step id (see `WorkflowStepDefinition.deliveryName`).
+  public let delivery: String?
+  public let format: WorkflowDeliveryFormat
   public let sections: [String]
-  /// Declared verdict values; nil when the step has no verdict.
-  public let verdict: [String]?
+  /// Allowed verdict values; nil when the step does not require a verdict.
+  public let verdicts: [String]?
   /// Hard cap in seconds; nil = wait as long as the agent works.
   public let timeoutSeconds: Int?
   public let onTimeout: WorkflowTimeoutPolicy?
-  /// `true`: a delivery that misses `sections`, `format`, or `verdict` is rejected. `false`
+  /// `true`: a delivery that misses `sections`, `format`, or `verdicts` is rejected. `false`
   /// (default): it is kept as provisional and the run asks the user to accept, ask again, or skip.
   public let strict: Bool
   public let location: WorkflowSourceLocation?
 
   public init(
-    output: String? = nil,
-    format: WorkflowOutputFormat = .markdown,
+    delivery: String? = nil,
+    format: WorkflowDeliveryFormat = .markdown,
     sections: [String] = [],
-    verdict: [String]? = nil,
+    verdicts: [String]? = nil,
     timeoutSeconds: Int? = nil,
     onTimeout: WorkflowTimeoutPolicy? = nil,
     strict: Bool = false,
     location: WorkflowSourceLocation? = nil
   ) {
-    self.output = output
+    self.delivery = delivery
     self.format = format
     self.sections = sections
-    self.verdict = verdict
+    self.verdicts = verdicts
     self.timeoutSeconds = timeoutSeconds
     self.onTimeout = onTimeout
     self.strict = strict
@@ -329,46 +335,14 @@ nonisolated public struct WorkflowExpectation: Equatable, Sendable {
   }
 }
 
-nonisolated public enum WorkflowMessageContent: Equatable, Sendable {
-  /// One line, typed verbatim.
-  case text(String)
-  /// Multi-line, materialized to a run file; one pointer line is typed.
-  case instruction(String)
-
-  public var body: String {
-    switch self {
-    case .text(let value), .instruction(let value): value
-    }
-  }
-}
-
-nonisolated public enum WorkflowRepeatBound: Equatable, Sendable {
-  case literal(Int)
-  /// The raw template, e.g. `{{ inputs.max_rounds }}`; must reference exactly one integer input.
-  case template(String)
-}
-
-nonisolated public struct WorkflowUntilCondition: Equatable, Sendable {
-  public let output: String
-  /// Allowed verdict literals; one value for `==`, several for `in [...]`.
-  public let values: [String]
-  public let location: WorkflowSourceLocation?
-
-  public init(output: String, values: [String], location: WorkflowSourceLocation? = nil) {
-    self.output = output
-    self.values = values
-    self.location = location
-  }
-}
-
 nonisolated public enum WorkflowStepAction: Equatable, Sendable {
-  case message(role: String, content: WorkflowMessageContent, expect: WorkflowExpectation?)
+  case message(role: String, prompt: String, expect: WorkflowExpectation?)
   case launch(role: String, prompt: String, skill: String?, expect: WorkflowExpectation?)
-  /// `with` values are templated strings; YAML scalars are kept as their source text.
-  case action(id: String, inputs: [String: String])
+  /// `with` preserves JSON values and evaluates embedded expressions.
+  case action(id: String, inputs: [String: WorkflowJSONValue])
+  case control(WorkflowControlStep)
   case notify(String)
   case close(role: String)
-  case `repeat`(max: WorkflowRepeatBound, until: WorkflowUntilCondition?, steps: [WorkflowStepDefinition])
 
   public var verb: String {
     switch self {
@@ -377,14 +351,14 @@ nonisolated public enum WorkflowStepAction: Equatable, Sendable {
     case .action: "action"
     case .notify: "notify"
     case .close: "close"
-    case .repeat: "repeat"
+    case .control(let control): control.verb
     }
   }
 
   public var expect: WorkflowExpectation? {
     switch self {
     case .message(_, _, let expect), .launch(_, _, _, let expect): expect
-    case .action, .notify, .close, .repeat: nil
+    case .action, .notify, .close, .control: nil
     }
   }
 
@@ -392,7 +366,7 @@ nonisolated public enum WorkflowStepAction: Equatable, Sendable {
   public var targetRole: String? {
     switch self {
     case .message(let role, _, _), .launch(let role, _, _, _), .close(let role): role
-    case .action, .notify, .repeat: nil
+    case .action, .notify, .control: nil
     }
   }
 }
@@ -410,9 +384,9 @@ nonisolated public struct WorkflowStepDefinition: Equatable, Sendable {
     self.location = location
   }
 
-  /// The output this step delivers, when it has an `expect`.
-  public var outputName: String? {
+  /// The delivery name this step produces, when it has an `expect`.
+  public var deliveryName: String? {
     guard let expect = action.expect else { return nil }
-    return expect.output ?? id
+    return expect.delivery ?? id
   }
 }

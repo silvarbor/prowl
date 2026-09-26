@@ -65,7 +65,7 @@ user-visible states:
 - **Blocked** — waiting for you (a confirmation/permission prompt). This is the
   one that needs your attention.
 - **Done** — finished and you haven't looked yet (an unseen completion). Becomes
-  **Idle** once you focus it.
+  **Idle** once you view the focused pane in the active, visible Prowl window.
 - **Idle** — nothing running / seen.
 
 How this is detected (process inspection + on-screen heuristics) and the full
@@ -80,6 +80,8 @@ all agents and their statuses is the
 - **Per-repository settings:** `~/.prowl/repo/<repo-name>/prowl.json`
 - **Per-repository user custom commands:** `~/.prowl/repo/<repo-name>/prowl.onevcat.json`
 - **Per-workspace metadata:** `<workspace>/.prowl/workspace.json`
+- **Workflow files:** `~/.prowl/workflows/*.pwlworkflow` and `<repo root>/.prowl/workflows/*.pwlworkflow`;
+  runs leave `~/.prowl/logs/workflow-runs/<root-name>-<root-hash>/YYYY-MM/<run-id>/`
 - **CLI socket:** `~/Library/Application Support/com.onevcat.prowl/cli.sock`
   (overridable with `PROWL_CLI_SOCKET`)
 - Legacy `~/.supacode` is migrated to `~/.prowl` on first launch. (Prowl is a fork
@@ -117,4 +119,7 @@ tabs, worktrees, views — are Prowl's. See
 - **Custom Command** — a per-repo user-defined action with its own button, icon,
   and hotkey.
 - **Agent Reminder** — a notification fired when an agent finishes or needs you.
+- **Agent Workflow** — a YAML file (`prowl.workflow/v1`) declaring roles and
+  steps that Prowl runs across several live agents; see
+  [`components/workflows.md`](components/workflows.md).
 - **Command Palette** — the `⌘P` searchable launcher for every action.

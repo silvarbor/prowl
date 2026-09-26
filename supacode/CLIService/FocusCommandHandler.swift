@@ -2,6 +2,7 @@
 // Handles `prowl focus` by resolving, focusing, and returning final pane context.
 
 import Foundation
+import ProwlCLIShared
 
 /// Resolved target metadata for focus payload construction.
 struct FocusResolvedTarget: Sendable {
@@ -69,7 +70,7 @@ final class FocusCommandHandler: CommandHandler {
     case .success(let target):
       requestedTarget = target
     case .failure(let error):
-      return mapResolverError(error)
+      return error.commandResponse(command: "focus")
     }
 
     // Apply focus operation.
@@ -175,15 +176,6 @@ final class FocusCommandHandler: CommandHandler {
         focused: target.paneFocused
       )
     )
-  }
-
-  private func mapResolverError(_ error: TargetResolverError) -> CommandResponse {
-    switch error {
-    case .notFound(let message):
-      return errorResponse(code: CLIErrorCode.targetNotFound, message: message)
-    case .notUnique(let message):
-      return errorResponse(code: CLIErrorCode.targetNotUnique, message: message)
-    }
   }
 
   private func errorResponse(code: String, message: String) -> CommandResponse {

@@ -1,9 +1,11 @@
 // supacode/Domain/Workflow/WorkflowRun.swift
 // The state of one workflow run (docs-ai 063 B2, dsl-spec §5/§8/§10): frozen context and
-// bindings, the position cursor, invocations and activations, outputs, and the attention
+// bindings, the position cursor, invocations and activations, deliveries, and the attention
 // vocabulary the panel renders. Transitions live in WorkflowRunMachine.
 
+import CryptoKit
 import Foundation
+import ProwlCLIShared
 
 // MARK: - Identity and bindings
 
@@ -17,6 +19,7 @@ nonisolated struct WorkflowPaneIdentity: Equatable, Sendable, Codable {
   let displayName: String
   /// The detected agent token; nil for a bare shell.
   let agent: String?
+  var sessionIdentity: String?
 
   enum CodingKeys: String, CodingKey {
     case surfaceID = "surface_id"
@@ -24,6 +27,7 @@ nonisolated struct WorkflowPaneIdentity: Equatable, Sendable, Codable {
     case handle
     case displayName = "display_name"
     case agent
+    case sessionIdentity = "session_identity"
   }
 }
 
@@ -61,12 +65,17 @@ nonisolated enum WorkflowRoleBinding: Equatable, Sendable {
   }
 
   /// `roles.<r>.name` / `roles.<r>.agent` as dsl-spec §6 defines them.
-  var templateRole: WorkflowTemplateContext.Role {
+  var displayName: String {
     switch self {
-    case .current(let pane), .pick(let pane):
-      WorkflowTemplateContext.Role(name: pane.displayName, agent: pane.agent ?? "", pane: pane.handle)
-    case .launch(let profile, let pane):
-      WorkflowTemplateContext.Role(name: profile.name, agent: profile.agent, pane: pane?.handle)
+    case .current(let pane), .pick(let pane): pane.displayName
+    case .launch(let profile, _): profile.name
+    }
+  }
+
+  var agent: String {
+    switch self {
+    case .current(let pane), .pick(let pane): pane.agent ?? ""
+    case .launch(let profile, _): profile.agent
     }
   }
 
@@ -137,29 +146,42 @@ nonisolated struct WorkflowRunContext: Equatable, Sendable {
   let scope: WorkflowRunScope
   let definitionPath: String?
   let worktree: WorkflowRunWorktree
+  var bundle: WorkflowPreparedBundle?
+  var sourcePaneID: UUID?
+  var sourceSessionIdentity: String?
+  var sourceTabID: UUID?
+  var literalActionInputs = false
+  var historyDirectory: URL?
+  var occupancy: WorkflowRunOccupancy?
 }
 
 /// Every path under a run directory, derived from validated slugs and the run UUID only.
 nonisolated enum WorkflowRunPaths {
-  static let runsRelativePath = ".prowl/workflow-runs"
-
   static func runsDirectory(root: URL) -> URL {
-    root.appending(path: runsRelativePath, directoryHint: .isDirectory).standardizedFileURL
+    let storage = WorkflowHistoryStorage.configured
+    return storage.baseURL.appending(path: storage.rootKey(root))
   }
 
-  static func runDirectory(root: URL, runID: UUID) -> URL {
-    runsDirectory(root: root).appending(path: runID.uuidString, directoryHint: .isDirectory)
+  static func runDirectory(root: URL, runID: UUID, createdAt: Date? = nil) -> URL {
+    let storage = WorkflowHistoryStorage.configured
+    if createdAt == nil, let existing = try? storage.find(runID) { return existing }
+    return storage.directory(root: root, createdAt: createdAt ?? Date(), runID: runID)
   }
 
-  static func instructionURL(runDirectory: URL, stepID: String, ordinal: Int) -> URL {
-    runDirectory.appending(path: "instructions", directoryHint: .isDirectory)
+  static func promptURL(runDirectory: URL, stepID: String, ordinal: Int) -> URL {
+    runDirectory.appending(path: "prompts", directoryHint: .isDirectory)
       .appending(path: "\(stepID).\(ordinal).md", directoryHint: .notDirectory)
   }
 
-  /// `outputs/<name>.<ordinal>.md`, or the latest view `outputs/<name>.md` without an ordinal.
-  static func outputURL(runDirectory: URL, name: String, ordinal: Int?) -> URL {
+  /// Content-addressed snapshots preserve each submission when an invocation is corrected.
+  static func submissionURL(runDirectory: URL, name: String, ordinal: Int, body: String) -> URL {
+    let digest = SHA256.hash(data: Data(body.utf8)).map { String(format: "%02x", $0) }.joined()
+    return runDirectory.appending(path: "deliveries/\(name).\(ordinal).\(digest).md")
+  }
+
+  static func deliveryURL(runDirectory: URL, name: String, ordinal: Int?) -> URL {
     let file = ordinal.map { "\(name).\($0).md" } ?? "\(name).md"
-    return runDirectory.appending(path: "outputs", directoryHint: .isDirectory)
+    return runDirectory.appending(path: "deliveries", directoryHint: .isDirectory)
       .appending(path: file, directoryHint: .notDirectory)
   }
 
@@ -194,7 +216,7 @@ nonisolated struct WorkflowActivation: Equatable, Sendable {
   let role: String
   let token: String
   let expect: WorkflowExpectation
-  let outputName: String
+  let deliveryName: String
   var dispatchID: String?
   var state: WorkflowActivationState
   /// `expect.timeout` as an absolute deadline, fixed when the activation opened; a re-armed
@@ -204,7 +226,7 @@ nonisolated struct WorkflowActivation: Equatable, Sendable {
   var pendingDelivery: WorkflowValidatedDelivery?
 
   var completion: WorkflowCompletionCommand {
-    WorkflowCompletionCommand(token: token, verdicts: expect.verdict)
+    WorkflowCompletionCommand(token: token, verdicts: expect.verdicts)
   }
 }
 
@@ -216,22 +238,24 @@ nonisolated enum WorkflowInvocationKind: String, Equatable, Sendable, Codable {
 nonisolated struct WorkflowInvocation: Equatable, Sendable {
   let ordinal: Int
   let stepID: String
-  /// 1-based iteration when the step sits inside a `repeat`.
+  /// 1-based iteration when the step sits inside a loop.
   let iteration: Int?
   let role: String
   let kind: WorkflowInvocationKind
   let startedAt: Date
-  var instructionPath: String?
+  var promptPath: String?
+  var target: WorkflowRunRecord.Binding?
+  var content: WorkflowTaskContent?
   var activation: WorkflowActivation?
   var endedAt: Date?
 }
 
-nonisolated struct WorkflowOutputRecord: Equatable, Sendable, Codable {
+nonisolated struct WorkflowDeliveryRecord: Equatable, Sendable, Codable {
   let name: String
   let ordinal: Int
-  /// `outputs/<name>.<ordinal>.md`.
+  /// `deliveries/<name>.<ordinal>.md`.
   let path: String
-  /// `outputs/<name>.md`, the atomically replaced latest view.
+  /// `deliveries/<name>.md`, the atomically replaced latest view.
   let latestPath: String
   let verdict: String?
   let deliveredAt: Date
@@ -246,20 +270,17 @@ nonisolated struct WorkflowOutputRecord: Equatable, Sendable, Codable {
   }
 }
 
-// MARK: - Position and step records
-
-nonisolated struct WorkflowRunPosition: Equatable, Sendable {
-  struct Loop: Equatable, Sendable {
-    /// 1-based iteration.
-    var iteration: Int
-    var bodyIndex: Int
-    let max: Int
+nonisolated struct WorkflowHistorySubmission: Codable, Equatable, Sendable {
+  var delivery: WorkflowDeliveryRecord
+  var accepted: Bool
+  var issues: [String]
+  var statusLabel: String {
+    if accepted { return String(localized: "Accepted") }
+    return issues.isEmpty ? String(localized: "Not accepted") : String(localized: "Needs correction")
   }
-
-  /// Index into the top-level step list.
-  var index: Int
-  var loop: Loop?
 }
+
+// MARK: - Position and step records
 
 nonisolated enum WorkflowStepState: String, Equatable, Sendable, Codable {
   case active
@@ -273,6 +294,15 @@ nonisolated struct WorkflowStepRecord: Equatable, Sendable {
   let iteration: Int?
   var state: WorkflowStepState
   var ordinal: Int?
+  var iterationPath: [String]?
+  var branchExcluded: Bool?
+  var title: String?
+  var error: String?
+  var outputs: [String: WorkflowJSONValue]?
+  var delivery: WorkflowDeliveryRecord?
+  var submissions: [WorkflowHistorySubmission]?
+  var actionExecutionID: String?
+  var summary: String?
 }
 
 // MARK: - Attention and status
@@ -345,13 +375,13 @@ nonisolated enum WorkflowRunStatus: Equatable, Sendable {
   case completed
   case cancelled
   case skipped(step: String, dependent: String)
-  case maxRoundsReached
+  case iterationLimitReached
   case interrupted
 
   var isTerminal: Bool {
     switch self {
     case .running, .needsAttention: false
-    case .completed, .cancelled, .skipped, .maxRoundsReached, .interrupted: true
+    case .completed, .cancelled, .skipped, .iterationLimitReached, .interrupted: true
     }
   }
 
@@ -384,27 +414,43 @@ nonisolated struct WorkflowRun: Equatable, Sendable {
   var bindings: [String: WorkflowRoleBinding]
   var status: WorkflowRunStatus = .running
   var phase: WorkflowRunPhase = .idle
-  var position = WorkflowRunPosition(index: 0, loop: nil)
   var invocations: [WorkflowInvocation] = []
   /// Latest delivered output per name (latest wins across steps).
-  var outputs: [String: WorkflowOutputRecord] = [:]
-  var actionOutputs: [String: [String: String]] = [:]
-  /// Output name → the step whose skip made it missing.
-  var skippedOutputs: [String: String] = [:]
+  var deliveries: [String: WorkflowDeliveryRecord] = [:]
+  var actionOutputs: [String: [String: WorkflowJSONValue]] = [:]
+  /// Metadata for non-revocable writes; cancellation can discard activation bodies but not their attribution.
+  var pendingHistorySubmissions: [Int: WorkflowHistorySubmission] = [:]
+  var controlCursor: WorkflowControlCursor?
+  var stepValues: [String: WorkflowJSONValue] = [:]
+  var observations: [String: WorkflowJSONValue] = [:]
+  var actionExecutionID: String?
+  var actionAttempts: [String: Int] = [:]
+  /// Delivery name → the step whose skip made it missing.
+  var skippedDeliveries: [String: String] = [:]
   /// Steps skipped at start (`--skip` / the start sheet).
   let preSkippedSteps: Set<String>
-  /// Iterations completed by the latest `repeat`.
-  var loopCount = 0
+  var historyIsPartial = false
+  var participants: [String: [WorkflowPaneIdentity]] = [:]
   var stepRecords: [WorkflowStepRecord] = []
   var nextOrdinal = 1
-  /// Resolved `repeat.max` per repeat step id.
-  let repeatBounds: [String: Int]
   /// The first step's rendered line when the run was started from the `current` role's own
   /// pane: returned to the caller instead of being typed (dsl-spec §9).
   var selfInitiatedLine: String?
 
+  mutating func captureParticipantSessions() {
+    for (role, binding) in bindings {
+      guard var pane = binding.pane,
+        case .object(let fields) = observations[pane.surfaceID.uuidString],
+        case .string(let identity) = fields["session_identity"]
+      else { continue }
+      pane.sessionIdentity = identity
+      if !participants[role, default: []].contains(pane) { participants[role, default: []].append(pane) }
+    }
+  }
+
   var runDirectory: URL {
-    WorkflowRunPaths.runDirectory(root: context.worktree.rootURL, runID: id)
+    context.historyDirectory
+      ?? WorkflowRunPaths.runDirectory(root: context.worktree.rootURL, runID: id, createdAt: startedAt)
   }
 
   var currentInvocation: WorkflowInvocation? {
@@ -433,15 +479,8 @@ nonisolated struct WorkflowRun: Equatable, Sendable {
   }
 
   /// The step the position cursor points at; nil past the end of the sequence it is in.
-  var currentStep: WorkflowStepDefinition? {
-    guard position.index < definition.steps.count else { return nil }
-    let step = definition.steps[position.index]
-    guard let loop = position.loop else { return step }
-    guard case .repeat(_, _, let body) = step.action, loop.bodyIndex < body.count else { return nil }
-    return body[loop.bodyIndex]
-  }
-
-  var currentIteration: Int? { position.loop?.iteration }
+  var currentStep: WorkflowStepDefinition? { controlCursor?.currentStep }
+  var currentIteration: Int? { controlCursor?.iteration }
 
   /// Whether the runner will deliver a `message` to the `current` role (dsl-spec §3).
   func deliversToCurrentRole() -> Bool {

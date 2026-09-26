@@ -1,4 +1,5 @@
 import Foundation
+import ProwlCLIShared
 
 @MainActor
 struct WorkflowStatusCenterPresentation: Equatable {
@@ -13,27 +14,43 @@ struct WorkflowStatusCenterPresentation: Equatable {
       runs = []
       return
     }
-    runs = state.activeSessions
-      .map(\.run)
-      .filter { $0.context.worktree.id == selectedWorktreeID }
-      .sorted {
-        if $0.startedAt != $1.startedAt { return $0.startedAt > $1.startedAt }
-        if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
-        return $0.id.uuidString > $1.id.uuidString
-      }
-      .map { WorkflowRunPresentation(run: $0, now: now) }
+    func ordered(_ sessions: [WorkflowRunSession]) -> [WorkflowRunPresentation] {
+      sessions
+        .map(\.run)
+        .filter { $0.context.worktree.id == selectedWorktreeID }
+        .sorted {
+          if $0.startedAt != $1.startedAt { return $0.startedAt > $1.startedAt }
+          if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
+          return $0.id.uuidString > $1.id.uuidString
+        }
+        .map { WorkflowRunPresentation(run: $0, now: now) }
+    }
+    // Active runs first; a run that just ended stays listed for `finishedNoticeDuration` so
+    // the toolbar can show its outcome instead of vanishing the moment it completes.
+    runs = ordered(state.activeSessions) + ordered(state.recentlyFinishedSessions)
   }
 
+  /// The run the compact status item names: the most recent active run, else the run that just ended.
   var primary: WorkflowRunPresentation? { runs.first }
   var attentionRun: WorkflowRunPresentation? { runs.first { $0.status.isAttention } }
-  var activeRunCount: Int { runs.count }
+  var activeRunCount: Int { runs.count(where: { !$0.status.isFinished }) }
   var hasAttention: Bool { attentionRun != nil }
+}
+
+/// How a run ended, for the status item's closing line.
+nonisolated enum WorkflowFinishedOutcome: Equatable, Sendable {
+  case completed
+  case cancelled
+  case skipped
+  case iterationLimitReached
+  case interrupted
 }
 
 nonisolated struct WorkflowRunPresentation: Equatable, Sendable, Identifiable {
   enum Status: Equatable, Sendable {
     case running
     case needsAttention(String)
+    case finished(WorkflowFinishedOutcome)
   }
 
   let id: UUID
@@ -45,7 +62,7 @@ nonisolated struct WorkflowRunPresentation: Equatable, Sendable, Identifiable {
   let elapsedText: String
   let status: Status
   let currentStepTitle: String
-  let currentInstruction: String?
+  let currentPrompt: String?
   let roles: [WorkflowRolePresentation]
   let stepItems: [WorkflowStepListItem]
   let attentionControls: [WorkflowAttentionControl]
@@ -60,10 +77,19 @@ nonisolated struct WorkflowRunPresentation: Equatable, Sendable, Identifiable {
     worktreeName = run.context.worktree.name
     startedAt = run.startedAt
     elapsedText = Self.elapsedText(from: run.startedAt, to: now)
-    status = run.status.attention.map { .needsAttention($0.message) } ?? .running
+    status =
+      switch run.status {
+      case .running: .running
+      case .needsAttention(let attention): .needsAttention(attention.message)
+      case .completed: .finished(.completed)
+      case .cancelled: .finished(.cancelled)
+      case .skipped: .finished(.skipped)
+      case .iterationLimitReached: .finished(.iterationLimitReached)
+      case .interrupted: .finished(.interrupted)
+      }
     let context = Self.templateContext(for: run, iteration: run.currentIteration)
-    currentStepTitle = Self.title(for: run.currentStep, context: context) ?? "Finishing workflow"
-    currentInstruction = Self.instruction(for: run.currentStep, context: context)
+    currentStepTitle = Self.title(for: run.currentStep, context: context) ?? String(localized: "Finishing workflow")
+    currentPrompt = Self.prompt(for: run.currentStep, context: context)
     roles = run.definition.roles.map { role in
       WorkflowRolePresentation(role: role, binding: run.bindings[role.name])
     }
@@ -95,6 +121,22 @@ nonisolated struct WorkflowRunPresentation: Equatable, Sendable, Identifiable {
     Self.elapsedText(from: startedAt, to: now)
   }
 
+  /// The compact status item's text: the current step while the run lives, its outcome once it ended.
+  var summaryText: String {
+    switch status {
+    case .running, .needsAttention:
+      return currentStepTitle
+    case .finished(let outcome):
+      switch outcome {
+      case .completed: return String(localized: "\(workflowName) completed")
+      case .cancelled: return String(localized: "\(workflowName) cancelled")
+      case .skipped: return String(localized: "\(workflowName) ended after a skipped step")
+      case .iterationLimitReached: return String(localized: "\(workflowName) reached its iteration limit")
+      case .interrupted: return String(localized: "\(workflowName) was interrupted")
+      }
+    }
+  }
+
   private static func elapsedText(from start: Date, to end: Date) -> String {
     let seconds = max(0, Int(end.timeIntervalSince(start)))
     if seconds < 60 { return "\(seconds)s" }
@@ -110,87 +152,65 @@ nonisolated struct WorkflowRunPresentation: Equatable, Sendable, Identifiable {
     return remainingHours == 0 ? "\(days)d" : "\(days)d \(remainingHours)h"
   }
 
-  private static func templateContext(
-    for run: WorkflowRun,
-    iteration: Int?
-  ) -> WorkflowTemplateContext {
-    WorkflowTemplateContext(
-      run: WorkflowTemplateContext.Run(
-        id: run.id.uuidString,
-        directory: WorkflowRunPaths.path(run.runDirectory)
-      ),
-      worktree: WorkflowTemplateContext.Worktree(
-        path: run.context.worktree.path,
-        name: run.context.worktree.name,
-        branch: run.context.worktree.branch
-      ),
-      roles: run.bindings.mapValues(\.templateRole),
-      outputs: run.outputs.mapValues {
-        WorkflowTemplateContext.Output(path: $0.latestPath, verdict: $0.verdict)
-      },
-      skippedOutputs: Set(run.skippedOutputs.keys),
-      actions: run.actionOutputs,
-      inputs: run.inputs,
-      loop: WorkflowTemplateContext.Loop(index: iteration, count: run.loopCount)
-    )
+  private static func templateContext(for run: WorkflowRun, iteration: Int?) -> [String: WorkflowJSONValue] {
+    var values = run.stepValues.isEmpty ? run.expressionValues(capturedAt: run.updatedAt) : run.stepValues
+    if case .object(var context) = values["context"], case .object(var step) = context["step"] {
+      step["iteration"] = iteration.map(WorkflowJSONValue.integer) ?? .null
+      context["step"] = .object(step)
+      values["context"] = .object(context)
+    }
+    return values
   }
 
   private static func title(
     for step: WorkflowStepDefinition?,
-    context: WorkflowTemplateContext
+    context: [String: WorkflowJSONValue]
   ) -> String? {
     guard let step else { return nil }
     guard let title = step.title else { return Self.fallbackTitle(for: step) }
-    return (try? WorkflowTemplate.render(title, context: context)) ?? title
+    return (try? WorkflowExpression.renderText(title, values: context)) ?? title
   }
 
   private static func fallbackTitle(for step: WorkflowStepDefinition) -> String {
-    switch step.action {
-    case .message(let role, _, _): "Message \(role)"
-    case .launch(let role, _, _, _): "Launch \(role)"
-    case .action(let id, _): "Run \(id)"
-    case .notify: "Send notification"
-    case .close(let role): "Close \(role)"
-    case .repeat: step.id
-    }
+    step.historyTitle
   }
 
-  private static func instruction(
+  private static func prompt(
     for step: WorkflowStepDefinition?,
-    context: WorkflowTemplateContext
+    context: [String: WorkflowJSONValue]
   ) -> String? {
     guard let step else { return nil }
     let source: String?
     switch step.action {
-    case .message(_, let content, _):
-      source = content.body
+    case .message(_, let prompt, _):
+      source = prompt
     case .launch(_, let prompt, _, _):
       source = prompt
     case .action(let id, _):
-      source = "Run native action \(id)."
+      source = String(localized: "Run action \(id).")
     case .notify(let text):
       source = text
     case .close(let role):
-      source = "Close the pane bound to \(role)."
-    case .repeat:
+      source = String(localized: "Close the pane bound to \(role).")
+    case .control:
       source = nil
     }
     guard let source else { return nil }
-    return (try? WorkflowTemplate.render(source, context: context)) ?? source
+    return (try? WorkflowExpression.renderText(source, values: context)) ?? source
   }
 
   private static func stepItems(for run: WorkflowRun) -> [WorkflowStepListItem] {
     var items: [WorkflowStepListItem] = []
     for step in run.definition.steps {
       switch step.action {
-      case .repeat(let bound, _, let body):
-        let maximum = run.repeatBounds[step.id] ?? bound.literalValue ?? 1
+      case .control(.loop(_, let maximum, let children)):
+        let body = children.flatMap { [$0] + $0.action.descendants }
         let recordedIterations = run.stepRecords.compactMap { record in
           body.contains { $0.id == record.stepID } ? record.iteration : nil
         }
         var iterations = Set(recordedIterations)
-        if run.definition.steps[safe: run.position.index]?.id == step.id,
-          let current = run.position.loop?.iteration
+        if body.contains(where: { $0.id == run.currentStep?.id }),
+          let current = run.currentIteration
         {
           iterations.insert(current)
         }
@@ -227,6 +247,17 @@ nonisolated struct WorkflowRunPresentation: Equatable, Sendable, Identifiable {
                 )))
           }
         }
+      case .control(.conditional(_, let yes, let otherwise)):
+        for child in [step] + (yes + otherwise).flatMap({ [$0] + $0.action.descendants }) {
+          let record = run.stepRecords.last { $0.stepID == child.id }
+          let context = templateContext(for: run, iteration: record?.iteration)
+          items.append(
+            .step(
+              .init(
+                id: child.id, stepID: child.id,
+                title: title(for: child, context: context) ?? child.id,
+                state: record.map { .init($0.state) } ?? .pending)))
+        }
       default:
         let record = run.stepRecords.last { $0.stepID == step.id && $0.iteration == nil }
         let context = templateContext(for: run, iteration: nil)
@@ -249,6 +280,11 @@ nonisolated extension WorkflowRunPresentation.Status {
     if case .needsAttention = self { return true }
     return false
   }
+
+  var isFinished: Bool {
+    if case .finished = self { return true }
+    return false
+  }
 }
 
 nonisolated struct WorkflowRolePresentation: Equatable, Sendable, Identifiable {
@@ -260,8 +296,8 @@ nonisolated struct WorkflowRolePresentation: Equatable, Sendable, Identifiable {
 
   init(role: WorkflowRoleDefinition, binding: WorkflowRoleBinding?) {
     id = role.name
-    displayName = binding?.templateRole.name ?? role.name
-    agent = binding?.templateRole.agent.nilIfEmpty
+    displayName = binding?.displayName ?? role.name
+    agent = binding?.agent.nilIfEmpty
     paneHandle = binding?.pane?.handle
     surfaceID = binding?.pane?.surfaceID
   }
@@ -282,7 +318,7 @@ nonisolated enum WorkflowStepListItem: Equatable, Sendable, Identifiable {
 nonisolated struct WorkflowRoundPresentation: Equatable, Sendable, Identifiable {
   let id: String
   let index: Int
-  let maximum: Int
+  let maximum: Int?
   let steps: [WorkflowStepPresentation]
 }
 
@@ -336,52 +372,54 @@ nonisolated struct WorkflowAttentionControl: Equatable, Sendable, Identifiable {
     self.action = action
     let rolePane = attention.role.flatMap { run.bindings[$0]?.pane }
     focusSurfaceID = action == .focusPane ? rolePane?.surfaceID : nil
-    verdicts = action == .acceptWithVerdict ? (run.activeActivation?.expect.verdict ?? []) : []
+    verdicts = action == .acceptWithVerdict ? (run.activeActivation?.expect.verdicts ?? []) : []
     isDestructive = action == .cancel
     switch action {
     case .focusPane:
-      label = "Focus Pane"
+      label = String(localized: "Focus Pane")
       systemImage = "scope"
       confirmationMessage = nil
     case .nudge:
-      label = "Nudge Again"
+      label = String(localized: "Nudge Again")
       systemImage = "bell.badge"
       confirmationMessage = nil
     case .keepWaiting:
-      label = "Keep Waiting"
+      label = String(localized: "Keep Waiting")
       systemImage = "clock"
       confirmationMessage = nil
     case .retry:
-      label = "Retry"
+      label = String(localized: "Retry")
       systemImage = "arrow.clockwise"
       confirmationMessage = nil
     case .relaunch:
-      label = "Relaunch Role"
+      label = String(localized: "Relaunch Role")
       systemImage = "arrow.trianglehead.2.clockwise.rotate.90"
       confirmationMessage = nil
     case .acceptDelivery:
-      label = "Accept as Delivered"
+      label = String(localized: "Accept as Delivered")
       systemImage = "checkmark"
       confirmationMessage = nil
     case .acceptWithVerdict:
-      label = "Accept with Verdict"
+      label = String(localized: "Accept with Verdict")
       systemImage = "checkmark.circle"
       confirmationMessage = nil
     case .askAgain:
-      label = "Ask Again"
+      label = String(localized: "Ask Again")
       systemImage = "arrowshape.turn.up.left"
       confirmationMessage = nil
     case .skip:
-      label = "Skip Step"
+      label = String(localized: "Skip Step")
       systemImage = "forward.end"
       confirmationMessage = Self.skipConfirmation(
         stepID: attention.stepID,
         consequence: skipConsequence
       )
     case .cancel:
-      label = "Cancel Run"
+      label = String(localized: "Cancel Run")
       systemImage = "xmark"
-      confirmationMessage = "Cancel this workflow run? Its panes and delivered outputs will be kept."
+      confirmationMessage = String(
+        localized: "Cancel this workflow run? Its panes and deliveries will be kept."
+      )
     }
   }
 
@@ -421,24 +459,24 @@ nonisolated struct WorkflowAttentionControl: Equatable, Sendable, Identifiable {
     consequence: WorkflowSkipConsequence
   ) -> String {
     switch consequence {
-    case .noOutput:
-      "Skip step '\(stepID)'? The workflow continues without an output from this step."
+    case .noDelivery:
+      String(localized: "Skip step '\(stepID)'? The workflow continues without an output from this step.")
     case .continues(let optionalInputs):
       if optionalInputs.isEmpty {
-        "Skip step '\(stepID)'? The workflow continues without this output."
+        String(localized: "Skip step '\(stepID)'? The workflow continues without this delivery.")
       } else {
-        "Skip step '\(stepID)'? The workflow continues without the optional input used by "
-          + optionalInputs.joined(separator: ", ") + "."
+        String(
+          localized: """
+            Skip step '\(stepID)'? The workflow continues without the optional input used by \
+            \(optionalInputs.joined(separator: ", ")).
+            """
+        )
       }
     case .endsRun(let dependent):
-      "Skip step '\(stepID)'? This ends the run because step '\(dependent)' depends on its output."
+      String(
+        localized: "Skip step '\(stepID)'? This ends the run because step '\(dependent)' depends on its output."
+      )
     }
-  }
-}
-nonisolated extension WorkflowRepeatBound {
-  fileprivate var literalValue: Int? {
-    if case .literal(let value) = self { return value }
-    return nil
   }
 }
 nonisolated extension String {

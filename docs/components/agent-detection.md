@@ -29,7 +29,7 @@ Ask-prompt heuristics, plus its own session layout and icon. Grok Build also
 ships an `agent` symlink; Prowl only treats that name as Grok when the path points
 at a `~/.grok/` install (so Cursor's own `agent` entrypoint stays Cursor).
 
-## How detection works (two stages)
+## How detection works
 
 1. **Process probe.** Prowl reads the pane's foreground process group and matches
    process names / argv against known agent executables, scoring argv[0] highest,
@@ -47,19 +47,37 @@ at a `~/.grok/` install (so Cursor's own `agent` entrypoint stays Cursor).
    push the live row out of view and a status row quoted inside a `⏺` block cannot
    read as live. Confirmation text is consulted only around a current numbered
    selection row such as `❯ 1. Yes`; a bare input prompt cuts off the preceding transcript.
-   Codex uses an exact bottom-of-screen `•`/`◦ Working (... esc to interrupt)` footer
-   fallback. Its confirmation detector requires a numbered selected row such as `› 1. Yes`
+   Claude's internal scroll view keeps the composer visible while hiding live status.
+   When `Jump to bottom (click) ↓` or a counted `new message(s) (click) ↓` control appears
+   in the last non-blank row above that composer, Prowl treats the screen as a viewer
+   and retains the last known state. The control can overlay text in the middle of a row.
+   Return to the bottom to refresh
+   screen-based status; completion while browsing history is not visible to this detector.
+   Codex uses exact bottom-of-screen `•`/`◦ Working (... esc to interrupt)` and
+   `•`/`◦ Waiting for background terminal (... esc to interrupt)` footer fallbacks.
+   Braille-only starfield rows around the composer do not count toward that footer window;
+   animation alone does not indicate **Working**.
+   An empty Codex composer hint and status line remain **Idle** evidence with Astra's
+   starfield background, so a workflow can send its first task before any turn has completed.
+   Draft text and attachments do not qualify as an empty composer.
+   Its confirmation detector requires a numbered selected row such as `› 1. Yes`
    paired with a live bottom footer or an explicit Yes/No choice structure. It also recognizes
    the current directory-trust, hook-review, and initial sign-in menus as **Blocked** from
    their complete selected-choice and footer structures. Ordinary prompt text and completed
    responses are not confirmation boundaries.
-   Pi also treats the adjacent `async subagent … · background` header and matching
-   braille job row as **Working**. The compact `subagents (N/M running)`, progressive
+   Pi also treats its bottom `── <braille spinner> Working ──` footer and the adjacent
+   `async subagent … · background` header with a matching braille job row as **Working**.
+   The compact `subagents (N/M running)`, progressive
    `Async agents · N agent(s) running`, and multi-job `Async agents · background`
    layouts carry the same signal; completed, paused, and failed cards use static
    glyphs and remain idle. Other agent families keep their own patterns (including
-   Oh My Pi's `Working… ⟦esc⟧` loader, braille frames, symbol cycles, Cursor's
-   hexagons, Kimi's moon phases, etc.).
+   Oh My Pi's `Working… ⟦esc⟧` loader and bottom-of-screen `󱊷 Working…`
+   (also `⎋`/`esc`) prefix form, braille frames, symbol cycles, Cursor's
+   hexagons, Kimi's moon phases, etc.). Copilot recognizes the bottom
+   `Working … esc interrupt` footer across its `∙ ∘ ○ ◎ ◉` animation frames,
+   including an optional streaming-size field such as `· 101 B` or `· 1.2 KB`. Its live boxed numbered choices with
+   `enter to select · esc to cancel` are **Blocked**, including folder trust;
+   that picker takes precedence over the older `esc to cancel` working cue.
    Claude's live status row (`● <label>… (<elapsed> · …)`) accepts a multi-word
    label and a compound elapsed segment such as `28m 34s` or `1h 4m 2s`, so a turn
    keeps reporting **Working** after it passes a minute.
@@ -73,27 +91,75 @@ at a `~/.grok/` install (so Cursor's own `agent` entrypoint stays Cursor).
    still awaits collection keeps its row with the elapsed frozen, so the rows
    cannot distinguish running work from finished work on a single frame.
 
+3. **State decision.** Every agent uses one state machine. Codex also supplies
+   incremental JSONL lifecycle evidence from process-owned session logs, without
+   installing hooks. Claude supplies process-scoped native state without hooks.
+   Other agents keep their screen-only behavior. For Codex, an observed open
+   parent turn or child task stays **Working** through quiet periods; current
+   approval/question UI takes precedence as **Blocked**. Completion closes only
+   its matching work. Initial historical records do not start new work.
+
+   Multiple main sessions fall back to screen heuristics unless only one has open
+   work or main-turn activity within the last two minutes. Known subagents are
+   grouped with their parent. Child notifications and file mtimes do not refresh
+   main activity. Missing/unreadable logs or unknown lineage also fall back to the
+   screen. Attribution is heuristic: switching to an old quiet chat before entering
+   a new prompt can temporarily retain the previous log candidate.
+
+   Claude reads the detected PID's native registry under its configured root
+   (`~/.claude/sessions` by default). `busy` and `shell` mean **Working**, including
+   assigned child and background shell work; `waiting` means **Blocked**, and `idle`
+   means **Idle**. Process generation is checked before and after each read.
+   `/new` and resume use the registry's current session. Two processes sharing a
+   transcript retain independent states. Missing, partial, stale, or unsupported
+   records fall back to the screen. Background daemon/remote sessions are not
+   supported by this adapter. A manually relocated config root must be supplied
+   through a Prowl launch profile; shell-only overrides can fall back to screen.
+
 For diagnostics and sanitized regression captures, `prowl read --source detection`
 returns the exact active-screen buffer used by stage 2. It is explicitly requested
 because it can differ from the visible viewport when a pane is scrolled; the default
 `prowl read` behavior is unchanged.
 
-`prowl agents --json` may also include `detection_reason`, a stable classifier rule or
-fallback identifier for the latest screen scan. Codex reports runtime-owned IDs for trust,
-hook, sign-in, confirmation, and working-footer matches. Claude does the same for viewer,
-blocker, spinner, elapsed-status, background-work, and current-composer regions; current
-history-search chrome such as `⌕ Filter history…` reports `claude.viewer` and preserves
-the last trusted state. An ordinary migrated-profile miss reports
-`fallback.noRuleMatched`. Reasons never include screen text, and the text-mode command and
-app UI remain unchanged.
+`prowl agents --json` and `prowl agents read --json` use `detection_reason` for
+the final state decision and `screen_reason` for the screen rule. Codex can report
+`log.openWork`, `log.turnEnded`, or a `screen.*` fallback reason; `raw_state` remains
+the latest screen classification. A current blocker reports its screen-rule ID.
+Claude reports `native.working`, `native.blocked`, or `native.idle`; a fresh screen
+blocker can retain its screen-rule ID. Screen-only runtimes keep their existing rule identifiers. An ordinary profile miss
+reports `fallback.noRuleMatched`; unmigrated classifiers report `legacy.detector`.
+Reasons never include screen text. Screen fallback IDs are:
 
-To avoid flicker, detection **stabilizes**: it tolerates several consecutive
-misses before declaring an agent gone, and a working agent gets a short (~3s)
-hold so brief pauses between thinking and output don't drop it out of
-"working" (a genuine finish therefore reports up to ~3s late; "blocked"
-bypasses the hold and surfaces immediately). Viewer overlays (Claude's
-transcript / history-search views) cover the live status area, so frames
-showing their chrome keep the last trusted state instead of forcing idle.
+- `screen.logUnavailable`: log authority is unavailable or suspended.
+- `screen.ambiguousLogs`: more than one log root is recently active or has open work.
+- `screen.noLiveTurn`: no root has current log authority.
+- `screen.afterTurn`: new Working screen evidence appeared after completion.
+- `screen.retainedCompletion`: an unchanged completed frame is still suppressed.
+
+For idle waits and dispatch readiness, a current `log.turnEnded` or `native.idle` decision keeps
+the existing idle evidence and stabilization rules even when the screen reports
+`fallback.noRuleMatched`. Without current log authority, that unmatched screen
+provides no idle evidence. Dispatch still checks the input area before delivery.
+
+Use `status` to decide whether intervention is needed. A blocked `screen_reason`
+with Idle status can be a stale prompt fenced by completion; do not send Enter
+based on the screen reason alone.
+
+Native acquisition warnings report a bounded failure category and recovery, without
+registry content. They use the same per-category 30-second throttle.
+
+Log acquisition warnings use the `AgentDetection` category. `SupaLogger` writes
+them to stdout in Debug and the unified log in Release. They identify the PID, cursor count, and failure category (`incompleteInventory`,
+`partialHeader`, `unknownLineage`, or `continuityLost`). Warnings are limited to one per failure category per provider every 30 seconds;
+a successful read reports recovery once after any failure, including a throttled one.
+Continuity-loss warnings report the post-reset cursor count and a bounded error kind/code. These logs contain no transcript or screen content.
+
+Detection tolerates several consecutive process-probe misses before declaring an
+agent gone. Screen-only state is deterministic: a recognized Working, Blocked, or
+Idle frame takes effect on the next active scan, without a time-based Working hold or
+generic screen-motion inference. Viewer overlays (Claude's transcript / history-search
+views) are an explicit exception: their chrome covers the live status area, so those
+frames keep the last trusted state instead of forcing Idle.
 
 ## The state machine
 
@@ -108,7 +174,12 @@ showing their chrome keep the last trusted state instead of forcing idle.
 | **Done**    | raw `idle` + **unseen** | just finished; you haven't looked yet |
 | **Idle**    | raw `idle` + **seen**   | nothing running                       |
 
-A **Done** pane becomes **Idle** the moment you focus it.
+A **Done** pane becomes **Idle** when it is actually viewed: its worktree and tab are selected,
+its pane is focused, and the Prowl window is key and visible. Keeping a pane selected while
+Prowl is inactive, hidden, or minimized does not mark its completion as read. Unknown window
+state is conservatively treated as not viewed. An acknowledged completion stays read when
+a pending session lookup finishes; a later unviewed completion still becomes **Done**.
+See [Canvas](canvas.md) for Canvas-specific behavior.
 
 ## Cooperative signal bus
 
@@ -218,7 +289,8 @@ replacement process, pane close, or launched-agent exit revokes coverage.
 Codex exposes only one effective notifier. Before launch, Prowl asks Codex's own bounded
 `app-server config/read` protocol for the effective notifier, applies selected-profile and
 final CLI-override precedence, and ignores project-layer `notify` exactly as Codex does. An
-existing notifier is preserved through an owner-only ephemeral forwarding record and is
+absent notifier (including a `null` configuration value) is valid and Prowl installs its own
+notifier without forwarding. An existing notifier is preserved through an owner-only ephemeral forwarding record and is
 `exec`'d with the original payload whether Prowl transport succeeds or fails. If resolution
 or record preparation is uncertain, Prowl launches the original argv unchanged, exposes no
 exact coverage, and reports one non-blocking launch warning.
@@ -270,7 +342,8 @@ which takes precedence over the agent indicator.
 It's a single coarse running/idle bit (it can't distinguish background agents
 from a long command). For the agent's finer state use the
 [Active Agents panel](active-agents.md) or [`prowl agents`](cli.md). Expect up to
-~2 s before it lights on a warm pane, and the ~3 s working-hold before it clears.
+~2 s before it lights on a warm pane; panes with a detected agent rescan about every
+300 ms.
 
 ## Settings
 

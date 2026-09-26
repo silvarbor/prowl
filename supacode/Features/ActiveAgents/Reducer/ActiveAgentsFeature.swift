@@ -10,7 +10,7 @@ struct ActiveAgentsFeature {
   static let reservedSidebarListHeight = 200.0
 
   /// Direction for keyboard navigation across the agent list.
-  enum NavigationDirection {
+  enum NavigationDirection: Equatable {
     case next
     case previous
   }
@@ -21,6 +21,10 @@ struct ActiveAgentsFeature {
     /// Surface that currently has terminal focus, mirrored from `focusChanged` events.
     /// Used as the anchor for keyboard list navigation; not persisted.
     var focusedSurfaceID: UUID?
+    var isIslandEnabled = false
+    var isIslandRosterExpanded = false
+    var islandNavigation = AgentIslandNavigation()
+    var islandHotKeyRegistrationFailure: Keybinding?
     @Shared(.appStorage("activeAgentsPanelHidden")) var isPanelHidden: Bool = false
     @Shared(.appStorage("activeAgentsPanelHeight")) var panelHeight: Double = 200
   }
@@ -29,12 +33,27 @@ struct ActiveAgentsFeature {
     case agentEntryChanged(ActiveAgentEntry, autoShowPanel: Bool)
     case agentEntryRemoved(ActiveAgentEntry.ID)
     case entryTapped(ActiveAgentEntry.ID)
-    /// Context-menu "Hand Off…": parents perform the selection (Repositories)
-    /// and open the HUD for this entry's pane (App).
-    case handOffTapped(ActiveAgentEntry.ID)
+    /// Context-menu "Run Workflow ▸": parents select the entry (Repositories) and open the
+    /// start sheet with this entry's pane fixed as the source (App, docs-ai 063 C2).
+    case runWorkflowTapped(ActiveAgentEntry.ID, workflowKey: String)
     /// Context-menu "Mark as Read": handled by RepositoriesFeature.
     case markAsReadTapped(ActiveAgentEntry.ID)
     case focusedSurfaceChanged(UUID?)
+    case islandEnabledChanged(Bool)
+    case islandToggleRoster
+    case islandCollapseRoster
+    case islandMoveSelection(NavigationDirection)
+    case islandMovePage(NavigationDirection)
+    case islandActivateSelection
+    case islandActivateVisibleEntry(Int)
+    case setIslandHotKeyRegistrationFailure(Keybinding?)
+    /// A sidebar action raised from the island roster or attention cells. The reducer forwards
+    /// the wrapped action unchanged; when it presents Prowl UI (`surfacesProwl`) the roster
+    /// collapses first and `AppFeature` surfaces the main window before the action runs.
+    indirect case island(Action)
+    case islandToggleEnabledTapped
+    case islandSettingsTapped
+    case islandOpenProwlTapped
     case selectNextEntry
     case selectPreviousEntry
     case togglePanelVisibility
@@ -46,6 +65,9 @@ struct ActiveAgentsFeature {
       switch action {
       case .agentEntryChanged(let entry, let autoShowPanel):
         state.entries[id: entry.id] = entry
+        if state.isIslandRosterExpanded {
+          state.islandNavigation.reconcile(entries: state.entries)
+        }
         if autoShowPanel, state.isPanelHidden {
           state.$isPanelHidden.withLock { $0 = false }
         }
@@ -53,9 +75,15 @@ struct ActiveAgentsFeature {
 
       case .agentEntryRemoved(let id):
         state.entries.remove(id: id)
+        if state.entries.isEmpty {
+          state.isIslandRosterExpanded = false
+          state.islandNavigation = .init()
+        } else if state.isIslandRosterExpanded {
+          state.islandNavigation.reconcile(entries: state.entries)
+        }
         return .none
 
-      case .entryTapped(let id), .handOffTapped(let id):
+      case .entryTapped(let id), .runWorkflowTapped(let id, _):
         // Mirror the tapped surface into the focus anchor so the panel highlight and
         // keyboard navigation step from the just-selected agent immediately. The async
         // `focusChanged` event can't be relied on here: it is deduplicated per worktree
@@ -64,11 +92,74 @@ struct ActiveAgentsFeature {
         state.focusedSurfaceID = state.entries[id: id]?.surfaceID
         return .none
 
-      case .markAsReadTapped:
+      case .island(let action):
+        if action.surfacesProwl {
+          state.isIslandRosterExpanded = false
+          state.islandNavigation = .init()
+        }
+        return .send(action)
+
+      case .markAsReadTapped, .islandToggleEnabledTapped:
         return .none
 
       case .focusedSurfaceChanged(let surfaceID):
         state.focusedSurfaceID = surfaceID
+        return .none
+
+      case .islandEnabledChanged(let isEnabled):
+        state.isIslandEnabled = isEnabled
+        if !isEnabled {
+          state.isIslandRosterExpanded = false
+          state.islandNavigation = .init()
+          state.islandHotKeyRegistrationFailure = nil
+        }
+        return .none
+
+      case .islandToggleRoster:
+        if state.isIslandRosterExpanded {
+          state.isIslandRosterExpanded = false
+          state.islandNavigation = .init()
+        } else {
+          state.isIslandRosterExpanded = true
+          state.islandNavigation.start(
+            entries: state.entries,
+            preferredEntryID: state.islandAttentionEntries.first?.id,
+            preferredSurfaceID: state.focusedSurfaceID
+          )
+        }
+        return .none
+
+      case .islandCollapseRoster, .islandOpenProwlTapped, .islandSettingsTapped:
+        state.isIslandRosterExpanded = false
+        state.islandNavigation = .init()
+        return .none
+
+      case .islandMoveSelection(let direction):
+        guard state.isIslandRosterExpanded else { return .none }
+        state.islandNavigation.moveSelection(direction, entries: state.entries)
+        return .none
+
+      case .islandMovePage(let direction):
+        guard state.isIslandRosterExpanded else { return .none }
+        state.islandNavigation.movePage(direction, entries: state.entries)
+        return .none
+
+      case .islandActivateSelection:
+        guard state.isIslandRosterExpanded, let id = state.islandNavigation.selectedEntryID else {
+          return .none
+        }
+        return .send(.island(.entryTapped(id)))
+
+      case .islandActivateVisibleEntry(let index):
+        guard state.isIslandRosterExpanded,
+          let id = state.islandNavigation.visibleEntryID(at: index, entries: state.entries)
+        else {
+          return .none
+        }
+        return .send(.island(.entryTapped(id)))
+
+      case .setIslandHotKeyRegistrationFailure(let binding):
+        state.islandHotKeyRegistrationFailure = binding
         return .none
 
       case .selectNextEntry:
@@ -135,5 +226,31 @@ struct ActiveAgentsFeature {
   static func maximumPanelHeight(forContainerHeight height: Double) -> Double {
     max(minimumPanelHeight, min(maximumPanelHeight, height - reservedSidebarListHeight))
   }
+}
 
+extension ActiveAgentsFeature.Action {
+  /// Actions that end in Prowl-owned UI: pane focus or the workflow start sheet. Raised from
+  /// the island, these collapse the roster and surface the main window first.
+  var surfacesProwl: Bool {
+    switch self {
+    case .entryTapped, .runWorkflowTapped:
+      return true
+    default:
+      return false
+    }
+  }
+}
+
+extension ActiveAgentsFeature.State {
+  var islandAttentionEntries: [ActiveAgentEntry] {
+    entries.filter { $0.displayState == .blocked || $0.displayState == .done }
+      .sorted { lhs, rhs in
+        let lhsPriority = lhs.displayState == .blocked ? 0 : 1
+        let rhsPriority = rhs.displayState == .blocked ? 0 : 1
+        if lhsPriority != rhsPriority {
+          return lhsPriority < rhsPriority
+        }
+        return lhs.lastChangedAt > rhs.lastChangedAt
+      }
+  }
 }

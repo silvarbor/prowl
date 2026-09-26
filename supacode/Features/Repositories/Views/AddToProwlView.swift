@@ -1,4 +1,5 @@
 import AppKit
+import ComposableArchitecture
 import SwiftUI
 
 struct AddToProwlView: View {
@@ -26,7 +27,7 @@ struct AddToProwlView: View {
       HStack(alignment: .center, spacing: 12) {
         Image(nsImage: NSApp.applicationIconImage)
           .resizable()
-          .aspectRatio(contentMode: .fit)
+          .scaledToFit()
           .frame(width: 38, height: 38)
           .accessibilityHidden(true)
         VStack(alignment: .leading, spacing: 2) {
@@ -154,6 +155,7 @@ struct AddToProwlView: View {
             .font(.system(size: 11.5))
             .foregroundStyle(.secondary)
             .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
         }
 
         Spacer()

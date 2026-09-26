@@ -32,44 +32,55 @@ enum WorkflowFixtures {
         direction: right
         background: false
 
+    state:
+      verdict: {type: string, initial: issues}
+      findings_path: {type: string, initial: ""}
+
     steps:
       - id: brief
         title: "Author writing the brief"
         message: author
-        instruction: |
+        prompt: |
           Write a short brief for an adversarial reviewer: ## Scope, ## Claims, ## How to verify.
           Deliver it with the generated completion command.
-        expect: { output: brief, sections: ["## Scope", "## Claims"], timeout: 10m }
+        expect: { delivery: brief, sections: ["## Scope", "## Claims"], timeout: 10m }
 
       - id: launch
         title: "Reviewer starting round 1"
         launch: reviewer
-        prompt: "Read {{ outputs.brief.path }} and the bundled reviewer skill, then review. Focus: {{ inputs.focus }}"
+        prompt: "Read {{ deliveries.brief.path }} and the bundled reviewer skill, then review. Focus: {{ inputs.focus }}"
         skill: prowl.adversarial-reviewer
-        expect: { output: findings, sections: ["## Findings", "## Verdict"], verdict: [clean, issues], timeout: 30m }
+        expect: { delivery: findings, sections: ["## Findings", "## Verdict"], verdicts: [clean, issues], timeout: 30m }
+
+      - id: remember
+        set:
+          verdict: deliveries.findings.verdict
+          findings_path: deliveries.findings.path
 
       - id: rounds
-        repeat:
-          max: "{{ inputs.max_rounds }}"
-          until: outputs.findings.verdict == clean
+        while: state.verdict != 'clean'
+        max_iterations: 10
         steps:
           - id: fix
-            title: "Round {{ loop.index }}: author addressing findings"
+            title: "Round {{ context.step.iteration }}: author addressing findings"
             message: author
-            text: "Findings: {{ outputs.findings.path }}. Fix or rebut each item, then deliver your disposition."
-            expect: { output: disposition, timeout: 30m }
+            prompt: "Findings: {{ state.findings_path }}. Fix or rebut each item."
+            expect: { delivery: disposition, timeout: 30m }
           - id: rereview
-            title: "Round {{ loop.index }}: reviewer re-checking"
             message: reviewer
-            text: "Disposition: {{ outputs.disposition.path }}. Re-review and deliver findings with a verdict."
-            expect: { output: findings, verdict: [clean, issues], timeout: 30m }
+            prompt: "Disposition: {{ deliveries.disposition.path }}. Re-review."
+            expect: { delivery: round_findings, verdicts: [clean, issues], timeout: 30m }
+          - id: retain
+            set:
+              verdict: deliveries.round_findings.verdict
+              findings_path: deliveries.round_findings.path
 
       - id: context
-        action: git.context
-        with: { root: "{{ worktree.path }}" }
+        action: builtin:collect-worktree-context
+        with: { root: "{{ context.worktree.path }}" }
 
       - id: done
-        notify: "Adversarial review: {{ outputs.findings.verdict }} after {{ loop.count }} round(s)"
+        notify: "Adversarial review: {{ state.verdict }}"
 
       - id: cleanup
         close: reviewer
@@ -88,7 +99,7 @@ enum WorkflowFixtures {
     steps:
       - id: ask
         message: author
-        text: "Say hello."
+        prompt: "Say hello."
     \(extraSteps)
 
     """

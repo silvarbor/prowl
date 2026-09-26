@@ -1,4 +1,5 @@
 import Foundation
+import ProwlCLIShared
 import Testing
 
 @testable import supacode
@@ -201,7 +202,7 @@ struct AgentProfileWorkflowCarrierTests {
       token: "hook-token",
       coveredEvents: [.turnEnded]
     )
-    let prompt = "Review the brief.\n\n---\nProwl workflow completion protocol v1:\nprowl workflow done -\n"
+    let prompt = "Review the brief.\n\n---\nProwl workflow completion protocol v1:\nprowl workflow deliver -\n"
     let attached = try hooked.attachingWorkflow(
       prompt: prompt,
       environment: [

@@ -41,6 +41,7 @@ Symbols: **⌘** Command · **⇧** Shift · **⌥** Option · **⌃** Control �
 |--------|---------|------------|------------|
 | Toggle Left Sidebar | ⌘⌃S | `toggle_left_sidebar` | yes |
 | Toggle Active Agents Panel | ⌘⌥P | `toggle_active_agents_panel` | yes |
+| Toggle Agent Island hot window | Unassigned | `toggle_agent_island` | yes |
 | Select Next Agent (in panel) | ⌥⌃↓ | `select_next_active_agent` | yes |
 | Select Previous Agent (in panel) | ⌥⌃↑ | `select_previous_active_agent` | yes |
 | Jump to Latest Unread | ⌘⌥U | `jump_to_latest_unread` | yes |
@@ -48,6 +49,21 @@ Symbols: **⌘** Command · **⇧** Shift · **⌥** Option · **⌃** Control �
 | Show Outgoing Changes | ⌘⌥⇧Y | `outgoing_changes` | yes |
 | Toggle Canvas | ⌘⌥↩ | `toggle_canvas` | yes |
 | Toggle Shelf | ⌘⇧↩ | `toggle_shelf` | yes |
+
+Agent Island deliberately ships without a shortcut. Assign **Toggle Agent Island** under
+Settings → Agents → Display or Settings → Shortcuts. Both use the same recorder and conflict
+handling. The globe beside the command explains its system-wide scope on hover. Prowl registers the resolved shortcut globally
+only while Agent Island has entries and Prowl is in the background; while Prowl is active, the
+normal menu key equivalent handles it. A globally registered chord takes precedence over the
+frontmost application's matching shortcut until the island becomes inactive or Prowl returns to
+the foreground. If macOS cannot register the shortcut globally, the
+shortcut row in either settings page reports the failure until the binding changes or a
+later registration succeeds. Reset returns the command to Unassigned.
+
+In the open roster, Arrow Up or `k` and Arrow Down or `j` select; Arrow Left or `h` and Arrow Right
+or `l` page; Return opens (Space is an alias); `1`…`9` directly opens a current-page row even when
+shortcut modifiers remain held; and `Esc` closes. Opening selects the newest Blocked reminder
+first, then the newest unviewed Done reminder, before falling back to the focused agent.
 
 ## Shelf view
 
@@ -104,6 +120,8 @@ your Ghostty config (`~/.config/ghostty/config`). Typical defaults in parenthese
 | New Terminal (tab) | `new_tab` | ⌘T |
 | Close Terminal (pane/surface) | `close_surface` | ⌘W |
 | Close Terminal Tab | `close_tab` | ⌘⇧W |
+| Undo Close (restore the last closed pane / tab) | `undo` | ⌘Z, ⌘⇧T |
+| Redo Close (close it again) | `redo` | ⌘⇧Z |
 | New Split (vertical / horizontal) | `new_split:right` / `new_split:down` | (Ghostty default; config-only, not in the Terminal menu) |
 | Reset Font Size | `reset_font_size` | ⌘0 |
 | Increase Font Size | `increase_font_size:1` | ⌘+ |
@@ -138,7 +156,8 @@ their own hotkey — see [`components/custom-actions.md`](../components/custom-a
   Rename Branch) are remappable and conflict-checked against all remappable actions.
 - **Custom Command** hotkeys take precedence over app shortcuts within the focused
   repository. Local commands win global-command collisions; global bindings use a
-  separate internal command ID namespace. Conflicts are surfaced when recording.
+  separate internal command ID namespace. Recording an app shortcut already used by an active
+  Custom Command is rejected; pre-existing collisions are marked Unavailable in Shortcuts.
 - Disabling a Custom Command unregisters its hotkey with every other command surface,
   but preserves the configured key so re-enabling restores it.
 - **Terminal engine keys** are owned by Ghostty. Prowl automatically *unbinds*
@@ -155,3 +174,44 @@ their own hotkey — see [`components/custom-actions.md`](../components/custom-a
   Command distinguishes them.
 - `select_previous/next_worktree` (⌘⌃↑/↓) is overloaded by design: in Shelf view
   it cycles the open book's **tabs**; elsewhere it changes the selected worktree.
+
+### Recent input close protection
+
+Closing a pane or tab asks for confirmation if any affected pane received text,
+paste, dropped text or file paths, or deletion input within the last 10 seconds.
+Active input-method composition also requires confirmation, even after 10 seconds.
+This applies to idle agents and ordinary terminals, alongside existing protection
+for active agents, unseen results, and long-running commands.
+
+Navigation, copying, scrolling, and the close shortcut itself do not extend this
+window. Enter and Escape do not clear it. This guards against accidental closure
+while editing; it does not detect saved drafts or protect input indefinitely.
+Explicit no-confirmation close operations retain their existing behavior.
+
+### Undo close
+
+Closing a pane or tab keeps it alive for Ghostty's `undo-timeout` (default 5
+seconds). Within that window, Ghostty's `undo` binding (`⌘Z` or `⌘⇧T` by default)
+from any terminal puts the most recently closed pane or tab back where it was: same
+tab position, same split position and ratio, same running process and scrollback.
+`redo` (`⌘⇧Z`) closes it again without a confirmation prompt. Batch closes (Close
+Other Tabs, Close Tabs to the Right, Close All) come back as one unit.
+
+Each close has its own timer; a later close does not extend an earlier one. The
+undo history is app-wide and time-ordered: `⌘Z` restores the latest close even if it
+happened in another tab or worktree, and Prowl selects that worktree and tab (in
+Canvas, the restored card becomes the primary selection) so the restore is visible.
+A pane launched from an Agent Profile keeps its Profile identity, managed-hook
+signals, and Codex notification forwarding across the restore. Closing the last
+tab of a worktree is undoable too: with no terminal left to take the key, the
+main window hands it to Ghostty's app-level binding dispatch, so your real
+`undo` / `redo` bindings apply (defaults `⌘Z`, `⌘⇧T`, `⌘⇧Z`; rebinding, unbinding,
+and `performable:` prefixes are honored) and the tab comes back into that worktree
+(and the book back onto the Shelf). A text field that has focus keeps its own undo,
+other windows are not affected, and no other app-level binding fires through this
+route. When nothing is restorable, `⌘Z` reaches the terminal program as a normal key.
+
+Not restorable: closes whose process had already exited, worktree removal, layout
+restore, Run Script replacement, and a pane whose tab was split or rearranged after
+the close. Set `undo-timeout = 0` in `~/.config/ghostty/config` to disable the
+feature.

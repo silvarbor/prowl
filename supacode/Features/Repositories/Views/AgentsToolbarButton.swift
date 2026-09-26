@@ -1,3 +1,4 @@
+import ComposableArchitecture
 import SwiftUI
 
 enum LeadingToolbarControlMetrics {
@@ -16,9 +17,6 @@ struct AgentsCapsuleState: Equatable {
   /// the assembler with the same two-step token fallback the Active Agents
   /// panel uses, so a wrapper process name never loses the brand icon.
   let iconSource: TabIconSource?
-  /// Plain-language explanation of the hand-off action, shown under its
-  /// title in the popover row; varies with the source session's state.
-  let infoLine: String
 }
 
 /// One launchable agent profile row in the Agents popover (docs-ai 053).
@@ -36,10 +34,10 @@ struct AgentsLauncherItem: Equatable, Identifiable {
 }
 
 /// Leading toolbar entry point for agent-scoped actions.
-/// The capsule identifies the selected pane's agent (the hand-off source);
-/// clicking it opens a popover that hosts the agent actions — hand-off when
-/// an agent is detected, plus the profile launcher and the manage entry
-/// (docs-ai 049/053). The popover is always available: launch rows require a
+/// The capsule identifies the selected pane's agent; clicking it opens a
+/// popover that hosts the agent actions — workflow starts, the profile
+/// launcher, and the manage entry (docs-ai 049/053/063). The popover is always
+/// available: launch rows require a
 /// target worktree but never a detected agent, while profile management remains
 /// available without either. Live status stays with the terminal, the Active
 /// Agents panel, and the central status toast — the capsule deliberately
@@ -55,9 +53,14 @@ struct AgentsLauncherItem: Equatable, Identifiable {
 struct AgentsToolbarButton: View {
   let capsule: AgentsCapsuleState?
   let launcherItems: [AgentsLauncherItem]
-  let onHandOff: () -> Void
+  /// The worktree whose workflows the popover lists; nil hides the section.
+  let workflowsWorktreeID: Worktree.ID?
   let onLaunchProfile: (AgentProfile.ID) -> Void
   let onManageProfiles: () -> Void
+  let onManageWorkflows: () -> Void
+  let onRunWorkflow: (String) -> Void
+  let onRunWorkflowWithOptions: (String) -> Void
+  let onShowWorkflowDetails: (WorkflowStartCatalogItem) -> Void
   @State private var isPopoverPresented = false
 
   var body: some View {
@@ -73,10 +76,7 @@ struct AgentsToolbarButton: View {
       AgentsPopoverContent(
         capsule: capsule,
         launcherItems: launcherItems,
-        onHandOff: {
-          isPopoverPresented = false
-          onHandOff()
-        },
+        workflowsWorktreeID: workflowsWorktreeID,
         onLaunchProfile: { id in
           isPopoverPresented = false
           onLaunchProfile(id)
@@ -84,6 +84,22 @@ struct AgentsToolbarButton: View {
         onManageProfiles: {
           isPopoverPresented = false
           onManageProfiles()
+        },
+        onManageWorkflows: {
+          isPopoverPresented = false
+          onManageWorkflows()
+        },
+        onRunWorkflow: { key in
+          isPopoverPresented = false
+          onRunWorkflow(key)
+        },
+        onRunWorkflowWithOptions: { key in
+          isPopoverPresented = false
+          onRunWorkflowWithOptions(key)
+        },
+        onShowWorkflowDetails: { item in
+          isPopoverPresented = false
+          onShowWorkflowDetails(item)
         }
       )
     }
@@ -128,15 +144,15 @@ struct AgentsToolbarButton: View {
   private var helpText: String {
     guard let capsule else {
       return launcherItems.isEmpty
-        ? "Manage agent profiles"
-        : "Launch an agent profile in this worktree"
+        ? String(localized: "Manage agent profiles")
+        : String(localized: "Launch an agent profile in this worktree")
     }
-    return "Agent actions for \(capsule.displayName)"
+    return String(localized: "Agent actions for \(capsule.displayName)")
   }
 
   private var accessibilityText: String {
-    guard let capsule else { return "Agents" }
-    return "Agents: \(capsule.displayName)"
+    guard let capsule else { return String(localized: "Agents") }
+    return String(localized: "Agents: \(capsule.displayName)")
   }
 }
 
@@ -164,29 +180,42 @@ struct AgentsQuickLaunchButton: View {
   }
 }
 
-/// The agent-actions popover. Hand-off leads when an agent is detected; the
-/// launcher rows follow under one "New agent in this worktree" section header
+/// The agent-actions popover presents workflow and profile launches under one
+/// "New agent in this worktree" section header
 /// (recommended profile first) so the shared purpose is stated once instead
 /// of repeated per row, and the manage entry closes the list.
 private struct AgentsPopoverContent: View {
+  @Dependency(FeatureFlags.self) private var featureFlags
   let capsule: AgentsCapsuleState?
   let launcherItems: [AgentsLauncherItem]
-  let onHandOff: () -> Void
+  let workflowsWorktreeID: Worktree.ID?
   let onLaunchProfile: (AgentProfile.ID) -> Void
   let onManageProfiles: () -> Void
+  let onManageWorkflows: () -> Void
+  let onRunWorkflow: (String) -> Void
+  let onRunWorkflowWithOptions: (String) -> Void
+  let onShowWorkflowDetails: (WorkflowStartCatalogItem) -> Void
+  @Dependency(WorkflowStartClient.self) private var workflowStartClient
+  @State private var workflowItems: [WorkflowStartCatalogItem] = []
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      if let capsule {
-        AgentsPopoverRow(
-          title: "Hand Off…",
-          subtitle: capsule.infoLine,
-          systemImage: "arrow.left.arrow.right",
-          action: onHandOff
-        )
-        if !launcherItems.isEmpty {
-          Divider().padding(.vertical, 4)
+      if !workflowItems.isEmpty {
+        Text("Run a workflow")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .padding(.horizontal, 8)
+          .padding(.top, 4)
+          .padding(.bottom, 2)
+        ForEach(workflowItems) { item in
+          AgentsWorkflowRow(
+            item: item,
+            onRun: { onRunWorkflow(item.key) },
+            onRunWithOptions: { onRunWorkflowWithOptions(item.key) },
+            onShowDetails: { onShowWorkflowDetails(item) }
+          )
         }
+        Divider().padding(.vertical, 4)
       }
       if !launcherItems.isEmpty {
         Text("New agent in this worktree")
@@ -210,9 +239,18 @@ private struct AgentsPopoverContent: View {
       if capsule != nil || !launcherItems.isEmpty {
         Divider().padding(.vertical, 4)
       }
+      if featureFlags.workflowUI {
+        AgentsPopoverRow(
+          title: String(localized: "Manage Workflows…"),
+          subtitle: String(localized: "Review, create, and edit workflows in Settings"),
+          systemImage: "point.3.connected.trianglepath.dotted",
+          action: onManageWorkflows
+        )
+        .help("Open Settings → Agents → Workflows")
+      }
       AgentsPopoverRow(
-        title: "Manage Agent Profiles…",
-        subtitle: "Add presets, models, and accounts in Settings",
+        title: String(localized: "Manage Agent Profiles…"),
+        subtitle: String(localized: "Add presets, models, and accounts in Settings"),
         systemImage: "slider.horizontal.3",
         action: onManageProfiles
       )
@@ -225,6 +263,11 @@ private struct AgentsPopoverContent: View {
     // Runtimes still warned about (or unanswered) re-probe on every open, so
     // a CLI installed mid-session clears its warning without a relaunch.
     .task { await AgentRuntimeAvailabilityProbe.refresh() }
+    // Workflows re-list on every open so file edits show without a relaunch.
+    .task {
+      guard featureFlags.workflowUI, let workflowsWorktreeID else { return }
+      workflowItems = workflowStartClient.catalog(workflowsWorktreeID)
+    }
   }
 }
 
@@ -247,7 +290,7 @@ private struct AgentsPopoverRow: View {
 
   var body: some View {
     Button(action: action) {
-      HStack(alignment: .top, spacing: 8) {
+      HStack(alignment: .center, spacing: 8) {
         if let iconSource {
           AgentProfileIconImage(source: iconSource, pointSize: 16)
             .frame(width: 16)
@@ -281,6 +324,69 @@ private struct AgentsPopoverRow: View {
     }
     .buttonStyle(.plain)
     .opacity(isDimmed ? 0.5 : 1)
+    .background(
+      RoundedRectangle(cornerRadius: 6)
+        .fill(isHovered ? Color.accentColor.opacity(0.2) : Color.clear)
+    )
+    .onHover { isHovered = $0 }
+  }
+}
+
+/// Valid and invalid workflows share geometry; only the launch action is disabled
+/// for invalid files, so their Settings diagnostics remain accessible.
+private struct AgentsWorkflowRow: View {
+  let item: WorkflowStartCatalogItem
+  let onRun: () -> Void
+  let onRunWithOptions: () -> Void
+  let onShowDetails: () -> Void
+  @State private var isHovered = false
+
+  var body: some View {
+    HStack(spacing: 0) {
+      Button(action: onRun) {
+        HStack(alignment: .center, spacing: 8) {
+          WorkflowIconImage(icon: item.icon, pointSize: 16)
+            .frame(width: 16)
+          VStack(alignment: .leading, spacing: 2) {
+            Text(item.name)
+              .lineLimit(1)
+            if let description = item.validationFailure ?? item.workflowDescription {
+              Text(description)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+          }
+          Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .contentShape(.rect)
+      }
+      .buttonStyle(.plain)
+      .disabled(!item.isRunnable)
+      .help(item.validationFailure ?? String(localized: "Run \(item.name)"))
+      Menu {
+        if item.isRunnable {
+          Button("Run with Options…", action: onRunWithOptions)
+          Divider()
+        }
+        Button("Show Details in Settings…", action: onShowDetails)
+      } label: {
+        Image(systemName: "ellipsis.circle")
+          .foregroundStyle(.secondary)
+          .accessibilityHidden(true)
+          .frame(width: 20, height: 20)
+          .contentShape(.rect)
+      }
+      .menuStyle(.borderlessButton)
+      .menuIndicator(.hidden)
+      .fixedSize()
+      .padding(.trailing, 6)
+      .help("More actions for \(item.name)")
+      .accessibilityLabel("More actions for \(item.name)")
+    }
     .background(
       RoundedRectangle(cornerRadius: 6)
         .fill(isHovered ? Color.accentColor.opacity(0.2) : Color.clear)

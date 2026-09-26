@@ -67,7 +67,7 @@ struct RunScriptToolbarButton: View {
     if isRunning {
       button(
         config: RunScriptButtonConfig(
-          title: "Stop",
+          title: String(localized: "Stop"),
           systemImage: "stop.fill",
           helpText: stopHelpText,
           shortcut: stopShortcut,
@@ -77,7 +77,7 @@ struct RunScriptToolbarButton: View {
     } else {
       button(
         config: RunScriptButtonConfig(
-          title: "Run",
+          title: String(localized: "Run"),
           systemImage: "play.fill",
           helpText: runHelpText,
           shortcut: runShortcut,
@@ -152,9 +152,9 @@ struct UserCustomCommandToolbarButton: View {
     guard isEnabled else {
       switch source {
       case .repository:
-        return "\(title) (Set command script in Repository Settings)"
+        return String(localized: "\(title) (Set command script in Repository Settings)")
       case .global:
-        return "\(title) (Set command script in Settings → Commands)"
+        return String(localized: "\(title) (Set command script in Settings → Commands)")
       }
     }
     var text = title
@@ -248,10 +248,10 @@ private struct WorktreeToolbarPreview: View {
   init() {
     toolbarState = WorktreeDetailView.WorktreeToolbarState(
       shared: WorktreeDetailView.ToolbarSharedState(
+        actionTargetWorktreeID: nil,
         agentsCapsule: AgentsCapsuleState(
           displayName: "codex",
-          iconSource: CommandIconMap.iconForFirstToken("codex"),
-          infoLine: "Pass this task to another agent in a new tab. codex will summarize its progress first."
+          iconSource: CommandIconMap.iconForFirstToken("codex")
         ),
         agentsLauncherItems: [],
         statusToast: nil,
@@ -313,9 +313,12 @@ private struct WorktreeToolbarPreview: View {
         onStopRunScript: {},
         onRunCustomCommand: { _ in },
         onActivateUpdateButton: {},
-        onHandOff: {},
         onLaunchProfile: { _ in },
         onManageProfiles: {},
+        onManageWorkflows: {},
+        onRunWorkflow: { _ in },
+        onRunWorkflowWithOptions: { _ in },
+        onShowWorkflowDetails: { _ in },
         onWorkflowIntent: { _ in }
       )
     }
@@ -344,13 +347,18 @@ private struct CanvasToolbarPreview: View {
         .toolbar(removing: .title)
         .toolbar {
           WorktreeDetailView.AgentNotificationsToolbarContent(
+            onHistoryIntent: { _ in },
             agentsCapsule: nil,
             agentsLauncherItems: [],
             notificationGroups: [],
             unseenNotificationWorktreeCount: 0,
-            onHandOff: {},
+            workflowsWorktreeID: nil,
             onLaunchProfile: { _ in },
             onManageProfiles: {},
+            onManageWorkflows: {},
+            onRunWorkflow: { _ in },
+            onRunWorkflowWithOptions: { _ in },
+            onShowWorkflowDetails: { _ in },
             onSelectNotification: { _, _ in },
             onDismissAllNotifications: {},
             isUpdateAvailable: true,

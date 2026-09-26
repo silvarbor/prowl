@@ -12,10 +12,12 @@ extension RepositoriesFeature {
     switch action {
     case .worktreeCreation, .worktreeLifecycle, .worktreeOrdering, .githubIntegration,
       .repositoryManagement,
-      .workspaceCreation:
+      .workspaceCreation,
+      .workspaceEditing:
       return .none
 
-    case .activeAgents(.entryTapped(let id)), .activeAgents(.handOffTapped(let id)):
+    case .activeAgents(.entryTapped(let id)),
+      .activeAgents(.runWorkflowTapped(let id, _)):
       guard let entry = state.activeAgents.entries[id: id] else { return .none }
       if state.isShowingCanvas {
         requestCanvasFocus(.tab(entry.tabID), openedWorktreeID: entry.worktreeID, state: &state)
@@ -90,6 +92,7 @@ extension RepositoriesFeature {
       state.repositoryRoots = roots
       state.isInitialLoadComplete = true
       state.loadFailuresByID = [:]
+      state.gitUnavailableRepositoryIDs = []
       let selectedWorktree = state.worktree(for: state.selectedWorktreeID)
       let selectionChanged = selectionDidChange(
         previousSelectionID: previousSelection,
@@ -233,6 +236,7 @@ extension RepositoriesFeature {
         failures.map { ($0.rootID, $0.message) },
         uniquingKeysWith: { first, _ in first }
       )
+      state.gitUnavailableRepositoryIDs = Set(failures.filter(\.isGitUnavailable).map(\.rootID))
       let selectedWorktree = state.worktree(for: state.selectedWorktreeID)
       let selectionChanged = selectionDidChange(
         previousSelectionID: previousSelection,
@@ -497,13 +501,13 @@ extension RepositoriesFeature {
         return .none
       }
       // Entering Shelf requires at least one book to render.
-      guard !state.orderedWorktreeRows().isEmpty else { return .none }
+      guard state.canEnterShelf else { return .none }
       // Shelf is mutually exclusive with Canvas / archived views: when entering
       // Shelf we need a worktree- or repository-scoped selection.
       let needsRedirect: Bool
       switch state.selection {
       case .some(.worktree), .some(.repository):
-        needsRedirect = false
+        needsRedirect = state.selectedTerminalWorktree == nil
       case .some(.canvas), .some(.archivedWorktrees), .none:
         needsRedirect = true
       }
@@ -540,12 +544,15 @@ extension RepositoriesFeature {
       // the card the user was actively focused on in Canvas so a
       // Canvas → Shelf switch opens *that* card as the active book,
       // not whatever was selected before Canvas was entered.
-      let targetID =
-        terminalClient.canvasFocusedWorktreeID()
-        ?? state.preCanvasTerminalTargetID
-        ?? state.preCanvasWorktreeID
-        ?? state.lastFocusedWorktreeID
-        ?? state.orderedWorktreeRows().first?.id
+      let candidates = [
+        terminalClient.canvasFocusedWorktreeID(), state.preCanvasTerminalTargetID,
+        state.preCanvasWorktreeID, state.lastFocusedWorktreeID,
+        state.orderedWorktreeRows().first?.id,
+        state.orderedRepositoryIDs().first(where: { state.repositories[id: $0]?.kind == .plain }),
+      ]
+      let targetID = candidates.compactMap { $0 }.first {
+        state.worktree(for: $0) != nil || state.repositories[id: $0]?.kind == .plain
+      }
       guard let targetID else { return .none }
       if state.worktree(for: targetID) == nil,
         let repository = state.repositories[id: targetID],
@@ -652,7 +659,9 @@ extension RepositoriesFeature {
       return .merge(.send(.selectWorktree(worktreeID, focusTerminal: true)), createTab)
 
     case .newTerminalTabCreatedInCanvas(let worktreeID, let tabID):
-      guard state.isShowingCanvas, state.worktree(for: worktreeID) != nil else { return .none }
+      // A plain folder's terminal target is its synthesized worktree, so an
+      // undo restoring one of its tabs must pass this guard too.
+      guard state.isShowingCanvas, state.terminalWorktree(for: worktreeID) != nil else { return .none }
       requestCanvasFocus(.tab(tabID), openedWorktreeID: worktreeID, state: &state)
       return .none
 
@@ -772,15 +781,15 @@ extension RepositoriesFeature {
       let trimmed = branchName.trimmingCharacters(in: .whitespacesAndNewlines)
       guard !trimmed.isEmpty else {
         state.alert = messageAlert(
-          title: "Branch name required",
-          message: "Enter a branch name to rename."
+          title: String(localized: "Branch name required"),
+          message: String(localized: "Enter a branch name to rename.")
         )
         return .none
       }
       guard !trimmed.contains(where: \.isWhitespace) else {
         state.alert = messageAlert(
-          title: "Branch name invalid",
-          message: "Branch names can't contain spaces."
+          title: String(localized: "Branch name invalid"),
+          message: String(localized: "Branch names can't contain spaces.")
         )
         return .none
       }
@@ -795,7 +804,7 @@ extension RepositoriesFeature {
         } catch {
           await send(
             .presentAlert(
-              title: "Unable to rename branch",
+              title: String(localized: "Unable to rename branch"),
               message: error.localizedDescription
             )
           )
@@ -825,19 +834,25 @@ extension RepositoriesFeature {
     case .worktreeCreationPrompt:
       return .none
 
-    case .workspaceCreationPrompt(.presented(.delegate(.cancel))):
+    case .workspaceEditor(.presented(.delegate(.cancel))):
+      if state.workspaceEditor?.mode.isEditing == true {
+        return .send(.workspaceEditing(.promptCanceled))
+      }
       return .send(.workspaceCreation(.promptCanceled))
 
-    case .workspaceCreationPrompt(.presented(.delegate(.baseRefSourceChanged(let repositoryID)))):
-      return .send(.workspaceCreation(.refreshBaseRefs(repositoryID)))
-
-    case .workspaceCreationPrompt(.presented(.delegate(.submit(let draft)))):
+    case .workspaceEditor(.presented(.delegate(.submit(.create(let draft))))):
       return .send(.workspaceCreation(.createWorkspace(draft)))
 
-    case .workspaceCreationPrompt(.dismiss):
+    case .workspaceEditor(.presented(.delegate(.submit(.update(let request))))):
+      return .send(.workspaceEditing(.saveWorkspace(request)))
+
+    case .workspaceEditor(.dismiss):
+      if state.workspaceEditor?.mode.isEditing == true {
+        return .send(.workspaceEditing(.promptDismissed))
+      }
       return .send(.workspaceCreation(.promptDismissed))
 
-    case .workspaceCreationPrompt:
+    case .workspaceEditor:
       return .none
 
     case .alert(.presented(.confirmArchiveWorktree(let worktreeID, let repositoryID))):
@@ -890,6 +905,37 @@ extension RepositoriesFeature {
       return .send(
         .repositoryManagement(
           .repositoryRemoved(repositoryID, selectionWasRemoved: selectionWasRemoved)))
+
+    case .showRepositoryLoadFailure(let id):
+      guard let detail = state.loadFailuresByID[id] else { return .none }
+      let unavailable = state.gitUnavailableRepositoryIDs.contains(id)
+      state.alert = AlertState {
+        TextState(
+          unavailable ? String(localized: "Git is unavailable") : String(localized: "Unable to read repository"))
+      } actions: {
+        ButtonState(action: .retryRepositoryLoad) { TextState(String(localized: "Retry")) }
+        ButtonState(action: .copyRepositoryLoadFailure("\(id)\n\n\(detail)")) {
+          TextState(String(localized: "Copy Details"))
+        }
+        ButtonState(role: .cancel) { TextState(String(localized: "OK")) }
+      } message: {
+        TextState(
+          unavailable
+            ? detail
+            : String(localized: "Check this folder's permissions and Git configuration, then retry.") + "\n\n" + detail)
+      }
+      return .none
+
+    case .alert(.presented(.retryRepositoryLoad)):
+      return .send(.refreshWorktrees)
+
+    case .alert(.presented(.copyRepositoryLoadFailure(let detail))):
+      return .run { _ in
+        await MainActor.run {
+          NSPasteboard.general.clearContents()
+          NSPasteboard.general.setString(detail, forType: .string)
+        }
+      }
 
     case .presentAlert(let title, let message):
       state.alert = messageAlert(title: title, message: message)

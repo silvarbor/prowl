@@ -1,4 +1,5 @@
 import Foundation
+import ProwlCLIShared
 import Testing
 
 @testable import supacode
@@ -132,14 +133,14 @@ struct WorkflowStatusCenterPresentationTests {
   @Test func attentionControlsExhaustivelyMapEveryMachineAction() throws {
     var session = try makeSession(id: UUID(5), worktreeID: "selected", updatedAt: Self.now)
     let ordinal = try #require(session.run.currentInvocation?.ordinal)
-    let expectation = WorkflowExpectation(output: "brief", verdict: ["clean", "issues"])
+    let expectation = WorkflowExpectation(delivery: "brief", verdicts: ["clean", "issues"])
     session.run.invocations[0].activation = WorkflowActivation(
       ordinal: ordinal,
       stepID: "brief",
       role: "author",
       token: "token",
       expect: expectation,
-      outputName: "brief",
+      deliveryName: "brief",
       dispatchID: "dispatch",
       state: .provisional,
       pendingDelivery: WorkflowValidatedDelivery(
@@ -159,6 +160,7 @@ struct WorkflowStatusCenterPresentationTests {
         message: "Choose how to continue."
       ))
 
+    session.run.stepValues = session.run.expressionValues(capturedAt: Self.now)
     let run = WorkflowRunPresentation(run: session.run, now: Self.now)
 
     #expect(run.attentionControls.map(\.action) == WorkflowAttentionAction.allCases)
@@ -186,20 +188,22 @@ struct WorkflowStatusCenterPresentationTests {
     )
   }
 
-  @Test func stepListPreservesDocumentOrderAndGroupsRepeatIterations() throws {
+  @Test func stepListPreservesDocumentOrderAndGroupsLoopIterations() throws {
     var session = try makeSession(id: UUID(6), worktreeID: "selected", updatedAt: Self.now)
-    session.run.position = WorkflowRunPosition(
-      index: 1,
-      loop: WorkflowRunPosition.Loop(iteration: 2, bodyIndex: 0, max: 3)
-    )
+    var cursor = try #require(session.run.controlCursor)
+    for _ in 0..<3 {
+      cursor.complete()
+      _ = try cursor.next(values: session.run.expressionValues(capturedAt: Self.now))
+    }
+    session.run.controlCursor = cursor
     session.run.stepRecords = [
       WorkflowStepRecord(stepID: "brief", iteration: nil, state: .completed, ordinal: 1),
       WorkflowStepRecord(stepID: "fix", iteration: 1, state: .completed, ordinal: 2),
       WorkflowStepRecord(stepID: "rereview", iteration: 1, state: .completed, ordinal: 3),
       WorkflowStepRecord(stepID: "fix", iteration: 2, state: .active, ordinal: 4),
     ]
-    let briefPath = "/tmp/selected/.prowl/workflow-runs/\(session.run.id.uuidString)/outputs/brief.md"
-    session.run.outputs["brief"] = WorkflowOutputRecord(
+    let briefPath = "/tmp/selected/.prowl/workflow-runs/\(session.run.id.uuidString)/deliveries/brief.md"
+    session.run.deliveries["brief"] = WorkflowDeliveryRecord(
       name: "brief",
       ordinal: 1,
       path: briefPath,
@@ -215,20 +219,21 @@ struct WorkflowStatusCenterPresentationTests {
         role: "author",
         kind: .message,
         startedAt: Self.now,
-        instructionPath: nil,
+        promptPath: nil,
         activation: nil,
         endedAt: nil
       )
     ]
     session.run.phase = .waitingForRole(role: "author", ordinal: 4)
 
+    session.run.stepValues = session.run.expressionValues(capturedAt: Self.now)
     let run = WorkflowRunPresentation(run: session.run, now: Self.now)
     let expectedInstruction =
-      "Read /tmp/selected/.prowl/workflow-runs/\(run.id.uuidString)/outputs/brief.md "
+      "Read /tmp/selected/.prowl/workflow-runs/\(run.id.uuidString)/deliveries/brief.md "
       + "and address the findings in round 2."
 
     #expect(run.currentStepTitle == "Round 2: address findings")
-    #expect(run.currentInstruction == expectedInstruction)
+    #expect(run.currentPrompt == expectedInstruction)
     #expect(run.stepItems.count == 4)
     guard case .step(let brief) = run.stepItems[0] else {
       Issue.record("Expected the top-level brief step first")
@@ -269,14 +274,15 @@ struct WorkflowStatusCenterPresentationTests {
         "reviewer": .launch(Self.reviewerProfile, pane: nil),
       ]
     )
-    session.run.position = WorkflowRunPosition(index: session.run.definition.steps.count, loop: nil)
+    session.run.controlCursor = nil
 
+    session.run.stepValues = session.run.expressionValues(capturedAt: Self.now)
     let run = WorkflowRunPresentation(run: session.run, now: Self.now)
 
     #expect(run.roles.map(\.displayName) == ["Author", "Pi Reviewer"])
     #expect(run.roles.map(\.surfaceID) == [Self.authorPane.surfaceID, nil])
     #expect(run.currentStepTitle == "Finishing workflow")
-    #expect(run.currentInstruction == nil)
+    #expect(run.currentPrompt == nil)
     #expect(run.elapsedText == "1d 1h")
     #expect(run.elapsedText(at: session.run.startedAt.addingTimeInterval(-1)) == "0s")
   }
@@ -382,22 +388,23 @@ struct WorkflowStatusCenterPresentationTests {
       - id: brief
         title: "Write the brief"
         message: author
-        instruction: "Write a brief."
-        expect: { output: brief }
+        prompt: "Write a brief."
+        expect: { delivery: brief }
       - id: rounds
-        repeat:
-          max: 3
+        while: 'true'
+        max_iterations: 3
         steps:
           - id: fix
-            title: "Round {{ loop.index }}: address findings"
+            title: "Round {{ context.step.iteration }}: address findings"
             message: author
-            instruction: "Read {{ outputs.brief.path }} and address the findings in round {{ loop.index }}."
-            expect: { output: disposition }
+            prompt: >-
+              Read {{ deliveries.brief.path }} and address the findings in round {{ context.step.iteration }}.
+            expect: { delivery: disposition }
           - id: rereview
-            title: "Round {{ loop.index }}: re-review"
+            title: "Round {{ context.step.iteration }}: re-review"
             message: author
-            text: "Review again."
-            expect: { output: findings, verdict: [clean, issues] }
+            prompt: "Review again."
+            expect: { delivery: findings, verdicts: [clean, issues] }
       - id: finish
         notify: "Done"
     """
@@ -412,8 +419,8 @@ struct WorkflowStatusCenterPresentationTests {
     steps:
       - id: note
         message: author
-        text: "Write an optional note."
-        expect: { output: note }
+        prompt: "Write an optional note."
+        expect: { delivery: note }
       - id: finish
         notify: "Done"
     """
@@ -431,7 +438,7 @@ struct WorkflowStatusCenterPresentationTests {
     steps:
       - id: brief
         message: author
-        text: "Write a brief."
+        prompt: "Write a brief."
     """
 
   private func makeSession(
@@ -479,5 +486,43 @@ struct WorkflowStatusCenterPresentationTests {
 extension UUID {
   fileprivate nonisolated init(_ value: UInt8) {
     self.init(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, value))
+  }
+}
+
+extension WorkflowStatusCenterPresentationTests {
+  @Test func aRunThatJustEndedStaysListedAfterTheActiveOnesWithItsOutcome() throws {
+    let active = try makeSession(id: UUID(1), worktreeID: "selected", updatedAt: Self.now)
+    var completed = try makeSession(
+      id: UUID(2), worktreeID: "selected", startedAt: Self.now.addingTimeInterval(-30), updatedAt: Self.now)
+    completed.run.status = .completed
+    var cancelled = try makeSession(id: UUID(3), worktreeID: "selected", updatedAt: Self.now)
+    cancelled.run.status = .cancelled
+    var elsewhere = try makeSession(id: UUID(4), worktreeID: "other", updatedAt: Self.now)
+    elsewhere.run.status = .completed
+    var state = WorkflowRunsFeature.State()
+    state.sessions = [
+      active.run.id: active, completed.run.id: completed, cancelled.run.id: cancelled, elsewhere.run.id: elsewhere,
+    ]
+    // Only runs the reducer still holds count; `cancelled` expired already.
+    state.recentlyFinishedRunIDs = [completed.run.id, elsewhere.run.id]
+
+    let presentation = WorkflowStatusCenterPresentation(state: state, selectedWorktreeID: "selected", now: Self.now)
+    #expect(presentation.runs.map(\.id) == [active.run.id, completed.run.id])
+    #expect(presentation.primary?.id == active.run.id)
+    #expect(presentation.activeRunCount == 1)
+    #expect(presentation.runs.last?.status == .finished(.completed))
+    #expect(presentation.runs.last?.summaryText == "Status Center Test completed")
+    #expect(presentation.primary?.summaryText == "Write the brief")
+
+    let onlyFinished = WorkflowStatusCenterPresentation(
+      state: {
+        var state = state
+        state.sessions[active.run.id] = nil
+        return state
+      }(), selectedWorktreeID: "selected", now: Self.now)
+    #expect(onlyFinished.primary?.id == completed.run.id)
+    #expect(onlyFinished.activeRunCount == 0)
+    #expect(!onlyFinished.hasAttention)
+    #expect(ToolbarStatusSelection(toast: nil, workflow: onlyFinished, pullRequest: nil).isWorkflow)
   }
 }

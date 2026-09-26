@@ -3,6 +3,7 @@ import ComposableArchitecture
 import Foundation
 import IdentifiedCollections
 import PostHog
+import ProwlCLIShared
 import SwiftUI
 
 nonisolated let githubIntegrationRecoveryInterval: Duration = .seconds(15)
@@ -105,6 +106,7 @@ struct RepositoriesFeature {
     static let worktreePromptLoad = "repositories.worktreePromptLoad"
     static let worktreePromptValidation = "repositories.worktreePromptValidation"
     static let workspaceCreation = "repositories.workspaceCreation"
+    static let workspaceRootPathResolution = "repositories.workspaceRootPathResolution"
     static let workspaceChildrenRefresh = "repositories.workspaceChildrenRefresh"
     static func archiveScript(_ worktreeID: Worktree.ID) -> String {
       "repositories.archiveScript.\(worktreeID)"
@@ -269,18 +271,22 @@ struct RepositoriesFeature {
     case defaultRootPathResolved(path: String, requestedRootPath: String)
     case promptCanceled
     case promptDismissed
-    case refreshBaseRefs(Repository.ID)
-    case baseRefsLoaded(
-      repositoryID: Repository.ID,
-      sourceKind: ProjectWorkspaceRepositorySourceKind,
-      sourceLocation: String,
-      options: [GitBranchRefOption],
-      defaultBaseRef: String?,
-      errorMessage: String?
-    )
     case createWorkspace(ProjectWorkspaceCreationDraft)
     case workspaceCreated(URL)
     case workspaceCreationFailed(String)
+  }
+
+  @CasePathable
+  enum WorkspaceEditingAction: Equatable {
+    /// Opens the editor on an existing workspace. `removingChildID` is a
+    /// child working-directory path (sidebar row id) to pre-mark for removal.
+    case promptRequested(Repository.ID, removingChildID: String?)
+    case promptLoaded(Repository.ID, ProjectWorkspace, removingChildID: String?)
+    case promptCanceled
+    case promptDismissed
+    case saveWorkspace(ProjectWorkspaceUpdateRequest)
+    case workspaceSaved(Repository.ID, cleanupFailures: [ProjectWorkspaceCleanupFailure])
+    case workspaceSaveFailed(String)
   }
 
   @ObservableState
@@ -289,6 +295,7 @@ struct RepositoriesFeature {
     var repositoryRoots: [URL] = []
     var repositoryOrderIDs: [Repository.ID] = []
     var loadFailuresByID: [Repository.ID: String] = [:]
+    var gitUnavailableRepositoryIDs: Set<Repository.ID> = []
     /// User-defined display titles indexed by `Repository.ID`. Resolved
     /// once on repo discovery (and refreshed when settings change) so
     /// hot-path display sites — sidebar, shelf spine, canvas card,
@@ -379,9 +386,12 @@ struct RepositoriesFeature {
     var nextCanvasCommandRequestID = 0
     var pendingCanvasCommandRequest: CanvasCommandRequest?
     var activeAgents = ActiveAgentsFeature.State()
+    /// `in <workflow> · <role>` labels for panes bound to an active run, synced by AppFeature
+    /// from WorkflowRunsFeature state (docs-ai 063 C2).
+    var workflowRoleBadgesBySurfaceID: [UUID: String] = [:]
     @Shared(.appStorage("sidebarCollapsedRepositoryIDs")) var collapsedRepositoryIDs: [Repository.ID] = []
     @Presents var worktreeCreationPrompt: WorktreeCreationPromptFeature.State?
-    @Presents var workspaceCreationPrompt: WorkspaceCreationPromptFeature.State?
+    @Presents var workspaceEditor: WorkspaceEditorFeature.State?
     @Presents var alert: AlertState<Alert>?
   }
 
@@ -415,6 +425,7 @@ struct RepositoriesFeature {
     case githubIntegration(GithubIntegrationAction)
     case repositoryManagement(RepositoryManagementAction)
     case workspaceCreation(WorkspaceCreationAction)
+    case workspaceEditing(WorkspaceEditingAction)
     case activeAgents(ActiveAgentsFeature.Action)
     case task
     case repositorySnapshotLoaded([Repository]?)
@@ -467,6 +478,7 @@ struct RepositoriesFeature {
     case requestRenameBranchPrompt(Worktree.ID)
     case consumePendingRenameBranchRequest(Int)
     case requestRenameBranch(Worktree.ID, String)
+    case showRepositoryLoadFailure(Repository.ID)
     case presentAlert(title: String, message: String)
     case worktreeInfoEvent(WorktreeInfoWatcherClient.Event)
     case worktreeBranchNameLoaded(worktreeID: Worktree.ID, name: String)
@@ -475,7 +487,7 @@ struct RepositoriesFeature {
     case showToast(StatusToast)
     case dismissToast
     case worktreeCreationPrompt(PresentationAction<WorktreeCreationPromptFeature.Action>)
-    case workspaceCreationPrompt(PresentationAction<WorkspaceCreationPromptFeature.Action>)
+    case workspaceEditor(PresentationAction<WorkspaceEditorFeature.Action>)
     case alert(PresentationAction<Alert>)
     case delegate(Delegate)
   }
@@ -483,6 +495,7 @@ struct RepositoriesFeature {
   struct LoadFailure: Equatable {
     let rootID: Repository.ID
     let message: String
+    var isGitUnavailable: Bool = false
   }
 
   struct DeleteWorktreeTarget: Equatable {
@@ -515,6 +528,8 @@ struct RepositoriesFeature {
   }
 
   enum Alert: Equatable {
+    case retryRepositoryLoad
+    case copyRepositoryLoadFailure(String)
     case confirmArchiveWorktree(Worktree.ID, Repository.ID)
     case confirmArchiveWorktrees([ArchiveWorktreeTarget])
     case confirmForceDeleteBranch(ForceDeleteBranchRequest)
@@ -574,6 +589,7 @@ struct RepositoriesFeature {
       githubIntegrationReducer
       repositoryManagementReducer
       workspaceCreationReducer
+      workspaceEditingReducer
       Scope(state: \.activeAgents, action: \.activeAgents) {
         ActiveAgentsFeature()
       }
@@ -595,8 +611,8 @@ struct RepositoriesFeature {
     .ifLet(\.$worktreeCreationPrompt, action: \.worktreeCreationPrompt) {
       WorktreeCreationPromptFeature()
     }
-    .ifLet(\.$workspaceCreationPrompt, action: \.workspaceCreationPrompt) {
-      WorkspaceCreationPromptFeature()
+    .ifLet(\.$workspaceEditor, action: \.workspaceEditor) {
+      WorkspaceEditorFeature()
     }
   }
 
@@ -609,3 +625,4 @@ struct RepositoriesFeature {
 // - RepositoriesFeature+GithubIntegration.swift
 // - RepositoriesFeature+RepositoryManagement.swift
 // - RepositoriesFeature+WorkspaceCreation.swift
+// - RepositoriesFeature+WorkspaceEditing.swift

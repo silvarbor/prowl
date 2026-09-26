@@ -8,12 +8,23 @@ import ProwlCLIShared
 extension OutputRenderer {
   static func renderWorkflow(_ payload: WorkflowCommandPayload) {
     switch payload {
+    case .read(let content):
+      if content.encoding == "base64" { print("Encoding: base64 (use --json for byte-preserving transfer)") }
+      print(content.body)
+      if let next = content.nextOffset {
+        print("\nMore content: prowl workflow read \(content.resource) --run \(content.run) "
+          + "--invocation \(content.invocation) --offset \(next)")
+      }
+      if !content.resources.isEmpty {
+        print("\nAssigned resources:")
+        for resource in content.resources { print("\(resource.id): \(resource.name)") }
+      }
     case .list(let list):
       print(workflowListText(list))
     case .run(let run), .status(let run), .cancel(let run):
       print(workflowRunText(run))
-    case .done(let done):
-      print(workflowDoneText(done))
+    case .deliver(let deliver):
+      print(workflowDeliverText(deliver))
     case .validate(let validate):
       print(workflowValidateText(validate))
     case .schema(let schema):
@@ -58,7 +69,7 @@ extension OutputRenderer {
       var line = "Step: \(step)"
       if let activation = payload.activation {
         line +=
-          "  waiting for '\(activation.role)' → output '\(activation.output)' (\(activation.state))"
+          "  waiting for '\(activation.role)' → delivery '\(activation.delivery)' (\(activation.state))"
       }
       lines.append(line)
     }
@@ -84,9 +95,9 @@ extension OutputRenderer {
         lines.append(parts.joined(separator: "  "))
       }
     }
-    if !payload.outputs.isEmpty {
-      lines.append("Outputs:")
-      for (name, output) in payload.outputs.sorted(by: { $0.key < $1.key }) {
+    if !payload.deliveries.isEmpty {
+      lines.append("Deliveries:")
+      for (name, output) in payload.deliveries.sorted(by: { $0.key < $1.key }) {
         let verdict = output.verdict.map { "  verdict \($0)" } ?? ""
         lines.append("  \(name.bold)  \(output.latestPath.dim)\(verdict)")
       }
@@ -98,23 +109,23 @@ extension OutputRenderer {
     return lines.joined(separator: "\n")
   }
 
-  static func workflowDoneText(_ payload: WorkflowDonePayload) -> String {
+  static func workflowDeliverText(_ payload: WorkflowDeliverPayload) -> String {
     let delivery = payload.delivery
     var lines: [String] = []
     switch delivery.state {
     case .delivered:
       lines.append(
-        "\("Delivered".green)  output '\(delivery.output.name)' for step '\(delivery.step)' (invocation \(delivery.ordinal))"
+        "\("Delivered".green)  delivery '\(delivery.record.name)' for step '\(delivery.step)' (invocation \(delivery.ordinal))"
       )
     case .provisional:
       lines.append(
-        "\("Provisional".yellow)  output '\(delivery.output.name)' for step '\(delivery.step)' is on disk but needs a decision in Prowl:"
+        "\("Provisional".yellow)  delivery '\(delivery.record.name)' for step '\(delivery.step)' is on disk but needs a decision in Prowl:"
       )
       for warning in delivery.warnings {
         lines.append("  - \(warning.message) [\(warning.code)]")
       }
     }
-    lines.append("  \(delivery.output.path.dim)")
+    lines.append("  \(delivery.record.path.dim)")
     lines.append("Run: \(payload.run.id)  \(workflowStatusText(payload.run.status))")
     return lines.joined(separator: "\n")
   }
@@ -129,7 +140,7 @@ extension OutputRenderer {
     case "skipped":
       let detail = [status.step, status.dependent].compactMap { $0 }.joined(separator: " → ")
       return "skipped".yellow + (detail.isEmpty ? "" : " (\(detail))")
-    case "cancelled", "interrupted", "max_rounds_reached":
+    case "cancelled", "interrupted", "iteration_limit_reached":
       return status.state.replacing("_", with: " ").red
     default: return status.state
     }

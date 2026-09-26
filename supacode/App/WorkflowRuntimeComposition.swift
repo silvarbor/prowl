@@ -6,6 +6,7 @@
 
 import ComposableArchitecture
 import Foundation
+import ProwlCLIShared
 
 /// Lets the responder dependency (installed before the store exists) reach the coordinator that
 /// is built with the CLI router.
@@ -52,6 +53,8 @@ struct WorkflowRuntimeInstallation {
   let watchdog: WorkflowWatchdogClient
   let queue: WorkflowEffectQueueClient
   let responder: WorkflowCLIResponderClient
+  let start: WorkflowStartClient
+  let settings: WorkflowSettingsClient
 
   func install(into values: inout DependencyValues) {
     values.workflowActivationClient = activation
@@ -59,6 +62,8 @@ struct WorkflowRuntimeInstallation {
     values.workflowWatchdogClient = watchdog
     values.workflowEffectQueue = queue
     values.workflowCLIResponder = responder
+    values.workflowStartClient = start
+    values[WorkflowSettingsClient.self] = settings
   }
 }
 
@@ -84,7 +89,11 @@ extension SupacodeApp {
       queue: WorkflowEffectQueue().client,
       responder: WorkflowCLIResponderClient(respond: { requestID, resolution in
         coordinatorBox.coordinator?.resolve(requestID, resolution)
-      })
+      }),
+      start: makeWorkflowStartClient(
+        terminalManager: terminalManager, storeBox: storeBox,
+        coordinatorBox: coordinatorBox, reservations: reservations),
+      settings: makeWorkflowSettingsClient(terminalManager: terminalManager, storeBox: storeBox)
     )
   }
 
@@ -138,7 +147,8 @@ extension SupacodeApp {
       changedSignal: evidence.latest,
       revision: observed?.revision ?? 0,
       isLive: terminalManager.isSurfaceLive(surfaceID),
-      signals: terminalManager.agentSignalsPayload(surfaceID: surfaceID)
+      signals: terminalManager.agentSignalsPayload(surfaceID: surfaceID),
+      screenDetection: terminalManager.agentScreenDetection(surfaceID: surfaceID)
     )
   }
 
@@ -184,6 +194,29 @@ extension SupacodeApp {
     reservations: WorkflowPaneReservations = WorkflowPaneReservations()
   ) -> WorkflowRuntimeClient {
     WorkflowRuntimeClient(
+      observe: { run in
+        var values: [String: WorkflowJSONValue] = [
+          "branch": WorktreeBranchReader.branchName(of: run.context.worktree.rootURL).map(WorkflowJSONValue.string)
+            ?? .null
+        ]
+        for pane in run.bindings.values.compactMap(\.pane) {
+          let snapshot = makeWorkflowConditionSnapshot(
+            surfaceID: pane.surfaceID,
+            terminalManager: terminalManager, storeBox: storeBox)
+          values[pane.surfaceID.uuidString] = .object([
+            "exists": .boolean(snapshot.isLive),
+            "state": .string(AgentConditionEvidence.normalizedState(snapshot)),
+            "session_identity": storeBox.store?.state.repositories.activeAgents.entries
+              .first(where: { $0.surfaceID == pane.surfaceID }).flatMap { entry in
+                WorkflowHistorySessionIdentity.resolve(
+                  agent: entry.agent, detected: entry.session,
+                  currentSignal: terminalManager.currentAgentSignalEvidence(surfaceID: pane.surfaceID).latestManagedHook
+                ).map(WorkflowJSONValue.string)
+              } ?? .null,
+          ])
+        }
+        return values
+      },
       waitForRole: { surfaceID in
         await waitForWorkflowRole(
           surfaceID: surfaceID, terminalManager: terminalManager, storeBox: storeBox)
@@ -226,7 +259,8 @@ extension SupacodeApp {
             title: notification.title,
             body: notification.body,
             surfaceId: surfaceID,
-            treatAsViewedWhenWorktreeIsVisible: notification.treatAsViewedWhenWorktreeIsVisible
+            treatAsViewedWhenWorktreeIsVisible: notification.treatAsViewedWhenWorktreeIsVisible,
+            workflowRunID: notification.workflowRunID
           )
           return
         }
@@ -466,8 +500,12 @@ extension SupacodeApp {
         return settings.rememberedWorkflowBinding(for: key)
       },
       detectedAgent: { surfaceID in
-        appStore.state.repositories.activeAgents.entries.first { $0.surfaceID == surfaceID }.map {
-          WorkflowDetectedAgent(token: $0.agent.rawValue, displayName: $0.agent.displayName)
+        appStore.state.repositories.activeAgents.entries.first { $0.surfaceID == surfaceID }.map { entry in
+          WorkflowDetectedAgent(
+            token: entry.agent.rawValue, displayName: entry.agent.displayName,
+            sessionIdentity: WorkflowHistorySessionIdentity.resolve(
+              agent: entry.agent, detected: entry.session,
+              currentSignal: terminalManager.currentAgentSignalEvidence(surfaceID: surfaceID).latestManagedHook))
         }
       },
       pendingDispatchID: { surfaceID in
@@ -515,6 +553,7 @@ extension SupacodeApp {
             URL(filePath: $0, directoryHint: .isDirectory)
           }
         },
+        paneOwner: { appStore.state.workflowRuns.paneOwners[$0] },
         rendezvous: rendezvous
       ))
   }
@@ -551,8 +590,10 @@ nonisolated enum WorkflowRunAdmissionPlaceholder {
 /// `git symbolic-ref --short HEAD` of a worktree, synchronously and cheaply; nil outside Git.
 nonisolated enum WorktreeBranchReader {
   static func branchName(of worktree: URL) -> String? {
+    guard let git = GitExecutableResolver.shared.cachedExecutable else { return nil }
     let process = Process()
-    process.executableURL = URL(filePath: "/usr/bin/git")
+    process.executableURL = git.url
+    process.environment = ProcessInfo.processInfo.environment.merging(git.environment) { _, selected in selected }
     process.arguments = [
       "-C", worktree.path(percentEncoded: false), "symbolic-ref", "--short", "-q", "HEAD",
     ]

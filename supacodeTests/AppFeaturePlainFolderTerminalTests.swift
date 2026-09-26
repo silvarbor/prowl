@@ -1,6 +1,7 @@
 import ComposableArchitecture
 import DependenciesTestSupport
 import Foundation
+import ProwlCLIShared
 import Testing
 
 @testable import supacode
@@ -180,6 +181,35 @@ struct AppFeaturePlainFolderTerminalTests {
     #expect(
       store.state.resolvedKeybindings.display(for: AppShortcuts.CommandID.showDiff) == AppShortcuts.showDiff.display
     )
+  }
+
+  @Test func logicalCustomDigitOverridesPhysicalAppDigitBinding() {
+    let physicalDigit = Keybinding(
+      key: "digit_1",
+      modifiers: KeybindingModifiers(command: true)
+    )
+    var settings = SettingsFeature.State()
+    settings.keybindingUserOverrides.overrides[AppShortcuts.CommandID.toggleAgentIsland] =
+      KeybindingUserOverride(binding: physicalDigit)
+    let command = EffectiveCustomCommand(
+      source: .repository,
+      command: UserCustomCommand(
+        id: "build",
+        title: "Build",
+        systemImage: "hammer",
+        command: "make build",
+        execution: .shellScript,
+        shortcut: physicalDigit.userCustomShortcut
+      )
+    )
+
+    let resolved = AppFeature().resolvedKeybindings(
+      settings: settings,
+      customCommands: [command]
+    )
+
+    #expect(resolved.keybinding(for: command.keybindingID) != nil)
+    #expect(resolved.keybinding(for: AppShortcuts.CommandID.toggleAgentIsland) == nil)
   }
 
   @Test(.dependencies) func customCommandUsesPlainRepositoryTerminalTarget() async {

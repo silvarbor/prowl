@@ -1,10 +1,11 @@
 // supacodeTests/WorkflowRunsFeatureTests.swift
 // The reducer that wires B2's machine to the boundaries (docs-ai 063 B3): ordered effect
-// execution, the two-phase `done` rendezvous, late launches, and the restart scan.
+// execution, the two-phase `deliver` rendezvous, late launches, and the restart scan.
 
 import ComposableArchitecture
 import DependenciesTestSupport
 import Foundation
+import ProwlCLIShared
 import Testing
 
 @testable import supacode
@@ -16,6 +17,13 @@ struct WorkflowTypedLineRecord {
   let instructionExisted: Bool
 }
 
+// Runs and restart recovery must share storage within a test, never across tests.
+@Suite(
+  .dependencies {
+    $0[WorkflowHistoryStorageKey.self] = WorkflowHistoryStorage(
+      baseURL: FileManager.default.temporaryDirectory.appending(path: "workflow-history-\(UUID().uuidString)"))
+  }
+)
 @MainActor
 struct WorkflowRunsFeatureTests {
   nonisolated private static let now = Date(timeIntervalSince1970: 1_760_000_000)
@@ -37,18 +45,18 @@ struct WorkflowRunsFeatureTests {
     steps:
       - id: brief
         message: author
-        text: "Write the brief."
-        expect: { output: brief }
+        prompt: "Write the brief."
+        expect: { delivery: brief }
       - id: launch
         launch: reviewer
-        prompt: "Review {{ outputs.brief.path }}."
-        expect: { output: findings }
+        prompt: "Review {{ deliveries.brief.path }}."
+        expect: { delivery: findings }
       - id: cleanup
         close: reviewer
       - id: summary
         message: author
-        text: "Findings: {{ outputs.findings.path }}. Summarize."
-        expect: { output: summary }
+        prompt: "Findings: {{ deliveries.findings.path }}. Summarize."
+        expect: { delivery: summary }
     """
 
   /// A native action as the first step: the run starts in `runningAction`.
@@ -64,8 +72,8 @@ struct WorkflowRunsFeatureTests {
         placement: tab
     steps:
       - id: context
-        action: git.context
-        with: { root: "{{ worktree.path }}" }
+        action: builtin:collect-worktree-context
+        with: { root: "{{ context.worktree.path }}" }
       - id: launch
         launch: reviewer
         prompt: "Review."
@@ -232,7 +240,9 @@ struct WorkflowRunsFeatureTests {
   private func makeStore(
     _ fixture: Fixture, queue: WorkflowEffectQueueClient,
     storage: SettingsTestStorage = SettingsTestStorage(),
-    actionExecutor: (any WorkflowActionExecuting)? = nil
+    actionExecutor: (any WorkflowActionExecuting)? = nil,
+    handoffSessionContext: HandoffStore.SessionContext? = nil,
+    clock: any Clock<Duration> = ImmediateClock()
   ) -> TestStoreOf<WorkflowRunsFeature> {
     let store = TestStore(initialState: WorkflowRunsFeature.State()) {
       WorkflowRunsFeature()
@@ -240,6 +250,7 @@ struct WorkflowRunsFeatureTests {
       if let actionExecutor {
         $0.workflowActionExecutor = actionExecutor
       }
+      $0[TerminalClient.self].handoffSessionContextForSurface = { _, _ in handoffSessionContext }
       $0.workflowRuntimeClient = fixture.runtime
       $0.workflowActivationClient = fixture.activation
       $0.workflowWatchdogClient = fixture.watchdog
@@ -248,6 +259,7 @@ struct WorkflowRunsFeatureTests {
       $0.date.now = Self.now
       $0.uuid = .incrementing
       $0.settingsFileStorage = storage.storage
+      $0.continuousClock = clock
     }
     store.exhaustivity = .off(showSkippedAssertions: false)
     return store
@@ -268,6 +280,79 @@ struct WorkflowRunsFeatureTests {
         finish: { [self] runID in finished.append(runID) })
     }
     var effects: [WorkflowRunEffect] { batches.flatMap(\.effects) }
+  }
+
+  @MainActor
+  final class HoldingDeliveryQueue {
+    private let queue = WorkflowEffectQueue()
+    private var held: [(UUID, WorkflowEffectBatch)] = []
+    var isHolding = false
+    var client: WorkflowEffectQueueClient {
+      WorkflowEffectQueueClient(
+        start: { [queue] in queue.start($0) },
+        enqueue: { [self] id, batch in
+          if isHolding || batch.effects.contains(where: { if case .persistDelivery = $0 { true } else { false } }) {
+            isHolding = true
+            held.append((id, batch))
+          } else {
+            queue.enqueue(id, batch)
+          }
+        }, fence: { [queue] in queue.fence($0) }, isStale: { [queue] in queue.isStale($0, sequence: $1) },
+        finish: { [queue] in queue.finish($0) })
+    }
+    func release() {
+      isHolding = false
+      for (id, batch) in held { queue.enqueue(id, batch) }
+      held = []
+    }
+  }
+
+  @Test(.dependencies, arguments: [false, true])
+  func cancellationRetainsLatePersistenceEvidence(persistenceFails: Bool) async throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanUp() }
+    let queue = HoldingDeliveryQueue()
+    let store = makeStore(fixture, queue: queue.client)
+    let (session, effects) = try fixture.session()
+    let id = session.run.id
+    await store.send(.started(session, effects: effects))
+    await store.receive(.event(runID: id, .roleIdle(ordinal: 1)), timeout: Self.timeout)
+    await store.receive(
+      .event(runID: id, .injectionSucceeded(ordinal: 1, dispatchID: "dispatch-1")), timeout: Self.timeout)
+    await store.send(
+      .deliver(
+        .init(
+          requestID: UUID(), runID: id, ordinal: 1, selector: .token(Self.firstToken),
+          body: "# Brief\n## Scope\nx\n## Claims\ny", verdict: nil, source: "pane")))
+    #expect(queue.isHolding)
+    let activation = try #require(store.state.sessions[id]?.run.activeActivation)
+    let body = try #require(activation.pendingDelivery?.body)
+    let path = WorkflowRunPaths.submissionURL(
+      runDirectory: session.run.runDirectory,
+      name: activation.deliveryName, ordinal: 1, body: body)
+    if persistenceFails { try FileManager.default.createDirectory(at: path, withIntermediateDirectories: false) }
+    await store.send(.userAction(runID: id, .cancel))
+    queue.release()
+    await store.receive(\.event, timeout: Self.timeout)
+    await store.finish(timeout: Self.timeout)
+    let run = try #require(store.state.sessions[id]?.run)
+    let record = try session.store.readRecord(runID: id)
+    #expect(run.status == .cancelled)
+    #expect(record.run.status.state == "cancelled")
+    #expect(fixture.completed.isEmpty)
+    #expect(fixture.launches.isEmpty)
+    #expect(fixture.responses.count == 1)
+    #expect(fixture.responses.allSatisfy { if case .failed = $0.resolution { true } else { false } })
+    let submissions = record.steps.flatMap { $0.submissions ?? [] }
+    if persistenceFails {
+      #expect(submissions.isEmpty)
+      #expect(record.steps.first?.error?.contains("save") == true)
+    } else {
+      #expect(submissions.count == 1)
+      #expect(submissions.first?.accepted == false)
+      #expect(record.steps.first?.ordinal == 1)
+      #expect(try String(contentsOf: path, encoding: .utf8) == body)
+    }
   }
 
   /// A real queue whose fence rises on the n-th staleness check of the run — as a cancel that
@@ -308,12 +393,14 @@ struct WorkflowRunsFeatureTests {
 
   /// A native action that reports when it started and finishes only once released.
   nonisolated final class GatedActionExecutor: WorkflowActionExecuting, Sendable {
+    let receivedContext = LockIsolated<WorkflowActionContext?>(nil)
     private let startedStream = AsyncStream<Void>.makeStream()
     private let releaseStream = AsyncStream<Void>.makeStream()
 
-    func execute(actionID: String, inputs: [String: String], context: WorkflowActionContext) async throws
-      -> [String: String]
+    func execute(actionID: String, inputs: [String: WorkflowJSONValue], context: WorkflowActionContext) async throws
+      -> [String: WorkflowJSONValue]
     {
+      receivedContext.setValue(context)
       startedStream.continuation.yield()
       for await _ in releaseStream.stream { break }
       return ["summary": "done"]
@@ -335,7 +422,7 @@ struct WorkflowRunsFeatureTests {
 
   // MARK: - Ordered execution
 
-  @Test(.dependencies) func aRunPerformsItsEffectsInMachineOrderAndAnswersDoneAfterPersistence()
+  @Test(.dependencies) func aRunPerformsItsEffectsInMachineOrderAndAnswersDeliverAfterPersistence()
     async throws
   {
     let fixture = try Fixture()
@@ -355,7 +442,7 @@ struct WorkflowRunsFeatureTests {
     #expect(
       fixture.typed[0].instructionExisted,
       "the instruction file must exist before the pointer is typed")
-    #expect(fixture.typed[0].line.contains("PROWL_WORKFLOW_TOKEN=\(Self.firstToken) prowl workflow done -"))
+    #expect(fixture.typed[0].line.contains("PROWL_WORKFLOW_TOKEN=\(Self.firstToken) prowl workflow deliver -"))
     #expect(fixture.armed.map(\.ordinal) == [1])
     let record = try session.store.readRecord(runID: runID)
     #expect(record.run.status.state == "running")
@@ -368,14 +455,14 @@ struct WorkflowRunsFeatureTests {
           body: "# Brief\n## Scope\nx\n## Claims\ny", verdict: nil, source: "pane"))
     )
     #expect(store.state.pendingDeliveries[requestID]?.ordinal == 1)
-    await store.receive(.event(runID: runID, .outputPersisted(ordinal: 1)), timeout: Self.timeout)
+    await store.receive(.event(runID: runID, .deliveryPersisted(ordinal: 1)), timeout: Self.timeout)
     #expect(fixture.responses.count == 1)
     guard case .delivered(let run, let receipt) = fixture.responses[0].resolution else {
       Issue.record("expected a delivered resolution, got \(fixture.responses[0].resolution)")
       return
     }
     #expect(receipt.ordinal == 1)
-    #expect(run.outputs["brief"]?.ordinal == 1)
+    #expect(run.deliveries["brief"]?.ordinal == 1)
     #expect(store.state.pendingDeliveries.isEmpty)
     #expect(fixture.disarmed.first == 1, "the accepted delivery disarms its watchdog")
     #expect(fixture.completed == ["dispatch-1"])
@@ -422,7 +509,7 @@ struct WorkflowRunsFeatureTests {
     // The run directory's `instructions` leaf becomes a link, which the store refuses.
     try session.store.ensureLayout(runID: runID)
     let instructions = session.store.directory(for: runID).appending(
-      path: "instructions", directoryHint: .isDirectory)
+      path: "prompts", directoryHint: .isDirectory)
     try FileManager.default.removeItem(at: instructions)
     let elsewhere = fixture.root.appending(path: "elsewhere", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: elsewhere, withIntermediateDirectories: true)
@@ -441,7 +528,7 @@ struct WorkflowRunsFeatureTests {
 
   // MARK: - Rendezvous (decision W1)
 
-  @Test(.dependencies) func cancelWhileTheOutputIsPersistingFailsThePendingDone() async throws {
+  @Test(.dependencies) func cancelWhileTheOutputIsPersistingFailsThePendingDeliver() async throws {
     let fixture = try Fixture()
     defer { fixture.cleanUp() }
     let queue = RecordingQueue()
@@ -461,7 +548,7 @@ struct WorkflowRunsFeatureTests {
     #expect(store.state.sessions[runID]?.run.activeActivation?.state == .persisting)
     #expect(fixture.responses.isEmpty)
     #expect(
-      queue.effects.contains { if case .persistOutput = $0 { return true } else { return false } })
+      queue.effects.contains { if case .persistDelivery = $0 { return true } else { return false } })
 
     await store.send(.userAction(runID: runID, .cancel))
     await store.finish(timeout: Self.timeout)
@@ -475,12 +562,12 @@ struct WorkflowRunsFeatureTests {
           message: "The step stopped waiting for this delivery before the output was saved."))
     #expect(queue.effects.contains(.finished(.cancelled)))
 
-    // The queued `.outputPersisted` of the abandoned write is stale: ignored, nothing answered twice.
-    await store.send(.event(runID: runID, .outputPersisted(ordinal: 1)))
+    // The queued `.deliveryPersisted` of the abandoned write is stale: ignored, nothing answered twice.
+    await store.send(.event(runID: runID, .deliveryPersisted(ordinal: 1)))
     #expect(fixture.responses.count == 1)
   }
 
-  @Test(.dependencies) func aPersistenceFailureFailsThePendingDoneWithWorkflowFailed() async throws {
+  @Test(.dependencies) func aPersistenceFailureFailsThePendingDeliverWithWorkflowFailed() async throws {
     let fixture = try Fixture()
     defer { fixture.cleanUp() }
     let queue = RecordingQueue()
@@ -497,7 +584,7 @@ struct WorkflowRunsFeatureTests {
           body: "## Scope\nx\n## Claims\ny", verdict: nil, source: "manual")))
     #expect(queue.effects.first == .log("Step 'brief': delivery received (source=manual)."))
 
-    await store.send(.event(runID: runID, .outputPersistFailed(ordinal: 1, reason: "disk full")))
+    await store.send(.event(runID: runID, .deliveryPersistFailed(ordinal: 1, reason: "disk full")))
     #expect(store.state.sessions[runID]?.run.status.attention?.reason.code == "persist_failed")
     #expect(store.state.pendingDeliveries.isEmpty)
     #expect(fixture.responses.count == 1)
@@ -526,7 +613,7 @@ struct WorkflowRunsFeatureTests {
         WorkflowDeliveryRequest(
           requestID: requestID, runID: runID, ordinal: 1, selector: .token("TOKEN-1"),
           body: "## Scope\nonly", verdict: nil, source: "pane")))
-    await store.send(.event(runID: runID, .outputPersisted(ordinal: 1)))
+    await store.send(.event(runID: runID, .deliveryPersisted(ordinal: 1)))
     #expect(store.state.sessions[runID]?.run.status.attention?.reason.code == "delivery_issues")
     #expect(fixture.responses.count == 1)
     guard case .provisional(_, let receipt) = fixture.responses[0].resolution else {
@@ -716,6 +803,27 @@ struct WorkflowRunsFeatureTests {
     await store.finish(timeout: Self.timeout)
   }
 
+  @Test(.dependencies) func handoffActionCapturesTheSourceSession() async throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanUp() }
+    let gate = GatedActionExecutor()
+    let source = HandoffStore.SessionContext(
+      agent: "pi", sessionID: "handoff-session", paneID: "source-pane", paneTitle: nil, source: "test",
+      confidence: "exact", excerptText: nil)
+    let store = makeStore(
+      fixture, queue: WorkflowEffectQueue().client, actionExecutor: gate, handoffSessionContext: source)
+    let (session, effects) = try fixture.session(
+      Self.actionFirst
+        .replacing("builtin:collect-worktree-context", with: "builtin:save-handoff")
+        .replacing("root:", with: "briefing:"))
+    await store.send(.started(session, effects: effects))
+    await gate.started()
+    #expect(gate.receivedContext.value?.sessionContext?.sessionID == "handoff-session")
+    #expect(gate.receivedContext.value?.outgoingAgent == "pi")
+    gate.release()
+    await store.finish(timeout: Self.timeout)
+  }
+
   /// A native action checks the fence once more right before it starts: a cancel that lands
   /// after the batch check runs nothing, and the run log says so.
   @Test(.dependencies) func aFenceBeforeANativeActionStartsRunsNothing() async throws {
@@ -728,7 +836,8 @@ struct WorkflowRunsFeatureTests {
     #expect(
       effects.contains(
         .runAction(
-          stepID: "context", actionID: "git.context", inputs: ["root": fixture.root.path(percentEncoded: false)])))
+          stepID: "context", actionID: "builtin:collect-worktree-context",
+          inputs: ["root": .string(fixture.root.path(percentEncoded: false))])))
     await store.send(.started(session, effects: effects))
     await queue.reached()
     #expect(store.state.sessions[runID]?.run.phase == .runningAction(stepID: "context"))
@@ -740,8 +849,8 @@ struct WorkflowRunsFeatureTests {
     await store.finish(timeout: Self.timeout)
     let log = try String(
       contentsOf: session.store.directory(for: runID).appending(path: "log.md"), encoding: .utf8)
-    #expect(log.contains("Step 'context': native action 'git.context' not started; the run had moved on."))
-    #expect(!log.contains("finished after the run moved on"))
+    #expect(log.contains("Run finished: cancelled."))
+    #expect(!log.contains("action completed"))
   }
 
   /// An action that already left the main actor runs to completion; the run that was cancelled
@@ -763,9 +872,7 @@ struct WorkflowRunsFeatureTests {
     #expect(store.state.sessions[runID]?.run.actionOutputs.isEmpty == true)
     let log = try String(
       contentsOf: session.store.directory(for: runID).appending(path: "log.md"), encoding: .utf8)
-    #expect(
-      log.contains(
-        "Step 'context': native action 'git.context' finished after the run moved on; result discarded."))
+    #expect(!log.contains("action completed"))
     #expect(!log.contains("not started"))
     #expect(log.contains("Run finished: cancelled."))
   }
@@ -853,7 +960,7 @@ struct WorkflowRunsFeatureTests {
         WorkflowDeliveryRequest(
           requestID: UUID(), runID: runID, ordinal: 1, selector: .token(Self.firstToken),
           body: "# Brief\n## Scope\nx\n## Claims\ny", verdict: nil, source: "pane")))
-    await store.receive(.event(runID: runID, .outputPersisted(ordinal: 1)), timeout: Self.timeout)
+    await store.receive(.event(runID: runID, .deliveryPersisted(ordinal: 1)), timeout: Self.timeout)
     await store.receive(\.event, timeout: Self.timeout)
     let first = try #require(store.state.sessions[runID]?.run.bindings["reviewer"]?.pane)
     #expect(store.state.paneOwners[first.surfaceID] == runID)
@@ -894,7 +1001,9 @@ struct WorkflowRunsFeatureTests {
     await store.finish(timeout: Self.timeout)
     let log = try String(
       contentsOf: session.store.directory(for: runID).appending(path: "log.md"), encoding: .utf8)
-    #expect(log.contains("Step 'context': native action 'git.context' not started; the run had moved on."))
+    #expect(
+      log.contains(
+        "Step 'context': native action 'builtin:collect-worktree-context' not started; the run had moved on."))
     #expect(!log.contains("finished after the run moved on"))
   }
 
@@ -914,7 +1023,7 @@ struct WorkflowRunsFeatureTests {
         WorkflowDeliveryRequest(
           requestID: UUID(), runID: runID, ordinal: 1, selector: .token(Self.firstToken), body: "brief",
           verdict: nil, source: "pane")))
-    await store.receive(.event(runID: runID, .outputPersisted(ordinal: 1)), timeout: Self.timeout)
+    await store.receive(.event(runID: runID, .deliveryPersisted(ordinal: 1)), timeout: Self.timeout)
     await store.receive(\.event, timeout: Self.timeout)
     let reviewer = try #require(store.state.sessions[runID]?.run.bindings["reviewer"]?.pane)
     await store.send(
@@ -922,7 +1031,7 @@ struct WorkflowRunsFeatureTests {
         WorkflowDeliveryRequest(
           requestID: UUID(), runID: runID, ordinal: 2, selector: .token(Self.secondToken), body: "findings",
           verdict: nil, source: "pane")))
-    await store.receive(.event(runID: runID, .outputPersisted(ordinal: 2)), timeout: Self.timeout)
+    await store.receive(.event(runID: runID, .deliveryPersisted(ordinal: 2)), timeout: Self.timeout)
     return reviewer
   }
 
@@ -938,11 +1047,12 @@ struct WorkflowRunsFeatureTests {
       WorkflowRunEffect.inject(role: "r", surfaceID: pane, ordinal: 1, line: "l", opensActivation: true).isRevocable)
     #expect(WorkflowRunEffect.typeLine(role: "r", surfaceID: pane, line: "l").isRevocable)
     #expect(WorkflowRunEffect.launch(request).isRevocable)
-    #expect(WorkflowRunEffect.runAction(stepID: "s", actionID: "git.context", inputs: [:]).isRevocable)
+    #expect(
+      WorkflowRunEffect.runAction(stepID: "s", actionID: "builtin:collect-worktree-context", inputs: [:]).isRevocable)
     #expect(!WorkflowRunEffect.completeActivation(dispatchID: "d", summary: "s").isRevocable)
     #expect(!WorkflowRunEffect.abandonActivation(dispatchID: "d", reason: "r").isRevocable)
     #expect(!WorkflowRunEffect.persist.isRevocable)
-    #expect(!WorkflowRunEffect.persistOutput(name: "o", ordinal: 1, body: "b").isRevocable)
+    #expect(!WorkflowRunEffect.persistDelivery(name: "o", ordinal: 1, body: "b").isRevocable)
     #expect(!WorkflowRunEffect.log("l").isRevocable)
     #expect(WorkflowRunEffect.close(role: "r", surfaceID: pane).isRevocable, "cancel never closes panes")
     #expect(!WorkflowRunEffect.notify("n").isRevocable)
@@ -1062,6 +1172,11 @@ struct WorkflowRunsFeatureTests {
     _ = expectedMachine.apply(.user(.cancel))
     await store.send(.userAction(runID: runID, .cancel)) {
       $0.sessions[runID]?.run = expectedMachine.run
+      $0.recentlyFinishedRunIDs = [runID]
+    }
+    // The immediate test clock releases the status item's hold right away.
+    await store.receive(.finishedNoticeExpired(runID)) {
+      $0.recentlyFinishedRunIDs = []
     }
     await store.finish(timeout: Self.timeout)
   }
@@ -1076,8 +1191,8 @@ struct WorkflowRunsFeatureTests {
     #expect(WorkflowRunNotice.statusEdge(from: running, to: session.run)?.kind == .completed)
     session.run.status = .skipped(step: "brief", dependent: "launch")
     #expect(WorkflowRunNotice.statusEdge(from: running, to: session.run)?.kind == .skipped)
-    session.run.status = .maxRoundsReached
-    #expect(WorkflowRunNotice.statusEdge(from: running, to: session.run)?.kind == .maxRoundsReached)
+    session.run.status = .iterationLimitReached
+    #expect(WorkflowRunNotice.statusEdge(from: running, to: session.run)?.kind == .iterationLimitReached)
     session.run.status = .cancelled
     #expect(WorkflowRunNotice.statusEdge(from: running, to: session.run) == nil)
     #expect(WorkflowRunNotice.statusEdge(from: .completed, to: session.run) == nil)
@@ -1115,8 +1230,7 @@ struct WorkflowRunsFeatureTests {
   @Test(.dependencies) func explicitFinalNotifySuppressesTheDuplicateGenericCompletionNotification() async throws {
     let fixture = try Fixture()
     defer { fixture.cleanUp() }
-    let queue = RecordingQueue()
-    let store = makeStore(fixture, queue: queue.client)
+    let store = makeStore(fixture, queue: WorkflowEffectQueue().client)
     var session = try fixture.session().0
     session.run.status = .completed
     let base = try #require(WorkflowRunNotice.statusEdge(from: nil, to: session.run))
@@ -1134,11 +1248,13 @@ struct WorkflowRunsFeatureTests {
     await store.send(.started(session, effects: [.notify("Custom completion")]))
     await store.receive(\.delegate.notice, expected)
     await store.finish(timeout: Self.timeout)
+    #expect(fixture.notifications.count == 1)
+    #expect(fixture.notifications.first?.workflowRunID == session.run.id)
   }
 
   // MARK: - Restart scan
 
-  @Test(.dependencies) func interruptedRunsAreMarkedOncePerWorktreeRoot() async throws {
+  @Test(.dependencies) func recoveryRunsOnceGlobally() async throws {
     let fixture = try Fixture()
     defer { fixture.cleanUp() }
     let (session, _) = try fixture.session()
@@ -1206,5 +1322,30 @@ struct WorkflowEffectQueueTests {
     #expect(queue2.isStale(runID, sequence: 1))
     #expect(queue2.isStale(runID, sequence: 2))
     #expect(!queue2.isStale(runID, sequence: 3))
+  }
+}
+
+extension WorkflowRunsFeatureTests {
+  @Test(.dependencies) func aFinishedRunIsHeldForTheStatusItemThenReleased() async throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanUp() }
+    let clock = TestClock()
+    let store = makeStore(fixture, queue: RecordingQueue().client, clock: clock)
+    let (session, effects) = try fixture.session()
+    let runID = session.run.id
+    await store.send(.started(session, effects: effects))
+    #expect(store.state.recentlyFinishedRunIDs.isEmpty)
+
+    await store.send(.userAction(runID: runID, .cancel)) {
+      $0.sessions[runID]?.run.status = .cancelled
+      $0.recentlyFinishedRunIDs = [runID]
+    }
+    await clock.advance(by: WorkflowRunsFeature.finishedNoticeDuration - .seconds(1))
+    #expect(store.state.recentlyFinishedRunIDs == [runID])
+    await clock.advance(by: .seconds(1))
+    await store.receive(.finishedNoticeExpired(runID)) {
+      $0.recentlyFinishedRunIDs = []
+    }
+    await store.finish(timeout: Self.timeout)
   }
 }

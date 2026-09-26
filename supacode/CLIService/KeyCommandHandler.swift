@@ -2,6 +2,7 @@
 // Handles `prowl key` by resolving target, delivering key events, and building response.
 
 import Foundation
+import ProwlCLIShared
 
 private let keyLogger = SupaLogger("KeyCommandHandler")
 
@@ -86,7 +87,7 @@ final class KeyCommandHandler: CommandHandler {
           message: "No active pane to receive key events."
         )
       }
-      return mapResolverError(error)
+      return error.commandResponse(command: "key")
     }
 
     // Deliver key events
@@ -143,15 +144,6 @@ final class KeyCommandHandler: CommandHandler {
         focused: target.paneFocused
       )
     )
-  }
-
-  private func mapResolverError(_ error: TargetResolverError) -> CommandResponse {
-    switch error {
-    case .notFound(let message):
-      return errorResponse(code: CLIErrorCode.targetNotFound, message: message)
-    case .notUnique(let message):
-      return errorResponse(code: CLIErrorCode.targetNotUnique, message: message)
-    }
   }
 
   private func errorResponse(code: String, message: String) -> CommandResponse {

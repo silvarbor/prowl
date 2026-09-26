@@ -38,6 +38,30 @@ import Testing
     }
   }
 
+  @Test(arguments: [#"{"notify":null}"#, "{}"])
+  func absentNotifierCompletesWhileServerRemainsOpen(config: String) async throws {
+    let root = temporaryDirectory("codex-absent-notifier")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = root.appending(path: "no-notifier.sh")
+    try """
+    #!/bin/sh
+    for request in 1 2 3; do
+      IFS= read -r line || exit 1
+    done
+    printf '%s\\n' '{"id":2,"result":{"config":\(config)}}'
+    while IFS= read -r line; do :; done
+    """.write(to: executable, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    // This asserts response semantics, not startup latency under parallel CI load. Keep the
+    // server open using shell builtins and allow the same budget as the other response fixtures.
+    let process = CodexConfigReadProcess(executableURL: executable, temporaryBaseDirectory: root, timeout: 15)
+    let transcript = try await process.query(
+      CodexConfigQuery(kind: .base, codexHome: root, cwd: root, overrides: [])
+    )
+    #expect(try CodexConfigReadProtocol.decodeNotify(from: transcript) == nil)
+  }
+
   @Test func requestStdinStaysOpenUntilTheConfigReadResponseArrives() async throws {
     // Codex 0.149.1's app-server tears down on stdin EOF and drops any request it has not
     // answered yet, so the request pipe must outlive the response.
@@ -122,7 +146,11 @@ import Testing
       temporaryBaseDirectory: parser,
       timeout: 30
     )
-    let task = Task {
+    // Detached so the query does not compete with this test's poll loop for
+    // the main actor: a yield-only loop is not guaranteed to let a sibling
+    // main-actor task run, which left the scratch home unobserved until the
+    // 30 s process timeout on macOS 27.
+    let task = Task.detached {
       try await process.query(
         CodexConfigQuery(
           kind: .profile(profile),
@@ -132,8 +160,10 @@ import Testing
         )
       )
     }
-    for _ in 0..<10_000
-    where ((try? FileManager.default.contentsOfDirectory(atPath: parser.path)) ?? []).isEmpty {
+    let spawnDeadline = ContinuousClock.now.advanced(by: .seconds(10))
+    while ((try? FileManager.default.contentsOfDirectory(atPath: parser.path)) ?? []).isEmpty,
+      ContinuousClock.now < spawnDeadline
+    {
       await Task.yield()
     }
     #expect(((try? FileManager.default.contentsOfDirectory(atPath: parser.path)) ?? []).count == 1)

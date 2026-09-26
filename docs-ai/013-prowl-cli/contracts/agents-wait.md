@@ -57,9 +57,9 @@ Checks run in this order, before any text is typed:
    corroboration (idle/done); a detector-only idle view counts after two seconds unchanged, and
    only where the wait would fall back to the detector (no covering `verified_live` channel, or
    one holding no terminal level). Idle by one source alone — a `turn-ended` the detector has
-   not corroborated yet (its working hold after a turn), or a detector view still stabilizing —
-   is not a refusal: the precondition polls every 200 ms for up to five seconds, as the wait
-   would, and refuses only when the budget expires. A working or blocked detector state without
+   not corroborated yet, or a detector view still stabilizing — is not a refusal: the
+   precondition polls every 200 ms for up to five seconds, as the wait would, and refuses only
+   when the budget expires. A working or blocked detector state without
    such evidence, or a runtime `needs-input` level, refuses immediately.
    `error.details.observation` and `signals` carry the evidence.
 
@@ -105,6 +105,12 @@ observation/signal evidence, and stable `screen` evidence when requested.
 window. A completion arriving inside the window wins; otherwise waits report
 `DISPATCH_INCOMPLETE` or retained `AGENT_GONE`. Detector removal alone is diagnostic. Multiple
 waiters are non-destructive. App restart resets all receipts.
+
+Observed outstanding work from either the selected log root or the process-scoped
+native provider prevents Idle admission to condition waits, dispatch, and workflow
+readiness. A native Idle on an unmatched screen can supply heuristic evidence;
+it still requires the existing stabilization and cannot satisfy exact confidence
+or a task receipt by itself.
 
 ## Generic condition wait
 

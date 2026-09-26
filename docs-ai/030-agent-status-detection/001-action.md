@@ -29,9 +29,9 @@
     cline, opencode, copilot, kimi, droid, amp, qwen.
   - `AgentRawState.swift` — raw `working`/`blocked`/`idle`/`unknown` plus display states
     (idle + unseen renders as **Done**).
-  - `PaneAgentState.swift` — `stabilizeAgentState` with `workingStateHold = 3.0`
-    (blocked bypasses the hold; `.unknown` keeps the previous state and refreshes the
-    hold), `AgentDetectionPresence.releaseMissThreshold = 6`, `isBusy` (working/blocked →
+  - `PaneAgentState.swift` — `stabilizeAgentState` applies explicit working/blocked/idle
+    observations immediately while `.unknown` keeps the previous state,
+    `AgentDetectionPresence.releaseMissThreshold = 6`, `isBusy` (working/blocked →
     worktree running indicator), and — since #556 — sticky `session` retention.
   - `AgentDetectionSchedule.swift` — `cold` / `warm(until:)` (30 s window) / `active`.
 - **Infrastructure** (`supacode/Infrastructure/AgentDetection/`):
@@ -86,3 +86,10 @@
   kept for API symmetry with `observedNoAgent`).
 - `idleAgentDetectionInterval` is a slight misnomer post-#441 — it is the *warm* cadence;
   truly idle (cold) panes are not polled.
+
+## Migration note (2026-09-12)
+
+The historical `stabilizeAgentState` entry point described above has been replaced
+by `AgentStateMachine` and `AgentDetectionCoordinator`. Unknown-frame retention
+and process-presence holds are tested through those production components. See
+[the provider implementation](../064-agent-completion-signals/022-provider-implementation.md).

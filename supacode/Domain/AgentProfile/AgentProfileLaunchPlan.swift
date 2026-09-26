@@ -1,4 +1,5 @@
 import Foundation
+import ProwlCLIShared
 
 nonisolated struct AgentHookResources: Equatable, Sendable {
   let bundledCLIPath: String
@@ -627,7 +628,7 @@ nonisolated enum AgentProfileLaunchPlanner {
 
 nonisolated enum AgentDispatchPrompt {
   static let protocolVersion = 1
-  /// Origin marker on text Prowl types into a live agent, shared with `HandoffInjection`.
+  /// Origin marker on text Prowl types into a live agent.
   static let injectedPrefix = "[Prowl] "
 
   /// The text `agents dispatch` types into an existing agent pane: the same prompt and

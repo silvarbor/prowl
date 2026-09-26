@@ -1,4 +1,5 @@
 import Foundation
+import ProwlCLIShared
 import Testing
 
 @testable import supacode
@@ -90,7 +91,7 @@ struct WorkflowDeliveryValidatorTests {
     }
     #expect(strictJSON.code == "OUTPUT_INVALID")
 
-    let declared = WorkflowExpectation(verdict: ["clean", "issues"])
+    let declared = WorkflowExpectation(verdicts: ["clean", "issues"])
     let missing = try validate("# ok\n", expect: declared).get()
     #expect(missing.issues == [.verdictMissing(allowed: ["clean", "issues"])])
     #expect(missing.verdict == nil)
@@ -106,7 +107,7 @@ struct WorkflowDeliveryValidatorTests {
   }
 
   @Test func emptyBodyIsOutputInvalidForEveryFormat() {
-    for format in [WorkflowOutputFormat.markdown, .text, .json] {
+    for format in [WorkflowDeliveryFormat.markdown, .text, .json] {
       guard case .failure(let error) = validate("  \n\n", expect: WorkflowExpectation(format: format)) else {
         Issue.record("expected failure for \(format)")
         continue
@@ -130,7 +131,7 @@ struct WorkflowDeliveryValidatorTests {
   }
 
   @Test func verdictRulesFollowTheDeclarationUnderStrict() throws {
-    let declared = WorkflowExpectation(verdict: ["clean", "issues"], strict: true)
+    let declared = WorkflowExpectation(verdicts: ["clean", "issues"], strict: true)
     guard case .failure(let required) = validate("# ok\n", expect: declared) else {
       Issue.record("expected VERDICT_REQUIRED")
       return
@@ -157,26 +158,25 @@ struct WorkflowDeliveryValidatorTests {
   }
 
   @Test func sizeCapsUseTheDefaultAndClampToTheHardMaximum() {
-    #expect(WorkflowDeliveryLimits.defaultMaximumBytes == 1 << 20)
-    #expect(WorkflowDeliveryLimits.hardMaximumBytes == 4 << 20)
-    #expect(WorkflowDeliveryLimits(maximumBytes: 10 << 20).maximumBytes == 4 << 20)
+    #expect(WorkflowDeliveryLimits.defaultMaximumBytes == 16 << 20)
+    #expect(WorkflowDeliveryLimits.hardMaximumBytes == 16 << 20)
+    #expect(WorkflowDeliveryLimits(maximumBytes: 32 << 20).maximumBytes == 16 << 20)
     #expect(WorkflowDeliveryLimits(maximumBytes: 0).maximumBytes == 1)
 
-    let tooBig = "# a\n" + String(repeating: "x", count: 1 << 20)
+    let tooBig = "# a\n" + String(repeating: "x", count: 16 << 20)
     guard case .failure(let error) = validate(tooBig) else {
       Issue.record("expected OUTPUT_TOO_LARGE")
       return
     }
     #expect(error.code == "OUTPUT_TOO_LARGE")
-    #expect(error == .outputTooLarge(bytes: tooBig.utf8.count, limit: 1 << 20))
+    #expect(error == .outputTooLarge(bytes: tooBig.utf8.count, limit: 16 << 20))
 
-    let raised = WorkflowDeliveryLimits(maximumBytes: 2 << 20)
-    #expect(throws: Never.self) { try validate(tooBig, limits: raised).get() }
+    #expect(throws: Never.self) { try validate("# ok\n" + String(repeating: "x", count: (16 << 20) - 5)).get() }
   }
 
   @Test func sizeIsMeasuredOnTheRawBodyBeforeNormalization() {
     let expect = WorkflowExpectation(format: .markdown)
-    let preamble = String(repeating: "p", count: (1 << 20) - 5)
+    let preamble = String(repeating: "p", count: (16 << 20) - 5)
     let body = preamble + "\n# ok\n"
     guard case .failure(let error) = validate(body, expect: expect) else {
       Issue.record("expected OUTPUT_TOO_LARGE")

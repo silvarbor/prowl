@@ -1,6 +1,7 @@
 import ComposableArchitecture
 import Foundation
 import GhosttyKit
+import ProwlCLIShared
 import Testing
 
 @testable import supacode
@@ -81,6 +82,20 @@ struct SupacodeAppCLITests {
     #expect(signal.source == .cooperativeCLI)
   }
 
+  @Test func tabCreationRejectsMissingAndAmbiguousWorktreesBeforeCreatingTerminals() {
+    let contexts = ["/Project/first", "/Project/second"].map {
+      ListRuntimeSnapshotBuilder.WorktreeContext(id: $0, name: "main", path: $0, rootPath: $0, kind: .plain)
+    }
+    guard case .failure(.notFound) = SupacodeApp.resolveCLITabCreationTarget("missing", worktrees: contexts),
+      case .failure(.notUnique) = SupacodeApp.resolveCLITabCreationTarget("main", worktrees: contexts),
+      case .success(let target) = SupacodeApp.resolveCLITabCreationTarget("/Project/first", worktrees: contexts)
+    else {
+      Issue.record("Creation must resolve exactly one known worktree")
+      return
+    }
+    #expect(target.worktreeID == "/Project/first")
+  }
+
   @Test func resolveCLITerminalWorktreeBuildsSyntheticRunnableFolderWorktree() {
     let repository = Repository(
       id: "/Users/test/PlainFolder",
@@ -104,60 +119,4 @@ struct SupacodeAppCLITests {
     )
   }
 
-  @Test func handoffSaveUsesNonMainWorktreePath() async throws {
-    let base = FileManager.default.temporaryDirectory
-      .appending(path: "app-cli-handoff-tests", directoryHint: .isDirectory)
-      .appending(path: UUID().uuidString, directoryHint: .isDirectory)
-    let repositoryRoot = base.appending(path: "Prowl", directoryHint: .isDirectory)
-    let worktreeRoot = base.appending(path: "Prowl-feature", directoryHint: .isDirectory)
-    try FileManager.default.createDirectory(at: repositoryRoot, withIntermediateDirectories: true)
-    try FileManager.default.createDirectory(at: worktreeRoot, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: base) }
-    let worktree = Worktree(
-      id: worktreeRoot.path(percentEncoded: false),
-      name: "feature",
-      detail: "feature",
-      workingDirectory: worktreeRoot,
-      repositoryRootURL: repositoryRoot
-    )
-    let repository = Repository(
-      id: repositoryRoot.path(percentEncoded: false),
-      rootURL: repositoryRoot,
-      name: "Prowl",
-      worktrees: [worktree]
-    )
-    var repositories = RepositoriesFeature.State()
-    repositories.repositories = [repository]
-    repositories.selection = .worktree(worktree.id)
-    let store = Store(
-      initialState: AppFeature.State(
-        repositories: repositories,
-        settings: SettingsFeature.State()
-      )
-    ) {
-      AppFeature()
-    }
-    let terminalManager = WorktreeTerminalManager(runtime: GhosttyRuntime())
-    let terminalState = terminalManager.state(for: worktree)
-    _ = try #require(terminalState.createTab())
-    let router = SupacodeApp.makeCLICommandRouter(appStore: store, terminalManager: terminalManager)
-
-    let response = await router.route(
-      CommandEnvelope(
-        output: .json,
-        command: .handoff(
-          HandoffInput(action: .save, selector: .worktree(worktree.id), contextOnly: true)
-        )
-      )
-    )
-
-    #expect(response.ok)
-    let payload = try #require(try response.data?.decode(as: HandoffCommandPayload.self))
-    #expect(
-      payload.artifactPath
-        == worktreeRoot.standardizedFileURL.appending(path: ".prowl/handoff/current.md")
-        .path(percentEncoded: false)
-    )
-    #expect(payload.briefing == "none")
-  }
 }

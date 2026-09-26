@@ -1,10 +1,11 @@
 // supacode/CLIService/WorkflowCommandHandler.swift
 // Handles `prowl workflow` over the socket (docs-ai 063 B1/B3): `list` resolves the worktree
 // whose repo source is searched and runs three-source discovery; `run` resolves the source pane
-// or worktree and hands admission to the runtime; `status`, `done`, and `cancel` are attributed by
+// or worktree and hands admission to the runtime; `status`, `deliver`, and `cancel` are attributed by
 // the caller pane and routed to the runtime coordinator.
 
 import Foundation
+import ProwlCLIShared
 
 struct WorkflowRuntimeSnapshot {
   let resolution: TargetResolutionSnapshot
@@ -30,10 +31,6 @@ final class WorkflowCommandHandler: CommandHandler {
   init(snapshotProvider: @escaping SnapshotProvider, runtime: WorkflowRuntimeCoordinator? = nil) {
     self.snapshotProvider = snapshotProvider
     self.runtime = runtime
-  }
-
-  static func disabledKey(scope: WorkflowScope, id: String) -> String {
-    "\(scope.rawValue)/\(id)"
   }
 
   func handle(envelope: CommandEnvelope) async -> CommandResponse {
@@ -67,9 +64,10 @@ final class WorkflowCommandHandler: CommandHandler {
             code: CLIErrorCode.workflowFailed, message: "Failed to list workflows: \(error)")
         }
       }
-    case .run, .status, .done, .cancel:
+    case .run, .status, .deliver, .cancel, .read:
       guard let runtime else { return notConfigured() }
-      return await handleRuntime(input, runtime: runtime, snapshot: snapshot, callerPane: callerPane)
+      return await handleRuntime(
+        input, runtime: runtime, snapshot: snapshot, callerPane: callerPane)
     }
   }
 
@@ -81,7 +79,8 @@ final class WorkflowCommandHandler: CommandHandler {
   ) async -> CommandResponse {
     switch input.action {
     case .list:
-      return failure(code: CLIErrorCode.invalidArgument, message: "Expected a runtime workflow action.")
+      return failure(
+        code: CLIErrorCode.invalidArgument, message: "Expected a runtime workflow action.")
     case .run:
       switch resolveSource(input.target, snapshot: snapshot, callerPane: callerPane) {
       case .failure(let refusal):
@@ -89,10 +88,12 @@ final class WorkflowCommandHandler: CommandHandler {
       case .success(let source):
         return await runtime.run(input, source: source, snapshot: snapshot)
       }
+    case .read:
+      return await runtime.read(input, callerPane: callerPane)
     case .status:
       return runtime.status(input, callerPane: callerPane)
-    case .done:
-      return await runtime.done(input, callerPane: callerPane)
+    case .deliver:
+      return await runtime.deliver(input, callerPane: callerPane)
     case .cancel:
       return runtime.cancel(input, callerPane: callerPane)
     }
@@ -222,9 +223,12 @@ final class WorkflowCommandHandler: CommandHandler {
     }
     let workflows = catalog.map { entry in
       let enabled =
-        entry.file.id.map {
-          !snapshot.disabledWorkflowIDs.contains(Self.disabledKey(scope: entry.file.scope, id: $0))
-        } ?? false
+        entry.file.id.flatMap {
+          WorkflowPreferenceKey.make(
+            scope: entry.file.scope,
+            workflowID: $0,
+            repositoryRootPath: worktree?.rootPath)
+        }.map { !snapshot.disabledWorkflowIDs.contains($0) } ?? false
       return WorkflowListEntry(entry: entry, enabled: enabled)
     }
     return WorkflowListPayload(

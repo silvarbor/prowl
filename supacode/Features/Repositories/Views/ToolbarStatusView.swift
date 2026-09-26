@@ -1,6 +1,9 @@
+import ComposableArchitecture
+import ProwlCLIShared
 import SwiftUI
 
 struct ToolbarStatusView: View {
+  @Dependency(FeatureFlags.self) private var featureFlags
   let toast: RepositoriesFeature.StatusToast?
   let workflow: WorkflowStatusCenterPresentation
   let pullRequest: GithubPullRequest?
@@ -10,17 +13,19 @@ struct ToolbarStatusView: View {
   var body: some View {
     let selection = ToolbarStatusSelection(
       toast: toast,
-      workflow: workflow,
+      workflow: featureFlags.workflowUI
+        ? workflow : WorkflowStatusCenterPresentation(state: .init(), selectedWorktreeID: nil, now: .distantPast),
       pullRequest: pullRequest
     )
     ZStack {
-      // Keep this mounted across the last-run transition so its local popover state observes the
-      // empty run list and resets before a later run appears.
-      WorkflowStatusPopoverButton(
-        presentation: workflow,
-        isToolbarVisible: selection.isWorkflow,
-        onIntent: onWorkflowIntent
-      )
+      // Keep the panel mounted so a selected run remains readable after the last active run ends.
+      if featureFlags.workflowUI {
+        WorkflowStatusPopoverButton(
+          presentation: workflow,
+          isToolbarVisible: selection.isWorkflow,
+          onIntent: onWorkflowIntent
+        )
+      }
       switch selection {
       case .toast(.inProgress(let message)):
         HStack(spacing: 6) {

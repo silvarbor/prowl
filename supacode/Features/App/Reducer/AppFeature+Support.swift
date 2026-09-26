@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import Foundation
+import ProwlCLIShared
 
 let appLogger = SupaLogger("App")
 let notificationJumpLogger = SupaLogger("NotificationJump")
@@ -77,11 +78,11 @@ func renameBranchCommandTargetID(
 extension AppFeature.State {
   fileprivate var hasBlockingRenameBranchPresentation: Bool {
     isRunScriptPromptPresented
-      || handoffHud != nil
+      || workflowStart != nil
       || alert != nil
       || repositories.isOpenPanelPresented
       || repositories.worktreeCreationPrompt != nil
-      || repositories.workspaceCreationPrompt != nil
+      || repositories.workspaceEditor != nil
       || repositories.pendingRenameBranchRequest != nil
       || repositories.deleteWorktreeConfirmation != nil
       || repositories.removeWorkspaceConfirmation != nil
@@ -110,10 +111,8 @@ extension AppFeature {
   ) -> Bool {
     switch delegate {
     case .selectWorktree, .jumpToLatestUnread, .viewArchivedWorktrees,
-      .newWorktree, .toggleCanvas, .renameBranch, .handOff:
-      // `.handOff` opens the HUD, whose key-capture view takes first
-      // responder; restoring terminal focus here would steal it back and
-      // leak arrow keys into the live agent session.
+      .newWorktree, .toggleCanvas, .renameBranch, .runWorkflow:
+      // The workflow start sheet owns the keyboard while it is presented.
       return true
     default:
       return false
@@ -190,7 +189,10 @@ extension AppFeature {
       .filter { $0.source == .repository }
       .compactMap { resolved.keybinding(for: $0.keybindingID) }
     for command in customCommands where command.source == .global {
-      guard let binding = resolved.keybinding(for: command.keybindingID), localBindings.contains(binding) else {
+      guard
+        let binding = resolved.keybinding(for: command.keybindingID),
+        localBindings.contains(where: { $0.hasSameTrigger(as: binding) })
+      else {
         continue
       }
       guard let resolvedBinding = resolved.binding(for: command.keybindingID) else { continue }
@@ -208,7 +210,7 @@ extension AppFeature {
     for binding in AppShortcuts.bindings where binding.scope == .configurableAppAction {
       guard let resolvedBinding = resolved.binding(for: binding.id),
         let shortcut = resolvedBinding.binding,
-        customCommandBindings.contains(shortcut)
+        customCommandBindings.contains(where: { $0.hasSameTrigger(as: shortcut) })
       else {
         continue
       }

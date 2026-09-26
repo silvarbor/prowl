@@ -2,6 +2,7 @@ import ComposableArchitecture
 import CustomDump
 import DependenciesTestSupport
 import Foundation
+import ProwlCLIShared
 import Testing
 
 @testable import supacode
@@ -122,6 +123,15 @@ struct AppFeatureSettingsChangedTests {
     let state = AppFeature.State(settings: settings)
 
     #expect(state.repositories.showActiveAgentTabTitles == true)
+  }
+
+  @Test func appStateInitializesAgentIslandFromSettings() {
+    var settings = SettingsFeature.State()
+    settings.agentIslandEnabled = true
+
+    let state = AppFeature.State(settings: settings)
+
+    #expect(state.repositories.activeAgents.isIslandEnabled)
   }
 
   @Test(.dependencies) func settingsChangedRecomputesResolvedKeybindings() async {

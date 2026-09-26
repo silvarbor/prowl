@@ -1,4 +1,5 @@
 import Foundation
+import ProwlCLIShared
 
 /// The per-poll view of one pane that condition evidence is evaluated against.
 struct AgentConditionSnapshot: Sendable {
@@ -10,6 +11,7 @@ struct AgentConditionSnapshot: Sendable {
   let revision: UInt64
   let isLive: Bool
   let signals: AgentSignalsPayload
+  let screenDetection: AgentScreenDetection?
 
   init(
     agent: ActiveAgentEntry?,
@@ -17,7 +19,8 @@ struct AgentConditionSnapshot: Sendable {
     changedSignal: AgentSignal? = nil,
     revision: UInt64,
     isLive: Bool,
-    signals: AgentSignalsPayload
+    signals: AgentSignalsPayload,
+    screenDetection: AgentScreenDetection? = nil
   ) {
     self.agent = agent
     self.signal = signal
@@ -25,6 +28,7 @@ struct AgentConditionSnapshot: Sendable {
     self.revision = revision
     self.isLive = isLive
     self.signals = signals
+    self.screenDetection = screenDetection
   }
 }
 
@@ -100,6 +104,7 @@ enum AgentConditionEvidence {
     for snapshot: AgentConditionSnapshot, baseline explicitBaseline: Baseline? = nil
   ) -> IdleVerdict {
     let state = normalizedState(snapshot)
+    if snapshot.agent?.stateDecision?.hasOutstandingWork == true { return .busy(state) }
     // Without a baseline every signal the snapshot holds predates this call (the re-dispatch
     // case); a wait that keeps polling passes the baseline it armed with, so a later exact
     // `turn-ended` counts even while the screen still shows `working`.
@@ -123,7 +128,18 @@ enum AgentConditionEvidence {
 
   static func normalizedState(_ snapshot: AgentConditionSnapshot) -> String {
     guard snapshot.isLive else { return "gone" }
-    return snapshot.agent.map { status(for: $0, fallback: .idle).rawValue } ?? "absent"
+    guard let agent = snapshot.agent else { return "absent" }
+    let state = status(for: agent, fallback: .idle).rawValue
+    // A screen fallback is not idle evidence. Current provider authority remains independent
+    // of whether the screen classifier recognizes the retained frame.
+    if snapshot.screenDetection?.reason == .noRuleMatched,
+      agent.stateDecision?.reason != .logTurnEnded,
+      agent.stateDecision?.reason != .native(.idle),
+      detectorReports(.idle, normalizedState: state)
+    {
+      return "unknown"
+    }
+    return state
   }
 
   static func status(for agent: ActiveAgentEntry?, fallback: AgentsCommandStatus) -> AgentsCommandStatus {
@@ -159,6 +175,7 @@ enum AgentConditionEvidence {
     baseline: Baseline,
     minimumConfidence: AgentWaitMinimumConfidence
   ) -> AgentSignal? {
+    if condition == .idle, snapshot.agent?.stateDecision?.hasOutstandingWork == true { return nil }
     let signal = condition == .changed ? snapshot.changedSignal : snapshot.signal
     guard let signal, accepts(signal.confidence, minimum: minimumConfidence) else { return nil }
     let isPreArmLevel = condition != .changed && signal == baseline.terminalSignal

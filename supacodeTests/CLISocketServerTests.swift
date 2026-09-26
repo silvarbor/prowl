@@ -1,4 +1,5 @@
 import Foundation
+import ProwlCLIShared
 import Testing
 
 @testable import supacode
@@ -11,6 +12,26 @@ import Testing
 
 @MainActor
 struct CLISocketServerTests {
+  @Test func workflowPayloadEscapingFitsTheSocketFrame() async throws {
+    let socketPath = temporarySocketPath(suffix: "workflow-large")
+    let server = CLISocketServer(router: CLICommandRouter(), socketPath: socketPath)
+    try server.start()
+    defer { server.stop() }
+    let request = try JSONEncoder().encode(
+      CommandEnvelope(
+        output: .json,
+        command: .workflow(.init(action: .deliver, body: String(repeating: "\u{1}", count: WorkflowSizeLimits.payload)))
+      ))
+    #expect(request.count > 32 * 1024 * 1024)
+    #expect(request.count <= WorkflowSizeLimits.transportFrame)
+    let response: Data = try await withCheckedThrowingContinuation { continuation in
+      DispatchQueue.global(qos: .userInitiated).async {
+        continuation.resume(with: Result { try Self.send(requestData: request, socketPath: socketPath) })
+      }
+    }
+    #expect(try JSONDecoder().decode(CommandResponse.self, from: response).command == "workflow")
+  }
+
   @Test func secondServerDoesNotReplaceReachableSocket() throws {
     let socketPath = temporarySocketPath(suffix: "reachable-owner")
     let first = CLISocketServer(router: CLICommandRouter(), socketPath: socketPath)
@@ -25,6 +46,34 @@ struct CLISocketServerTests {
     }
 
     #expect(canConnect(to: socketPath))
+  }
+
+  @Test func statusFollowsStartAndStop() throws {
+    let socketPath = temporarySocketPath(suffix: "status")
+    var published: [CLIServiceStatus] = []
+    let server = CLISocketServer(
+      router: CLICommandRouter(), socketPath: socketPath, onStatusChanged: { published.append($0) })
+    #expect(server.status == .stopped)
+
+    try server.start()
+    #expect(server.status == .listening(path: socketPath))
+
+    server.stop()
+    #expect(server.status == .stopped)
+    #expect(published == [.listening(path: socketPath), .stopped])
+  }
+
+  @Test func statusReportsAnAlreadyOwnedSocket() throws {
+    let socketPath = temporarySocketPath(suffix: "status-owned")
+    let first = CLISocketServer(router: CLICommandRouter(), socketPath: socketPath)
+    try first.start()
+    defer { first.stop() }
+
+    let second = CLISocketServer(router: CLICommandRouter(), socketPath: socketPath)
+    #expect(throws: CLIServiceError.socketAlreadyOwned) {
+      try second.start()
+    }
+    #expect(second.status == .failed(.socketAlreadyOwned, path: socketPath))
   }
 
   @Test func ownerCanReplaceStaleSocketPath() throws {

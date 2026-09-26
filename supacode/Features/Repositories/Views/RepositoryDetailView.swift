@@ -5,10 +5,11 @@ struct RepositoryDetailView: View {
   /// Resolved by the parent reducer. When non-nil, takes precedence
   /// over `repository.name` for display.
   var customTitle: String?
+  var onEditWorkspace: (() -> Void)?
 
   var body: some View {
     if let workspace = repository.workspace {
-      WorkspaceDetailView(repository: repository, workspace: workspace)
+      WorkspaceDetailView(repository: repository, workspace: workspace, onEdit: onEditWorkspace)
     } else {
       repositoryDetail
     }
@@ -39,7 +40,7 @@ struct RepositoryDetailView: View {
     .multilineTextAlignment(.center)
   }
 
-  private var descriptionText: String {
+  private var descriptionText: LocalizedStringKey {
     switch repository.kind {
     case .git:
       "Select a worktree to open its terminal and repository tools."

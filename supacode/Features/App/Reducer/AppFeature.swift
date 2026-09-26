@@ -2,6 +2,7 @@ import AppKit
 import ComposableArchitecture
 import Foundation
 import PostHog
+import ProwlCLIShared
 import SwiftUI
 
 @Reducer
@@ -31,7 +32,10 @@ struct AppFeature {
     var suppressLayoutSaveUntilRelaunch = false
     var launchedAt: Date?
     var leftSidebarVisibility: NavigationSplitViewVisibility = .all
-    @Presents var handoffHud: HandoffHudFeature.State?
+    @Presents var workflowStart: WorkflowStartFeature.State?
+    var workflowStartFromSettings = false
+    /// Workflows visible to the action-target worktree, refreshed when the palette opens.
+    var workflowPaletteItems: [WorkflowStartCatalogItem] = []
     @Presents var alert: AlertState<Alert>?
 
     init(
@@ -40,10 +44,12 @@ struct AppFeature {
     ) {
       var repositories = repositories
       repositories.showActiveAgentTabTitles = settings.showActiveAgentTabTitles
+      repositories.activeAgents.isIslandEnabled = settings.agentIslandEnabled
       self.repositories = repositories
       self.settings = settings
       lastKnownSystemNotificationsEnabled = settings.systemNotificationsEnabled
-      launchRestoreMode = settings.restoreTerminalLayoutOnLaunch ? .restoreLayout : .lastFocusedWorktree
+      launchRestoreMode =
+        settings.restoreTerminalLayoutOnLaunch ? .restoreLayout : .lastFocusedWorktree
     }
   }
 
@@ -74,6 +80,8 @@ struct AppFeature {
     case runCustomCommand(EffectiveCustomCommand.Identifier)
     case launchAgentProfile(AgentProfile.ID)
     case openAgentProfilesSettings
+    case openWorkflowSettings
+    case openWorkflowDetails(WorkflowStartCatalogItem, worktreeID: Worktree.ID)
     case canvasFocusedWorktreeChanged(Worktree.ID?)
     case runScriptDraftChanged(String)
     case runScriptPromptPresented(Bool)
@@ -90,11 +98,12 @@ struct AppFeature {
     case systemNotificationTapped(worktreeID: Worktree.ID, surfaceID: UUID)
     case alert(PresentationAction<Alert>)
     case terminalEvent(TerminalClient.Event)
-    case openHandoffHud
-    case handoffHud(PresentationAction<HandoffHudFeature.Action>)
-    /// A CLI handoff completed (announced by the socket-service handler); the
-    /// HUD uses it to observe the request it injected into the source pane.
-    case handoffCliCompleted(HandoffCLICompletion)
+    /// Open the workflow start sheet — or start at once when nothing is undecided (063 C2).
+    /// `worktreeID` pins an entry's worktree (Active Agents menu); nil uses the action target.
+    /// `forceSheet` is the "Run with Options…" escape hatch.
+    case openWorkflowStart(
+      workflowKey: String, worktreeID: Worktree.ID?, sourceSurfaceID: UUID?, forceSheet: Bool)
+    case workflowStart(PresentationAction<WorkflowStartFeature.Action>)
   }
 
   enum Alert: Equatable {
@@ -105,6 +114,7 @@ struct AppFeature {
   @Dependency(AnalyticsClient.self) var analyticsClient
   @Dependency(\.date.now) var now
   @Dependency(RepositoryPersistenceClient.self) var repositoryPersistence
+  @Dependency(FeatureFlags.self) var featureFlags
   @Dependency(WorkspaceClient.self) var workspaceClient
   @Dependency(SettingsWindowClient.self) var settingsWindowClient
   @Dependency(AppLifecycleClient.self) var appLifecycleClient
@@ -124,7 +134,9 @@ struct AppFeature {
       switch action {
       case .appLaunched:
         try? SupacodePaths.migrateLegacyCacheFilesIfNeeded()
-        appLogger.info("[LayoutRestore] appLaunched: launchRestoreMode=\(String(describing: state.launchRestoreMode))")
+        appLogger.info(
+          "[LayoutRestore] appLaunched: launchRestoreMode=\(String(describing: state.launchRestoreMode))"
+        )
         state.launchedAt = now
         state.repositories.launchRestoreMode = state.launchRestoreMode
         analyticsClient.capture("app_launched", nil)
@@ -170,7 +182,8 @@ struct AppFeature {
             !state.suppressLayoutSaveUntilRelaunch,
             state.launchRestoreMode != .restoreLayout
           {
-            appLogger.info("[LayoutRestore] scenePhase=\(String(describing: phase)), saving layout snapshot")
+            appLogger.info(
+              "[LayoutRestore] scenePhase=\(String(describing: phase)), saving layout snapshot")
             effects.append(.run { _ in await terminalClient.send(.saveLayoutSnapshot) })
           }
           return .merge(effects)
@@ -245,7 +258,8 @@ struct AppFeature {
         )
         effects.append(
           .run { _ in
-            await worktreeInfoWatcher.send(.setSelectedWorktreeID(isPlainFolderSelection ? nil : worktree.id))
+            await worktreeInfoWatcher.send(
+              .setSelectedWorktreeID(isPlainFolderSelection ? nil : worktree.id))
           }
         )
         effects.append(
@@ -275,8 +289,18 @@ struct AppFeature {
         }
 
       case .repositories(.delegate(.repositoriesChanged(let repositories))):
+        @Shared(.userGlobalSettings) var workflowSettings
+        _ = $workflowSettings.withLock {
+          $0.migrateLegacyRepositoryWorkflowPreferences(
+            repositoryRootPaths: repositories.map { $0.rootURL.path(percentEncoded: false) })
+        }
         let archivedIDs = state.repositories.archivedWorktreeIDSet
         let ids = state.repositories.terminalStateIDs.subtracting(archivedIDs)
+        let failedRepositoryIDs = Set(state.repositories.loadFailuresByID.keys)
+        let pruneCommand: TerminalClient.Command =
+          failedRepositoryIDs.isEmpty
+          ? .prune(ids)
+          : .prunePreservingRepositories(keeping: ids, repositoryIDs: failedRepositoryIDs)
         let recencyIDs = CommandPaletteFeature.recencyRetentionIDs(
           from: repositories,
           customCommands: state.selectedCustomCommands
@@ -297,12 +321,16 @@ struct AppFeature {
           state.launchRestoreMode = .lastFocusedWorktree
           state.repositories.selection = nil
         }
-        state.runScriptStatusByWorktreeID = state.runScriptStatusByWorktreeID.filter { ids.contains($0.key) }
+        state.runScriptStatusByWorktreeID = state.runScriptStatusByWorktreeID.filter {
+          ids.contains($0.key)
+        }
         let restorableWorktrees = makeTerminalRestorableWorktrees(from: Array(repositories))
         appLogger.info("[LayoutRestore] restorableWorktrees count=\(restorableWorktrees.count)")
         var allEffects: [Effect<Action>] = [
           // Runs a previous app instance left behind are marked interrupted (dsl-spec §10 Restart).
-          .send(.workflowRuns(.markInterruptedRuns(worktreeRoots: workflowRunRoots(of: Array(repositories)))))
+          .send(
+            .workflowRuns(
+              .markInterruptedRuns(worktreeRoots: workflowRunRoots(of: Array(repositories)))))
         ]
         if !shouldDeferDefaultView {
           allEffects.append(applyDefaultViewMode(into: &state))
@@ -315,7 +343,7 @@ struct AppFeature {
             .send(.commandPalette(.pruneRecency(recencyIDs))),
             .send(.repositories(.refreshAllCustomTitles)),
             .run { _ in
-              await terminalClient.send(.prune(ids))
+              await terminalClient.send(pruneCommand)
             },
             .run { _ in
               await worktreeInfoWatcher.send(.setWorktrees(worktrees))
@@ -341,7 +369,7 @@ struct AppFeature {
           .send(.commandPalette(.pruneRecency(recencyIDs))),
           .send(.repositories(.refreshAllCustomTitles)),
           .run { _ in
-            await terminalClient.send(.prune(ids))
+            await terminalClient.send(pruneCommand)
           },
           .run { _ in
             await worktreeInfoWatcher.send(.setWorktrees(worktrees))
@@ -407,14 +435,18 @@ struct AppFeature {
             appearance: repositoryAppearances[repository.id] ?? .empty
           )
           repoSettingsState.workspace = repository.workspace
-          repoSettingsState.globalCopyIgnoredOnWorktreeCreate = state.settings.copyIgnoredOnWorktreeCreate
-          repoSettingsState.globalCopyUntrackedOnWorktreeCreate = state.settings.copyUntrackedOnWorktreeCreate
+          repoSettingsState.globalCopyIgnoredOnWorktreeCreate =
+            state.settings.copyIgnoredOnWorktreeCreate
+          repoSettingsState.globalCopyUntrackedOnWorktreeCreate =
+            state.settings.copyUntrackedOnWorktreeCreate
           repoSettingsState.globalPullRequestMergeStrategy = state.settings.pullRequestMergeStrategy
           state.settings.repositorySettings = repoSettingsState
           state.settings.globalCustomCommands = nil
           state.settings.agentProfiles = nil
-        case .general, .notifications, .shortcuts, .worktree, .updates, .advanced, .github, .commandLineTool:
-          // `settings.agentSkills` is owned by SettingsFeature.setSelection.
+        case .general, .agentDisplay, .notifications, .shortcuts, .worktree, .updates, .advanced, .github,
+          .commandLineTool,
+          .workflows:
+          // `settings.agentSkills` and `settings.workflows` are owned by SettingsFeature.setSelection.
           state.settings.repositorySettings = nil
           state.settings.globalCustomCommands = nil
           state.settings.agentProfiles = nil
@@ -435,9 +467,12 @@ struct AppFeature {
       case .settings(.delegate(.settingsChanged(let settings))):
         let shouldCheckSystemNotificationPermission =
           settings.systemNotificationsEnabled && !state.lastKnownSystemNotificationsEnabled
+        let didChangeAgentIslandEnabled =
+          state.repositories.activeAgents.isIslandEnabled != settings.agentIslandEnabled
         state.lastKnownSystemNotificationsEnabled = settings.systemNotificationsEnabled
         state.settings.keybindingUserOverrides = settings.keybindingUserOverrides
         state.repositories.showActiveAgentTabTitles = settings.showActiveAgentTabTitles
+        state.repositories.activeAgents.isIslandEnabled = settings.agentIslandEnabled
         if let selectedWorktree = state.repositories.selectedTerminalWorktree {
           let rootURL = selectedWorktree.repositoryRootURL
           @Shared(.repositorySettings(rootURL)) var repositorySettings
@@ -458,9 +493,16 @@ struct AppFeature {
           settings.detectRepositoryIconsAutomatically
           ? .none
           : .send(.repositories(.repositoryManagement(.cancelPendingIconDetections)))
+        let updateAgentIsland: Effect<Action> =
+          didChangeAgentIslandEnabled
+          ? .send(.repositories(.activeAgents(.islandEnabledChanged(settings.agentIslandEnabled))))
+          : .none
         return .merge(
           cancelIconDetections,
-          .send(.repositories(.githubIntegration(.setGithubIntegrationEnabled(settings.githubIntegrationEnabled)))),
+          updateAgentIsland,
+          .send(
+            .repositories(
+              .githubIntegration(.setGithubIntegrationEnabled(settings.githubIntegrationEnabled)))),
           .send(
             .repositories(
               .githubIntegration(
@@ -523,7 +565,9 @@ struct AppFeature {
                 )
               }
             case .denied:
-              await send(.systemNotificationsPermissionFailed(errorMessage: "Authorization status is denied."))
+              await send(
+                .systemNotificationsPermissionFailed(
+                  errorMessage: "Authorization status is denied."))
             }
           },
           .run { _ in
@@ -534,36 +578,91 @@ struct AppFeature {
       case .settings(.delegate(.terminalFontSizeChanged)):
         return .none
 
+      case .settings(.delegate(.editWorkspace(let repositoryID))):
+        guard state.repositories.repositories[id: repositoryID]?.isWorkspace == true else {
+          return .none
+        }
+        // The editor is a sheet on the main window; bring it forward from
+        // the Settings window first so the sheet is not opened out of sight.
+        // Surfacing is synchronous so it strictly precedes the request.
+        _ = appLifecycleClient.surfaceMainWindow()
+        return .send(.repositories(.workspaceEditing(.promptRequested(repositoryID, removingChildID: nil))))
+
       case .settings(.delegate(.cliInstallCompleted(let result))):
         switch result {
         case .installed(let path):
-          return .send(.repositories(.showToast(.success("prowl installed at \(path)"))))
+          return .send(
+            .repositories(.showToast(.success(String(localized: "prowl installed at \(path)"))))
+          )
         case .uninstalled:
-          return .send(.repositories(.showToast(.success("prowl command line tool removed"))))
+          return .send(
+            .repositories(.showToast(.success(String(localized: "prowl command line tool removed"))))
+          )
         case .failed(let message):
-          return .send(.repositories(.showToast(.warning("CLI install failed: \(message)"))))
+          return .send(
+            .repositories(.showToast(.warning(String(localized: "CLI install failed: \(message)"))))
+          )
+        }
+
+      case .settings(.workflows(.delegate(.openProfiles))),
+        .settings(.repositorySettings(.workflows(.delegate(.openProfiles)))):
+        return openSettingsEffect(selecting: .profiles)
+
+      case .settings(
+        .workflows(
+          .delegate(.runWorkflow(let workflowKey, let worktreeID, let forceSheet)))),
+        .settings(
+          .repositorySettings(
+            .workflows(
+              .delegate(.runWorkflow(let workflowKey, let worktreeID, let forceSheet))))):
+        return openWorkflowStart(
+          state: &state,
+          workflowKey: workflowKey,
+          worktreeID: worktreeID,
+          sourceSurfaceID: nil,
+          forceSheet: forceSheet,
+          fromSettings: true)
+
+      case .settings(.workflows(.delegate(.notice(let notice)))),
+        .settings(.repositorySettings(.workflows(.delegate(.notice(let notice))))):
+        switch notice {
+        case .workflowCreated(let path):
+          return .send(.repositories(.showToast(.success(String(localized: "Workflow created at \(path)")))))
+        case .cliInstalled(let path):
+          return .send(
+            .repositories(.showToast(.success(String(localized: "prowl installed at \(path)"))))
+          )
+        case .failed(let message):
+          return .send(.repositories(.showToast(.warning(message))))
         }
 
       case .settings(.agentSkills(.delegate(.linkChanged(let result)))):
         switch result {
         case .installed(let skill, let target):
-          return .send(.repositories(.showToast(.success("\(skill) skill linked for \(target)"))))
+          return .send(
+            .repositories(.showToast(.success(String(localized: "\(skill) skill linked for \(target)"))))
+          )
         case .removed(let skill, let target):
-          return .send(.repositories(.showToast(.success("\(skill) skill link removed for \(target)"))))
+          return .send(
+            .repositories(
+              .showToast(.success(String(localized: "\(skill) skill link removed for \(target)"))))
+          )
         case .failed(let message):
-          return .send(.repositories(.showToast(.warning("Skill link failed: \(message)"))))
+          return .send(
+            .repositories(.showToast(.warning(String(localized: "Skill link failed: \(message)"))))
+          )
         }
 
       case .settings(.delegate(.terminalLayoutSnapshotCleared(let success))):
         if success {
           state.suppressLayoutSaveUntilRelaunch = true
-          return .send(.repositories(.showToast(.success("Saved terminal layout cleared"))))
+          return .send(.repositories(.showToast(.success(String(localized: "Saved terminal layout cleared")))))
         }
         return .send(
           .repositories(
             .presentAlert(
-              title: "Unable to clear saved terminal layout",
-              message: "Please check file permissions and try again."
+              title: String(localized: "Unable to clear saved terminal layout"),
+              message: String(localized: "Please check file permissions and try again.")
             )
           )
         )
@@ -602,7 +701,8 @@ struct AppFeature {
         return .send(.openSelectedWorktree)
 
       case .openSelectedWorktree:
-        return .send(.openWorktree(OpenWorktreeAction.availableSelection(state.openActionSelection)))
+        return .send(
+          .openWorktree(OpenWorktreeAction.availableSelection(state.openActionSelection)))
 
       case .showSelectedWorktreeDiff:
         return openSelectedWorktreeDiffEffect(state: state)
@@ -640,7 +740,7 @@ struct AppFeature {
           TextState(error.title)
         } actions: {
           ButtonState(role: .cancel, action: .dismiss) {
-            TextState("OK")
+            TextState(String(localized: "OK"))
           }
         } message: {
           TextState(error.message)
@@ -656,16 +756,16 @@ struct AppFeature {
         }
         _ = appLifecycleClient.surfaceMainWindow()
         state.alert = AlertState {
-          TextState("Quit Prowl?")
+          TextState(String(localized: "Quit Prowl?"))
         } actions: {
           ButtonState(action: .confirmQuit) {
-            TextState("Quit")
+            TextState(String(localized: "Quit"))
           }
           ButtonState(role: .cancel, action: .dismiss) {
-            TextState("Cancel")
+            TextState(String(localized: "Cancel"))
           }
         } message: {
-          TextState("This will close all terminal sessions.")
+          TextState(String(localized: "This will close all terminal sessions."))
         }
         return .none
 
@@ -674,7 +774,8 @@ struct AppFeature {
           return .none
         }
         analyticsClient.capture("terminal_tab_created", nil)
-        let shouldRunSetupScript = state.repositories.pendingSetupScriptWorktreeIDs.contains(worktree.id)
+        let shouldRunSetupScript = state.repositories.pendingSetupScriptWorktreeIDs.contains(
+          worktree.id)
         return .run { _ in
           await terminalClient.send(.createTab(worktree, runSetupScriptIfNew: shouldRunSetupScript))
         }
@@ -685,7 +786,8 @@ struct AppFeature {
           return .none
         }
         guard state.repositories.worktree(for: location.worktreeID) != nil else {
-          notificationJumpLogger.warning("Unread notification worktree vanished: \(location.worktreeID)")
+          notificationJumpLogger.warning(
+            "Unread notification worktree vanished: \(location.worktreeID)")
           return .none
         }
         analyticsClient.capture("notifications_jump_to_latest_unread", nil)
@@ -698,7 +800,8 @@ struct AppFeature {
         )
 
       case .toggleLeftSidebar:
-        state.leftSidebarVisibility = state.leftSidebarVisibility == .detailOnly ? .all : .detailOnly
+        state.leftSidebarVisibility =
+          state.leftSidebarVisibility == .detailOnly ? .all : .detailOnly
         return .none
 
       case .showLeftSidebar:
@@ -731,14 +834,52 @@ struct AppFeature {
       case .launchAgentProfile(let profileID):
         return launchAgentProfile(profileID, state: &state)
 
+      case .openWorkflowSettings:
+        return openSettingsEffect(selecting: .workflows)
+
       case .openAgentProfilesSettings:
         return openSettingsEffect(selecting: .profiles)
+
+      case .openWorkflowDetails(let item, let worktreeID):
+        guard featureFlags.workflowUI else { return .none }
+        let selection: SettingsSection
+        let load: Effect<Action>
+        let show: Effect<Action>
+        switch item.scope {
+        case .bundle, .user:
+          selection = .workflows
+          load = .send(.settings(.workflows(.task)))
+          show = .send(
+            .settings(
+              .workflows(
+                .showDetails(rowID: item.fileURL.path(percentEncoded: false)))))
+        case .repo:
+          guard let repositoryID = state.repositories.repositoryID(containing: worktreeID) else {
+            return .none
+          }
+          selection = .repository(repositoryID)
+          load = .concatenate(
+            .send(.settings(.repositorySettings(.workflowsAppeared))),
+            .send(.settings(.repositorySettings(.workflows(.task)))))
+          show = .send(
+            .settings(
+              .repositorySettings(
+                .workflows(
+                  .showDetails(rowID: item.fileURL.path(percentEncoded: false))))))
+        }
+        return .concatenate(
+          .send(.settings(.setSelection(selection))),
+          load,
+          show,
+          .run { _ in await settingsWindowClient.show() })
 
       case .runCustomCommand(let commandID):
         guard let worktree = actionTargetWorktree(repositories: state.repositories) else {
           return .none
         }
-        guard let effectiveCommand = state.selectedCustomCommands.first(where: { $0.id == commandID }) else {
+        guard
+          let effectiveCommand = state.selectedCustomCommands.first(where: { $0.id == commandID })
+        else {
           return .none
         }
         let customCommand = effectiveCommand.command
@@ -1002,8 +1143,30 @@ struct AppFeature {
       case .alert:
         return .none
 
-      case .repositories(.activeAgents(.handOffTapped(let entryID))):
-        return openHandoffHud(state: &state, entryID: entryID)
+      case .repositories(.activeAgents(.island(let action))):
+        // The child reducer forwards `action` after this pass, so the window is up before the
+        // sidebar path focuses a pane or presents the workflow start sheet.
+        if action.surfacesProwl {
+          _ = appLifecycleClient.surfaceMainWindow()
+        }
+        return .none
+
+      case .repositories(.activeAgents(.islandToggleEnabledTapped)):
+        return .send(.settings(.setAgentIslandEnabled(!state.settings.agentIslandEnabled)))
+
+      case .repositories(.activeAgents(.islandSettingsTapped)):
+        _ = appLifecycleClient.surfaceMainWindow()
+        return openSettingsEffect(selecting: .agentDisplay)
+
+      case .repositories(.activeAgents(.islandOpenProwlTapped)):
+        _ = appLifecycleClient.surfaceMainWindow()
+        return .none
+
+      case .repositories(.activeAgents(.runWorkflowTapped(let entryID, let workflowKey))):
+        guard let entry = state.repositories.activeAgents.entries[id: entryID] else { return .none }
+        return openWorkflowStart(
+          state: &state, workflowKey: workflowKey, worktreeID: entry.worktreeID,
+          sourceSurfaceID: entry.surfaceID, forceSheet: false)
 
       case .repositories:
         return .none
@@ -1018,6 +1181,7 @@ struct AppFeature {
         return reduceCommandPaletteAction(action, state: &state)
 
       case .workflowRuns(.delegate(.notice(let notice))):
+        guard featureFlags.workflowUI else { return .none }
         guard let worktree = state.repositories.worktree(for: notice.worktreeID) else {
           return .none
         }
@@ -1030,55 +1194,50 @@ struct AppFeature {
                 WorkflowRuntimeNotification(
                   title: notice.title,
                   body: notice.body,
-                  targetSurfaceID: notice.targetSurfaceID
+                  targetSurfaceID: notice.targetSurfaceID, workflowRunID: notice.runID
                 )
               )
             }
           )
         }
-        if state.repositories.selectedWorktreeID == notice.worktreeID {
-          switch notice.kind {
-          case .completed:
-            effects.append(
-              .send(.repositories(.showToast(.success("\(notice.workflowName) completed"))))
-            )
-          case .skipped, .maxRoundsReached:
-            effects.append(.send(.repositories(.showToast(.warning(notice.title)))))
-          case .needsAttention:
-            break
-          }
-        }
+        // The toolbar status item keeps the finished run visible with its outcome
+        // (`WorkflowRunsFeature.finishedNoticeDuration`), so no toast competes with it.
         return .merge(effects)
 
       case .workflowRuns:
         return .none
 
-      case .openHandoffHud:
-        return openHandoffHud(state: &state)
+      case .openWorkflowStart(let workflowKey, let worktreeID, let sourceSurfaceID, let forceSheet):
+        return openWorkflowStart(
+          state: &state, workflowKey: workflowKey, worktreeID: worktreeID,
+          sourceSurfaceID: sourceSurfaceID, forceSheet: forceSheet)
 
-      case .handoffHud(.presented(.delegate(.dismiss))), .handoffHud(.dismiss):
-        let worktree = state.handoffHud?.worktree
-        state.handoffHud = nil
-        guard let worktree else { return .none }
-        // Hand keyboard focus back to the terminal the HUD captured it from.
+      case .workflowStart(.presented(.delegate(.dismiss))),
+        .workflowStart(.presented(.delegate(.started))),
+        .workflowStart(.dismiss):
+        state.workflowStart = nil
+        if state.workflowStartFromSettings {
+          state.workflowStartFromSettings = false
+          return .none
+        }
+        guard let worktree = actionTargetWorktree(repositories: state.repositories) else {
+          return .none
+        }
+        // Hand keyboard focus back to the terminal the sheet captured it from.
         return .run { _ in
           await terminalClient.send(.focusSelectedTab(worktree))
         }
 
-      case .handoffHud:
+      case .workflowStart:
         return .none
-
-      case .handoffCliCompleted(let completion):
-        guard state.handoffHud != nil else { return .none }
-        return .send(.handoffHud(.presented(.cliCompleted(completion))))
 
       case .terminalEvent(let event):
         return reduceTerminalEvent(event, state: &state)
       }
     }
     core
-      .ifLet(\.$handoffHud, action: \.handoffHud) {
-        HandoffHudFeature()
+      .ifLet(\.$workflowStart, action: \.workflowStart) {
+        WorkflowStartFeature()
       }
     Reduce<State, Action> { state, action in
       // Default-on focus restore: every command-palette delegate action that
@@ -1106,6 +1265,14 @@ struct AppFeature {
     }
     Scope(state: \.workflowRuns, action: \.workflowRuns) {
       WorkflowRunsFeature()
+    }
+    Reduce<State, Action> { state, action in
+      // Badge sync must observe the state WorkflowRunsFeature just reduced — running it in
+      // `core` (before the Scope) reads the pre-action sessions and a freshly started run's
+      // panes would stay unlabeled until some later event (review round 2 finding 2).
+      guard case .workflowRuns = action else { return .none }
+      syncWorkflowRoleBadges(state: &state)
+      return .none
     }
   }
 }

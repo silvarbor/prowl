@@ -1,7 +1,62 @@
 import ComposableArchitecture
 import Foundation
+import ProwlCLIShared
 
 typealias CLIInstallStatus = SymlinkInstallStatus
+
+extension CLIInstallStatus {
+  /// The workflow banners' button for this slot: a fresh install, a repair of a dangling link,
+  /// or a reinstall over a foreign link. nil when a real file or directory occupies the path —
+  /// the installer refuses to replace those, so no button is honest there.
+  nonisolated var installActionTitle: String? {
+    switch self {
+    case .notInstalled: "Install"
+    case .broken: "Repair"
+    case .installedDifferentSource(_, let destination): destination == nil ? nil : "Reinstall"
+    case .installed: "Reinstall"
+    }
+  }
+
+  /// Why a workflow cannot start with this slot (docs-ai 063 D1 preflight), for the Settings
+  /// and start-sheet banners; says what to do when no button can.
+  nonisolated var workflowBlockerCopy: String {
+    switch self {
+    case .notInstalled:
+      return String(
+        localized: "Participants deliver their results through prowl, so a run cannot start until it is installed."
+      )
+    case .broken(let path, _):
+      return String(
+        localized: """
+          The link at \(path) points at an app that is gone. \
+          Participants deliver their results through prowl, so a run cannot start until it is repaired.
+          """
+      )
+    case .installedDifferentSource(let path, let destination):
+      if destination == nil {
+        return String(
+          localized: """
+            \(path) is a file or folder that is not an executable prowl command, and Prowl never replaces \
+            one. Remove it, then install the command from Settings › Agents › CLI & Skills.
+            """
+        )
+      }
+      return String(
+        localized: """
+          The link at \(path) points at something that is not an executable command. \
+          Participants deliver their results through prowl, so a run cannot start until it is replaced.
+          """
+      )
+    case .installed(let path):
+      return String(
+        localized: """
+          \(path) is not executable. \
+          Participants deliver their results through prowl, so a run cannot start until it is reinstalled.
+          """
+      )
+    }
+  }
+}
 
 struct CLIInstallError: Error, Equatable, Sendable, LocalizedError {
   let message: String
@@ -14,8 +69,20 @@ let cliDefaultInstallPath = URL(fileURLWithPath: "/usr/local/bin/prowl")
 struct CLIInstallClient: Sendable {
   var bundledCLIURL: @Sendable () -> URL?
   var installationStatus: @Sendable (_ installPath: URL) -> CLIInstallStatus
+  /// Whether a shell can run `prowl` from the slot (docs-ai 063 D1): the path — through any
+  /// symlink — is an executable regular file. Another build's live link qualifies (063.011);
+  /// a dangling link, a directory, or a non-executable file in the way does not, whatever
+  /// `installationStatus` calls it.
+  var isUsable: @Sendable (_ installPath: URL) -> Bool
   var install: @Sendable (_ installPath: URL) async throws -> Void
   var uninstall: @Sendable (_ installPath: URL) async throws -> Void
+
+  nonisolated static func isExecutableCommand(at path: String, fileManager: FileManager = .default) -> Bool {
+    var isDirectory: ObjCBool = false
+    // fileExists follows symlinks, so a dangling link reports absent.
+    guard fileManager.fileExists(atPath: path, isDirectory: &isDirectory), !isDirectory.boolValue else { return false }
+    return fileManager.isExecutableFile(atPath: path)
+  }
 }
 
 extension CLIInstallClient: DependencyKey {
@@ -30,13 +97,16 @@ extension CLIInstallClient: DependencyKey {
         source: bundledURL?.path(percentEncoded: false) ?? ""
       )
     },
+    isUsable: { installPath in
+      CLIInstallClient.isExecutableCommand(at: installPath.path(percentEncoded: false))
+    },
     install: { installPath in
       guard let bundledURL = Bundle.main.resourceURL?.appendingPathComponent("prowl-cli/prowl") else {
-        throw CLIInstallError(message: "Could not locate bundled CLI binary.")
+        throw CLIInstallError(message: String(localized: "Could not locate bundled CLI binary."))
       }
       let bundledPath = bundledURL.path(percentEncoded: false)
       guard FileManager.default.fileExists(atPath: bundledPath) else {
-        throw CLIInstallError(message: "Bundled CLI binary not found at \(bundledPath).")
+        throw CLIInstallError(message: String(localized: "Bundled CLI binary not found at \(bundledPath)."))
       }
       try cliSymlinkInstall(source: bundledPath, destination: installPath.path(percentEncoded: false))
     },
@@ -48,6 +118,7 @@ extension CLIInstallClient: DependencyKey {
   static let testValue = CLIInstallClient(
     bundledCLIURL: { nil },
     installationStatus: { _ in .notInstalled },
+    isUsable: { _ in true },
     install: { _ in },
     uninstall: { _ in }
   )
@@ -63,8 +134,9 @@ private nonisolated func cliSymlinkInstall(source: String, destination: String) 
     return
   } catch SymlinkInstallError.conflict {
     throw CLIInstallError(
-      message: "A file already exists at \(destination) and is not a symlink. "
-        + "Remove it manually before installing."
+      message: String(
+        localized: "A file already exists at \(destination) and is not a symlink. Remove it manually before installing."
+      )
     )
   } catch let error as SymlinkInstallError {
     throw CLIInstallError(message: error.localizedDescription)
@@ -87,9 +159,11 @@ private nonisolated func cliSymlinkUninstall(path: String) throws {
     try SymlinkInstaller.uninstall(linkPath: path)
     return
   } catch SymlinkInstallError.notInstalled {
-    throw CLIInstallError(message: "No CLI tool found at \(path).")
+    throw CLIInstallError(message: String(localized: "No CLI tool found at \(path)."))
   } catch SymlinkInstallError.conflict {
-    throw CLIInstallError(message: "File at \(path) is not a symlink. Refusing to remove for safety.")
+    throw CLIInstallError(
+      message: String(localized: "File at \(path) is not a symlink. Refusing to remove for safety.")
+    )
   } catch let error as SymlinkInstallError {
     throw CLIInstallError(message: error.localizedDescription)
   } catch let error as NSError where isPermissionError(error) {
@@ -115,15 +189,17 @@ private nonisolated func runPrivileged(script: String) throws {
   do {
     try osa.run()
   } catch {
-    throw CLIInstallError(message: "Failed to launch authorization prompt: \(error.localizedDescription)")
+    throw CLIInstallError(
+      message: String(localized: "Failed to launch authorization prompt: \(error.localizedDescription)")
+    )
   }
   osa.waitUntilExit()
   guard osa.terminationStatus == 0 else {
     let stderr = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
     if stderr.contains("User canceled") || stderr.contains("-128") {
-      throw CLIInstallError(message: "Installation was canceled.")
+      throw CLIInstallError(message: String(localized: "Installation was canceled."))
     }
-    throw CLIInstallError(message: "Installation failed: \(stderr)")
+    throw CLIInstallError(message: String(localized: "Installation failed: \(stderr)"))
   }
 }
 

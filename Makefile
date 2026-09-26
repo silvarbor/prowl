@@ -23,7 +23,7 @@ CLI_SOURCE_INPUTS := \
 	$(CURRENT_MAKEFILE_DIR)/Package.swift \
 	$(CURRENT_MAKEFILE_DIR)/Package.resolved \
 	$(CURRENT_MAKEFILE_DIR)/supacode.xcodeproj/project.pbxproj \
-	$(shell find $(CLI_SOURCE_DIRS) -type f 2>/dev/null)
+	$(shell find $(CLI_SOURCE_DIRS) -name .build -prune -o -type f -print 2>/dev/null)
 VERSION ?=
 BUILD ?=
 XCODEBUILD_FLAGS ?=
@@ -60,6 +60,7 @@ endif
 
 .DEFAULT_GOAL := help
 .PHONY: build-ghostty-xcframework ensure-ghostty sync-ghostty _record-ghostty-hash build-app build-cli build-cli-release embed-cli-debug embed-cli embed-docs embed-skills run-app install-dev-build install-release archive export-archive format format-changed format-lint lint check test test-app test-scripts test-cli-smoke test-cli-unit test-cli-integration benchmark-build bump-version log-stream agent-versions
+.PHONY: test-agent-contracts _test-agent-contract-codex _test-agent-contract-export
 
 help:  # Display this help.
 	@-+echo "Run make with one of the following targets:"
@@ -153,11 +154,13 @@ sync-cli-version: # Sync app MARKETING_VERSION into ProwlCLIShared/ProwlVersion.
 
 build-cli: sync-cli-version # Build Swift CLI binary (SPM)
 	swift build --product prowl
+	swift build --product prowl-mirror-relay
 
 build-cli-release: sync-cli-version # Build universal CLI binary in release mode
 	swift build -c release --arch arm64 --arch x86_64 --product prowl
+	swift build -c release --arch arm64 --arch x86_64 --product prowl-mirror-relay
 
-embed-cli-debug: $(CLI_DEBUG_RESOURCE_PATH) # Build debug CLI and copy into Resources for dev builds
+embed-cli-debug: embed-mirror-relay-debug $(CLI_DEBUG_RESOURCE_PATH) # Build debug CLI and copy into Resources for dev builds
 
 $(CLI_DEBUG_RESOURCE_PATH): $(CLI_SOURCE_INPUTS)
 	$(MAKE) build-cli
@@ -173,12 +176,13 @@ $(CLI_DEBUG_RESOURCE_PATH): $(CLI_SOURCE_INPUTS)
 	chmod +x "$$dst/prowl"; \
 	echo "embedded CLI binary at $$dst/prowl"
 
-embed-cli: build-cli-release # Build release CLI and copy into Resources for distribution
+embed-cli: embed-mirror-relay-release build-cli-release # Build release CLI and copy into Resources for distribution
 	@set -euo pipefail; \
 	bin="$$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/prowl"; \
 	dst="$(CURRENT_MAKEFILE_DIR)/Resources/prowl-cli"; \
 	mkdir -p "$$dst"; \
 	cp "$$bin" "$$dst/prowl"; \
+	strip -S -x "$$dst/prowl"; \
 	chmod +x "$$dst/prowl"; \
 	echo "embedded CLI binary at $$dst/prowl"
 
@@ -354,6 +358,7 @@ test: ensure-ghostty embed-cli-debug embed-docs embed-skills test-app
 test-scripts: # Run tests for the repository's Python scripts
 	@python3 -m unittest discover -s "$(CURRENT_MAKEFILE_DIR)/scripts" -p 'test_*.py'
 
+# Real I/O deadlines run separately from the bulk suite's main-actor work.
 test-app: ensure-ghostty # Run app/unit tests via xcodebuild
 	@set -euo pipefail; \
 	result_root="$(CURRENT_MAKEFILE_DIR)/build/test-results"; \
@@ -364,10 +369,17 @@ test-app: ensure-ghostty # Run app/unit tests via xcodebuild
 		local expected_test_count="$$3"; \
 		shift 3; \
 		rm -rf "$$result_bundle"; \
+		if [ -n "$${PROWL_DERIVED_DATA_PATH:-}" ]; then \
+			set -- -derivedDataPath "$$PROWL_DERIVED_DATA_PATH" "$$@"; \
+		fi; \
 		set +e; \
-		xcodebuild "$$action" -project supacode.xcodeproj -scheme supacode -destination "platform=macOS" -resultBundlePath "$$result_bundle" $(TEST_SIGNING_ARGS) -skipMacroValidation -clonedSourcePackagesDirPath $(SPM_CACHE_DIR) SWIFT_COMPILATION_MODE=incremental "$$@" 2>&1 | mise exec -- xcsift -w --format toon; \
+		xcodebuild "$$action" -project supacode.xcodeproj -scheme supacode -destination "platform=macOS" -resultBundlePath "$$result_bundle" $(TEST_SIGNING_ARGS) -skipMacroValidation -clonedSourcePackagesDirPath $(SPM_CACHE_DIR) -showBuildTimingSummary SWIFT_COMPILATION_MODE=incremental "$$@" 2>&1 | tee "$$result_bundle.log" | tee >(PROWL_TEST_PROGRESS_LABEL="$${result_bundle##*/}" awk -f "$(CURRENT_MAKEFILE_DIR)/scripts/test-progress.awk" >&2) | mise exec -- xcsift -w --format toon; \
 		local xcodebuild_status=$${PIPESTATUS[0]}; \
 		set -e; \
+		if [ "$$action" = "test" ] && [ -d "$$result_bundle" ]; then \
+			xcrun xcresulttool get log --path "$$result_bundle" --type build --compact > "$$result_bundle.build.json" \
+				|| echo "warning: could not export Xcode build metrics" >&2; \
+		fi; \
 		if [ "$$xcodebuild_status" -ne 0 ]; then \
 			bash "$(CURRENT_MAKEFILE_DIR)/scripts/print-xcresult-failures.sh" "$$result_bundle" || true; \
 			return "$$xcodebuild_status"; \
@@ -381,6 +393,7 @@ test-app: ensure-ghostty # Run app/unit tests via xcodebuild
 	shell_cancellation_tests=( \
 		"supacodeTests/ShellClientStreamingTests/cancellingRunStreamConsumerTerminatesProcessAfterItIsReady()" \
 		"supacodeTests/ShellClientStreamingTests/runTerminatesReadyProcessWhenCallingTaskIsCancelled()" \
+		"supacodeTests/ShellClientProbeTests/cancellationStopsProbeAndItsChildren()" \
 	); \
 	skip_args=(); \
 	only_args=(); \
@@ -388,8 +401,26 @@ test-app: ensure-ghostty # Run app/unit tests via xcodebuild
 		skip_args+=("-skip-testing:$$test_id"); \
 		only_args+=("-only-testing:$$test_id"); \
 	done; \
+	mirror_suites=(MirrorHostTests MirrorDevicePairingTests MirrorConnectionTests MirrorTerminalIntegrationTests); \
+	mirror_args=(); \
+	for suite in "$${mirror_suites[@]}"; do \
+		skip_args+=("-skip-testing:supacodeTests/$$suite"); \
+		mirror_args+=("-only-testing:supacodeTests/$$suite"); \
+	done; \
+	event_monitor_tests=( \
+		"supacodeTests/GitWorktreeRegistryMonitorTests" \
+		"supacodeTests/CLISocketServerTests/disconnectMonitorActivatesDuringCreation()" \
+		"supacodeTests/CLISocketServerTests/disconnectMonitorOutlivesOriginalDescriptor()" \
+	); \
+	event_args=(); \
+	for test_id in "$${event_monitor_tests[@]}"; do \
+		skip_args+=("-skip-testing:$$test_id"); \
+		event_args+=("-only-testing:$$test_id"); \
+	done; \
 	run_xcode_tests "$$result_root/supacode-tests.xcresult" test "" "$${skip_args[@]}"; \
-	run_xcode_tests "$$result_root/supacode-shell-cancellation-tests.xcresult" test-without-building 2 "$${only_args[@]}"
+	run_xcode_tests "$$result_root/supacode-event-monitor-tests.xcresult" test-without-building "" "$${event_args[@]}"; \
+	run_xcode_tests "$$result_root/supacode-mirror-tests.xcresult" test-without-building "" "$${mirror_args[@]}"; \
+	run_xcode_tests "$$result_root/supacode-shell-cancellation-tests.xcresult" test-without-building 3 "$${only_args[@]}"
 
 test-cli-smoke: build-cli # Smoke test CLI executable
 	@set -euo pipefail; \
@@ -420,7 +451,9 @@ test-cli-unit: # Run CLI unit tests via SwiftPM
 		exit 1; \
 	fi; \
 	echo "CLI unit filter matched $$matching_test_count test(s)."; \
-	swift test --skip-build --skip '$(CLI_INTEGRATION_TEST_FILTER)'
+	swift test --skip-build --skip '$(CLI_INTEGRATION_TEST_FILTER)' 2>&1 \
+		| tee >(PROWL_TEST_PROGRESS_LABEL=cli-unit awk -f "$(CURRENT_MAKEFILE_DIR)/scripts/test-progress.awk" >&2) \
+		| mise exec -- xcsift -w --format toon
 
 test-cli-integration: # Run CLI integration tests via SwiftPM
 	@test_list="$$(swift test list)"; \
@@ -430,7 +463,9 @@ test-cli-integration: # Run CLI integration tests via SwiftPM
 		exit 1; \
 	fi; \
 	echo "CLI integration filter matched $$matching_test_count test(s)."; \
-	swift test --skip-build --filter '$(CLI_INTEGRATION_TEST_FILTER)'
+	swift test --skip-build --filter '$(CLI_INTEGRATION_TEST_FILTER)' 2>&1 \
+		| tee >(PROWL_TEST_PROGRESS_LABEL=cli-integration awk -f "$(CURRENT_MAKEFILE_DIR)/scripts/test-progress.awk" >&2) \
+		| mise exec -- xcsift -w --format toon
 
 benchmark-build: ensure-ghostty embed-cli-debug embed-docs embed-skills # Benchmark clean and compilation-cache build/test time
 	@BUILD_BENCHMARK_ROOT="$(CURRENT_MAKEFILE_DIR)/.build-benchmark/build-time" \
@@ -473,6 +508,35 @@ AGENT_VERSIONS_ARGS ?=
 agent-versions: # Compare installed tier-A agent CLI versions with the managed-hook attestation (AGENT_VERSIONS_ARGS="--json" / "--strict" / "--check-matrix")
 	@python3 "$(CURRENT_MAKEFILE_DIR)/scripts/agent_versions.py" $(AGENT_VERSIONS_ARGS)
 
+AGENT_CONTRACT_ARGS ?=
+test-agent-contracts: # Inventory by default; AGENT_CONTRACT_ARGS="--mode live" opts in to real model/hook checks
+	@python3 "$(CURRENT_MAKEFILE_DIR)/scripts/agent_contracts.py" $(AGENT_CONTRACT_ARGS)
+
+_test-agent-contract-codex: ensure-ghostty embed-cli-debug embed-docs embed-skills
+	@: "$${PROWL_CONTRACT_CODEX_EXECUTABLE:?Use test-agent-contracts --mode preflight}" \
+		"$${PROWL_CONTRACT_RECEIPT:?}" "$${PROWL_CONTRACT_NONCE:?}" "$${PROWL_CONTRACT_RESULT:?}"
+	TEST_RUNNER_PROWL_RUN_LIVE_CODEX_CONTRACT=1 \
+	TEST_RUNNER_PROWL_CONTRACT_CODEX_EXECUTABLE="$$PROWL_CONTRACT_CODEX_EXECUTABLE" \
+	TEST_RUNNER_PROWL_CONTRACT_RECEIPT="$$PROWL_CONTRACT_RECEIPT" \
+	TEST_RUNNER_PROWL_CONTRACT_NONCE="$$PROWL_CONTRACT_NONCE" \
+		xcodebuild test -project supacode.xcodeproj -scheme supacode -destination "platform=macOS" \
+		-resultBundlePath "$$PROWL_CONTRACT_RESULT" $(TEST_SIGNING_ARGS) -skipMacroValidation \
+		-clonedSourcePackagesDirPath "$(SPM_CACHE_DIR)" SWIFT_COMPILATION_MODE=incremental \
+		-only-testing:'supacodeTests/CodexConfigReadLiveContractTests/scratchPrecedenceAndProjectExclusion()' \
+		2>&1 | mise exec -- xcsift -w --format toon
+
+_test-agent-contract-export: ensure-ghostty embed-cli-debug embed-docs embed-skills
+	@: "$${PROWL_CONTRACT_EXPORT_INPUT:?Use test-agent-contracts --mode live}" \
+		"$${PROWL_CONTRACT_EXPORT_OUTPUT:?}" "$${PROWL_CONTRACT_NONCE:?}" "$${PROWL_CONTRACT_RESULT:?}"
+	TEST_RUNNER_PROWL_CONTRACT_EXPORT_INPUT="$$PROWL_CONTRACT_EXPORT_INPUT" \
+	TEST_RUNNER_PROWL_CONTRACT_EXPORT_OUTPUT="$$PROWL_CONTRACT_EXPORT_OUTPUT" \
+	TEST_RUNNER_PROWL_CONTRACT_NONCE="$$PROWL_CONTRACT_NONCE" \
+		xcodebuild test -project supacode.xcodeproj -scheme supacode -destination "platform=macOS" \
+		-resultBundlePath "$$PROWL_CONTRACT_RESULT" $(TEST_SIGNING_ARGS) -skipMacroValidation \
+		-clonedSourcePackagesDirPath "$(SPM_CACHE_DIR)" SWIFT_COMPILATION_MODE=incremental \
+		-only-testing:'supacodeTests/AgentHookContractExportTests/exportPreparedLaunches()' \
+		2>&1 | mise exec -- xcsift -w --format toon
+
 format: # Format all Swift code with swift-format (full-tree cleanup)
 	swift-format -p --in-place --recursive --configuration ./.swift-format.json supacode supacodeTests
 
@@ -497,7 +561,18 @@ format-lint: # Check Swift formatting without rewriting files
 lint: # Lint code with swiftlint
 	mise exec -- swiftlint lint --quiet --config .swiftlint.yml
 
-check: format-changed format-lint lint test-scripts # Format changed Swift files, then run swift-format lint, SwiftLint, and the script tests
+.PHONY: check-workflow-naming
+check-workflow-naming: # Check maintained workflow source and references for retired names
+	python3 scripts/check_workflow_naming.py
+
+.PHONY: check-localization audit-localization
+check-localization: # Check that the string catalog is not broken (no build needed; missing translations are fine)
+	python3 scripts/localization.py check
+
+audit-localization: build-app # Release check: missing, unused, and untranslated strings, and unlocalized UI copy (see the sync-l10n skill)
+	python3 scripts/localization.py audit
+
+check: format-changed format-lint lint test-scripts check-workflow-naming check-localization # Format changed Swift files, then run linters and checks
 
 log-stream: # Stream logs from the app via log stream
 	log stream --predicate 'subsystem == "com.onevcat.prowl"' --style compact --color always
@@ -543,3 +618,15 @@ bump-version: # Bump app version (usage: make bump-version [VERSION=YYYY.M.DD] [
 	git commit -m "bump v$$version"; \
 	git tag -s "v$$version" -m "v$$version"; \
 	echo "version bumped to $$version (build $$build), tagged v$$version"
+
+.PHONY: embed-mirror-relay-debug embed-mirror-relay-release
+embed-mirror-relay-debug:
+	swift build --product prowl-mirror-relay
+	@mkdir -p Resources/prowl-mirror-relay
+	cp "$$(swift build --show-bin-path)/prowl-mirror-relay" Resources/prowl-mirror-relay/prowl-mirror-relay
+
+embed-mirror-relay-release:
+	swift build -c release --arch arm64 --arch x86_64 --product prowl-mirror-relay
+	@mkdir -p Resources/prowl-mirror-relay
+	cp "$$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/prowl-mirror-relay" Resources/prowl-mirror-relay/prowl-mirror-relay
+	strip -S -x Resources/prowl-mirror-relay/prowl-mirror-relay

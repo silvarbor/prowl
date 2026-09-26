@@ -46,6 +46,19 @@ enum ClaudeScreenProfile {
     return AgentScreenDetection(state: .idle, reason: .noRuleMatched)
   }
 
+  /// A recognized composer, including wrapped draft rows. Nil means its boundaries
+  /// cannot be established and must not be interpreted as an empty input.
+  nonisolated static func composerContents(in snapshot: AgentScreenSnapshot) -> String? {
+    let lines = snapshot.lines
+    guard let prompt = lines.lastIndex(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("❯") }),
+      prompt > 0, isBoxBorderLine(lines[prompt - 1]),
+      let end = lines.indices.dropFirst(prompt + 1).first(where: { isBoxBorderLine(lines[$0]) })
+    else { return nil }
+    let first = lines[prompt].trimmingCharacters(in: .whitespaces).dropFirst()
+    return ([String(first)] + Array(lines[(prompt + 1)..<end]))
+      .joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
   /// Raw current interaction text for an actionable blocked screen. Keep the
   /// rendered choices and keyboard hints intact rather than inventing option fields.
   nonisolated static func blockerText(in snapshot: AgentScreenSnapshot) -> String? {
@@ -57,6 +70,7 @@ enum ClaudeScreenProfile {
   }
 
   nonisolated private static func hasViewerChrome(_ regions: ClaudeScreenRegions) -> Bool {
+    if regions.hasScrollOverlay { return true }
     if regions.bottomChromeLines.contains(where: { line in
       line.contains("⌕ Search…") || line.lowercased().contains("ctrl+r to toggle")
     }) {
@@ -82,12 +96,25 @@ enum ClaudeScreenProfile {
       || lower.contains("chat about this")
       || lower.contains("review your answers")
       || lower.contains("skip interview and plan immediately")
+      || hasWorkspaceTrustPrompt(lower)
     {
       return true
     }
     return hasConfirmationPrompt(lower)
       || (hasSelectionPrompt(regions.currentInteractionLines)
         && hasYesNoChoice(regions.currentInteractionLines))
+  }
+
+  // Newer Claude releases render this initial gate as plain "No, exit" /
+  // "Yes, I trust this folder" rows instead of a numbered menu. Keep the full prompt
+  // signature so the user entering one of those phrases into the composer
+  // cannot be mistaken for a live blocker.
+  nonisolated private static func hasWorkspaceTrustPrompt(_ lower: String) -> Bool {
+    lower.contains("quick safety check:")
+      && lower.contains("claude code'll be able to read, edit, and execute files here.")
+      && lower.contains("no, exit")
+      && lower.contains("yes, i trust this folder")
+      && lower.contains("enter to confirm")
   }
 
   nonisolated private static func hasSelectionPrompt(_ lines: [String]) -> Bool {
@@ -193,6 +220,7 @@ private struct ClaudeScreenRegions: Sendable {
   let bottomChromeLines: [String]
   let bottomViewerLines: [String]
   let hasIdleComposer: Bool
+  let hasScrollOverlay: Bool
 
   nonisolated init(snapshot: AgentScreenSnapshot) {
     let lines = snapshot.lines
@@ -228,6 +256,16 @@ private struct ClaudeScreenRegions: Sendable {
     self.bottomChromeLines = Array(nonEmptyLines.suffix(3))
     self.bottomViewerLines = Array(nonEmptyLines.suffix(5))
     self.hasIdleComposer = Self.hasIdleComposer(screenLines: lines, promptIndex: promptIndex)
+    // Claude scrolls its transcript inside the active screen and keeps the composer
+    // fixed. The jump control can cover the middle of a transcript row and show
+    // an unread-message count. Text on either side is not part of the control.
+    self.hasScrollOverlay =
+      ClaudeScreenProfile.composerContents(in: snapshot) != nil
+      && Self.contentAbovePrompt(screenLines: lines, promptIndex: promptIndex)
+        .split(separator: "\n")
+        .last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty })?
+        .trimmingCharacters(in: .whitespaces)
+        .range(of: #"(Jump to bottom|[1-9][0-9]* new messages?) \(click\) ↓"#, options: .regularExpression) != nil
   }
 
   nonisolated private static func liveStatusBlock(_ rows: [String]) -> ArraySlice<String> {
@@ -270,10 +308,15 @@ private struct ClaudeScreenRegions: Sendable {
     guard let promptIndex else {
       return Array(screenLines.suffix(18))
     }
-    guard isClaudeNumberedSelectionLine(screenLines[promptIndex]) else {
+    let isWorkspaceTrustChoice = isClaudeWorkspaceTrustChoiceLine(screenLines[promptIndex])
+    guard isClaudeNumberedSelectionLine(screenLines[promptIndex]) || isWorkspaceTrustChoice else {
       return []
     }
-    let lowerBound = max(screenLines.startIndex, promptIndex - 10)
+    // The first-launch safety copy wraps before the choices. Keep its full
+    // signature when the new unnumbered menu appears; numbered menus retain
+    // the narrower interaction window used to reject stale transcript text.
+    let lineLimit = isWorkspaceTrustChoice ? 18 : 10
+    let lowerBound = max(screenLines.startIndex, promptIndex - lineLimit)
     return Array(screenLines[lowerBound..<screenLines.endIndex])
   }
 
@@ -377,8 +420,27 @@ nonisolated private func isClaudeNumberedSelectionLine(_ line: String) -> Bool {
   return isNumberedChoice(option)
 }
 
+nonisolated private func isClaudeWorkspaceTrustChoiceLine(_ line: String) -> Bool {
+  let trimmed = line.trimmingCharacters(in: .whitespaces).lowercased()
+  guard trimmed.hasPrefix("❯") else { return false }
+  let option = trimmed.dropFirst().trimmingCharacters(in: .whitespaces)
+  return option == "no, exit" || option == "yes, i trust this folder"
+}
+
+// A named session paints its title as a chip on the composer's top border:
+// "──────── Titled composer border probe ─". The rule run before the chip and the
+// single rule character after it are structural; the title is free text. Requiring
+// rule characters only made a titled border invisible, which emptied the live status
+// block above it and reported a working agent as idle.
 nonisolated private func isBoxBorderLine(_ line: String) -> Bool {
   let trimmed = line.trimmingCharacters(in: .whitespaces)
-  guard trimmed.count >= 3 else { return false }
-  return trimmed.allSatisfy { $0 == "─" || $0 == "-" }
+  let rule = trimmed.prefix(while: isBorderRuleCharacter)
+  guard rule.count >= 3 else { return false }
+  let titleChip = trimmed[rule.endIndex...]
+  guard !titleChip.isEmpty else { return true }
+  return titleChip.hasPrefix(" ") && titleChip.last.map(isBorderRuleCharacter) == true
+}
+
+nonisolated private func isBorderRuleCharacter(_ character: Character) -> Bool {
+  character == "─" || character == "-"
 }

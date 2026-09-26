@@ -12,6 +12,14 @@ Build, sign, notarize, and publish a Prowl release.
 2. Verify working tree is clean: `git status --porcelain`
    - If dirty, list the changes and ask whether to proceed or abort
 3. Sync the docs to the code being released — **before** the version bump and tag:
+   - First read `docs-ai/001-fork-bootstrap-and-release-pipeline/release-runbook.md`'s
+     **Workflow UI release scope** and **Agent contract release check**, and surface their status to the user. Follow the linked
+     contract runbook: run the full `--mode verify` suite with the owner's configured model
+     routes, then `--mode publish --report PATH` before bump/tag. Commit the generated receipt,
+     version baseline, and matrix. Publication requires the original artifacts/result bundles
+     and unchanged source, binaries, and routes within 24 hours; rerun after relevant changes.
+     Report T1 headless results separately from D3 handoff acceptance in R2b and D2 review acceptance in R3;
+     inventory alone is not a contract pass, and T1 success does not establish workflow release readiness.
    - Run the `sync-docs` skill. It diffs `docs/.sync-meta.json`'s `last_synced_commit`
      against the current `main` HEAD (the code about to ship), updates any docs whose
      implementation changed, and sets `last_synced_commit` to the **current HEAD** —
@@ -27,6 +35,12 @@ Build, sign, notarize, and publish a Prowl release.
    - If sync-docs reports "needs human decision" items, resolve or defer them before continuing.
    - Most releases change little or no implementation, so this step is usually a no-op doc-wise
      (just a baseline bump). Keep it cheap — see the `sync-docs` skill's cost notes.
+   - Run the `sync-l10n` skill. Translations are not required in everyday work, so this is
+     where they catch up: it translates new UI copy, removes catalog entries that no code uses,
+     and triages new unlocalized literals. Commit the result as its own commit, also **before**
+     the bump and tag: e.g. `git commit -m "Sync localization for <VERSION>"`. When it reports
+     "needs human decision" items, resolve or defer them before you continue. For an urgent
+     hotfix the debt budget step can be skipped; the translate and prune steps cannot.
 4. Determine the version:
    - If `$ARGUMENTS` is provided, use it as the version (e.g., `2026.3.18`)
    - Otherwise, default to today's date format and confirm with the user before proceeding
@@ -35,6 +49,9 @@ Build, sign, notarize, and publish a Prowl release.
      PR descriptions, and generates user-facing notes via LLM into `build/release-notes.md`.
    - Read the generated `build/release-notes.md`, show the content to the user, and wait
      for explicit confirmation. If the user wants changes, edit the file directly.
+   - Alongside that maintainer-facing confirmation, report the agent contract check result
+     and evidence location, including any blocked or untested runtimes. Keep this diagnostic
+     summary out of the public release notes; apply the release runbook's scope policy.
    - **Do NOT proceed to the next step until the user confirms the release notes.**
 6. Run the release script: `./scripts/release.sh <VERSION>`
    - The script reads `build/release-notes.md` (required — refuses to run without it).

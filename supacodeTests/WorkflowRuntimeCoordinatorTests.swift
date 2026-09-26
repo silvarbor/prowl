@@ -1,7 +1,8 @@
 // supacodeTests/WorkflowRuntimeCoordinatorTests.swift
-// `prowl workflow status / done / cancel` attribution and responses (docs-ai 063 B3, W1/W3/W5).
+// `prowl workflow status / deliver / cancel` attribution and responses (docs-ai 063 B3, W1/W3/W5).
 
 import Foundation
+import ProwlCLIShared
 import Testing
 
 @testable import supacode
@@ -16,6 +17,7 @@ struct WorkflowRuntimeCoordinatorTests {
     var sessions: [WorkflowRunSession] = []
     var sent: [WorkflowRunsFeature.Action] = []
     var pendingByPane: [UUID: String] = [:]
+    var contentOwner: UUID?
     let rendezvous = WorkflowCLIRendezvous()
     let requestID = UUID()
     /// What the reducer would answer to a `.deliver`, applied synchronously inside `send`.
@@ -47,6 +49,9 @@ struct WorkflowRuntimeCoordinatorTests {
           },
           pendingDispatchID: { [self] surfaceID in pendingByPane[surfaceID] },
           worktreeRoots: { [self] in [root] },
+          paneOwner: { [self] pane in
+            contentOwner ?? sessions.last(where: { $0.boundSurfaceIDs.contains(pane) })?.run.id
+          },
           rendezvous: rendezvous,
           makeRequestID: { [self] in requestID }))
     }
@@ -84,6 +89,117 @@ struct WorkflowRuntimeCoordinatorTests {
     }
   }
 
+  @Test func contentReadRequiresTheAssignedPaneRunAndInvocation() async throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanUp() }
+    let session = try fixture.waitingSession()
+    fixture.sessions = [session]
+    try session.store.ensureLayout(runID: session.run.id)
+    let grant = try #require(session.run.currentInvocation?.content)
+    let request = WorkflowInput(action: .read, invocation: grant.invocation, runID: grant.runID.uuidString)
+    #expect(await fixture.coordinator.read(request, callerPane: Self.authorCaller).ok)
+    #expect(await fixture.coordinator.read(request, callerPane: Self.strangerCaller).ok == false)
+    #expect(
+      await fixture.coordinator.read(
+        .init(action: .read, invocation: grant.invocation + 1, runID: grant.runID.uuidString),
+        callerPane: Self.authorCaller
+      ).ok == false)
+    #expect(
+      await fixture.coordinator.read(
+        .init(
+          action: .read, invocation: grant.invocation, contentResource: "/etc/passwd", runID: grant.runID.uuidString),
+        callerPane: Self.authorCaller
+      ).ok == false)
+    fixture.contentOwner = UUID()
+    #expect(await fixture.coordinator.read(request, callerPane: Self.authorCaller).ok == false)
+    fixture.contentOwner = nil
+    _ = fixture.coordinator.cancel(
+      .init(action: .cancel, runID: session.run.id.uuidString), callerPane: Self.authorCaller)
+    #expect(await fixture.coordinator.read(request, callerPane: Self.authorCaller).ok == false)
+  }
+
+  @Test func skippedAndRevokedTasksCannotBeRead() async throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanUp() }
+    var session = try fixture.waitingSession()
+    try session.store.ensureLayout(runID: session.run.id)
+    let request = WorkflowInput(action: .read, invocation: 1, runID: session.run.id.uuidString)
+    session.run.invocations[0].activation?.state = .skipped
+    fixture.sessions = [session]
+    #expect(await fixture.coordinator.read(request, callerPane: Self.authorCaller).ok == false)
+    session.run.invocations[0].activation?.state = .revoked
+    fixture.sessions = [session]
+    #expect(await fixture.coordinator.read(request, callerPane: Self.authorCaller).ok == false)
+  }
+
+  @Test func completedTaskRemainsReadableUntilReassignmentOrHistoryRemoval() async throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanUp() }
+    var session = try fixture.waitingSession()
+    session.run.status = .completed
+    session.run.invocations[0].activation = nil
+    try session.store.ensureLayout(runID: session.run.id)
+    fixture.sessions = [session]
+    let request = WorkflowInput(action: .read, invocation: 1, runID: session.run.id.uuidString)
+    #expect(await fixture.coordinator.read(request, callerPane: Self.authorCaller).ok)
+    let wrongRun = WorkflowInput(action: .read, invocation: 1, runID: UUID().uuidString)
+    #expect(await fixture.coordinator.read(wrongRun, callerPane: Self.authorCaller).ok == false)
+    fixture.contentOwner = UUID()
+    #expect(await fixture.coordinator.read(request, callerPane: Self.authorCaller).ok == false)
+    fixture.contentOwner = nil
+    try FileManager.default.removeItem(at: session.run.runDirectory)
+    #expect(await fixture.coordinator.read(request, callerPane: Self.authorCaller).ok == false)
+  }
+
+  @Test func assignedArtifactDirectoryListsOnlyItsContainedFiles() async throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanUp() }
+    var session = try fixture.waitingSession()
+    try session.store.ensureLayout(runID: session.run.id)
+    let directory = session.run.runDirectory.appending(path: "actions/test/artifacts")
+    try session.store.storage.prepare(directory)
+    try Data("artifact bytes".utf8).write(to: directory.appending(path: "result.txt"))
+    let old = try #require(session.run.currentInvocation?.content)
+    session.run.invocations[0].content = .make(
+      text: "Read \(directory.path)", task: (old.runID, old.invocation),
+      runDirectory: session.run.runDirectory,
+      knownPaths: [directory.path], skill: nil)
+    fixture.sessions = [session]
+    let response = await fixture.coordinator.read(
+      .init(action: .read, invocation: old.invocation, contentResource: "resource-1", runID: old.runID.uuidString),
+      callerPane: Self.authorCaller)
+    guard case .read(let listing) = try payload(response) else {
+      Issue.record("Expected directory listing")
+      return
+    }
+    #expect(listing.body.contains("resource-1-file-1"))
+    let file = await fixture.coordinator.read(
+      .init(
+        action: .read, invocation: old.invocation, contentResource: "resource-1-file-1", runID: old.runID.uuidString),
+      callerPane: Self.authorCaller)
+    guard case .read(let content) = try payload(file) else {
+      Issue.record("Expected artifact content")
+      return
+    }
+    #expect(content.body == "artifact bytes")
+  }
+
+  @Test func deletedTerminalHistoryIsNotReturnedFromTheSessionCache() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanUp() }
+    var session = try fixture.waitingSession()
+    var machine = session.machine(now: { Self.now }, makeToken: { "token" })
+    _ = machine.apply(.user(.cancel))
+    session.run = machine.run
+    try session.store.ensureLayout(runID: session.run.id)
+    try session.store.writeRecord(WorkflowRunRecord(run: session.run))
+    fixture.sessions = [session]
+    let request = WorkflowInput(action: .status, runID: session.run.id.uuidString)
+    #expect(fixture.coordinator.status(request, callerPane: nil).ok)
+    try FileManager.default.removeItem(at: session.run.runDirectory)
+    #expect(fixture.coordinator.status(request, callerPane: nil).error?.code == CLIErrorCode.runNotFound)
+  }
+
   private static let authorCaller = CallerPane(
     worktreeID: "wt", surfaceID: WorkflowRunMachineTests.authorPane.surfaceID)
   private static let strangerCaller = CallerPane(worktreeID: "wt", surfaceID: UUID())
@@ -92,7 +208,7 @@ struct WorkflowRuntimeCoordinatorTests {
     var machine = session.machine(now: { Self.now }, makeToken: { "T" })
     let (result, _) = machine.deliver(
       ordinal: 1, selector: .token("TOKEN-1"), body: "## Scope\nx\n## Claims\ny", verdict: nil)
-    _ = machine.apply(.outputPersisted(ordinal: 1))
+    _ = machine.apply(.deliveryPersisted(ordinal: 1))
     return .delivered(run: machine.run, receipt: try result.get())
   }
 
@@ -100,17 +216,18 @@ struct WorkflowRuntimeCoordinatorTests {
     try JSONDecoder().decode(WorkflowCommandPayload.self, from: try #require(response.data).bytes)
   }
 
-  // MARK: - done attribution (decision W3)
+  // MARK: - deliver attribution (decision W3)
 
-  @Test func doneFromTheRolePaneIsAttributedByItsPendingDispatch() async throws {
+  @Test func deliverFromTheRolePaneIsAttributedByItsPendingDispatch() async throws {
     let fixture = try Fixture()
     defer { fixture.cleanUp() }
     let session = try fixture.waitingSession()
     fixture.sessions = [session]
     fixture.answer = try delivered(session)
 
-    let response = await fixture.coordinator.done(
-      WorkflowInput(action: .done, body: "## Scope\nx\n## Claims\ny", token: "TOKEN-1"), callerPane: Self.authorCaller)
+    let response = await fixture.coordinator.deliver(
+      WorkflowInput(action: .deliver, body: "## Scope\nx\n## Claims\ny", token: "TOKEN-1"),
+      callerPane: Self.authorCaller)
     #expect(response.ok, "\(response.error?.message ?? "")")
     guard case .deliver(let request) = fixture.sent.first else {
       Issue.record("expected a deliver action")
@@ -122,44 +239,44 @@ struct WorkflowRuntimeCoordinatorTests {
     #expect(request.selector == .token("TOKEN-1"))
     #expect(request.source == "pane")
     #expect(request.body == "## Scope\nx\n## Claims\ny")
-    guard case .done(let done) = try payload(response) else {
-      Issue.record("expected a done payload")
+    guard case .deliver(let deliver) = try payload(response) else {
+      Issue.record("expected a deliver payload")
       return
     }
-    #expect(done.delivery.state == .delivered)
-    #expect(done.delivery.role == "author")
-    #expect(done.delivery.output.name == "brief")
-    #expect(done.run.role == "author")
+    #expect(deliver.delivery.state == .delivered)
+    #expect(deliver.delivery.role == "author")
+    #expect(deliver.delivery.record.name == "brief")
+    #expect(deliver.run.role == "author")
     #expect(fixture.rendezvous.pendingRequestIDs.isEmpty)
   }
 
-  @Test func doneWithoutABodyOrHalfAManualTargetIsInvalid() async throws {
+  @Test func deliverWithoutABodyOrHalfAManualTargetIsInvalid() async throws {
     let fixture = try Fixture()
     defer { fixture.cleanUp() }
-    let noBody = await fixture.coordinator.done(WorkflowInput(action: .done), callerPane: Self.authorCaller)
+    let noBody = await fixture.coordinator.deliver(WorkflowInput(action: .deliver), callerPane: Self.authorCaller)
     #expect(noBody.error?.code == CLIErrorCode.invalidArgument)
-    let half = await fixture.coordinator.done(
-      WorkflowInput(action: .done, runID: UUID().uuidString, body: "x"), callerPane: Self.authorCaller)
+    let half = await fixture.coordinator.deliver(
+      WorkflowInput(action: .deliver, runID: UUID().uuidString, body: "x"), callerPane: Self.authorCaller)
     #expect(half.error?.code == CLIErrorCode.invalidArgument)
-    let badID = await fixture.coordinator.done(
-      WorkflowInput(action: .done, runID: "nope", stepID: "brief", body: "x"), callerPane: nil)
+    let badID = await fixture.coordinator.deliver(
+      WorkflowInput(action: .deliver, runID: "nope", stepID: "brief", body: "x"), callerPane: nil)
     #expect(badID.error?.code == CLIErrorCode.invalidArgument)
     #expect(fixture.sent.isEmpty)
   }
 
-  @Test func doneOutsideAnyPaneNeedsAnExplicitTargetAndThenIsManual() async throws {
+  @Test func deliverOutsideAnyPaneNeedsAnExplicitTargetAndThenIsManual() async throws {
     let fixture = try Fixture()
     defer { fixture.cleanUp() }
     let session = try fixture.waitingSession()
     fixture.sessions = [session]
     fixture.answer = .failed(code: CLIErrorCode.stepNotExpecting, message: "no")
 
-    let missing = await fixture.coordinator.done(WorkflowInput(action: .done, body: "x"), callerPane: nil)
+    let missing = await fixture.coordinator.deliver(WorkflowInput(action: .deliver, body: "x"), callerPane: nil)
     #expect(missing.error?.code == CLIErrorCode.sourceRequired)
     #expect(fixture.sent.isEmpty)
 
-    let manual = await fixture.coordinator.done(
-      WorkflowInput(action: .done, runID: session.run.id.uuidString, stepID: "brief", body: "x"), callerPane: nil)
+    let manual = await fixture.coordinator.deliver(
+      WorkflowInput(action: .deliver, runID: session.run.id.uuidString, stepID: "brief", body: "x"), callerPane: nil)
     #expect(manual.error?.code == CLIErrorCode.stepNotExpecting, "the reducer's answer is passed through")
     guard case .deliver(let request) = fixture.sent.first else {
       Issue.record("expected a deliver action")
@@ -169,8 +286,8 @@ struct WorkflowRuntimeCoordinatorTests {
     #expect(request.selector == .manual(stepID: "brief"))
     #expect(request.source == "manual")
 
-    let unknown = await fixture.coordinator.done(
-      WorkflowInput(action: .done, runID: UUID().uuidString, stepID: "brief", body: "x"), callerPane: nil)
+    let unknown = await fixture.coordinator.deliver(
+      WorkflowInput(action: .deliver, runID: UUID().uuidString, stepID: "brief", body: "x"), callerPane: nil)
     #expect(unknown.error?.code == CLIErrorCode.runNotFound)
   }
 
@@ -181,13 +298,13 @@ struct WorkflowRuntimeCoordinatorTests {
     fixture.sessions = [session]
     fixture.answer = .failed(code: CLIErrorCode.stepNotExpecting, message: "no")
 
-    let implicit = await fixture.coordinator.done(
-      WorkflowInput(action: .done, body: "x"), callerPane: Self.strangerCaller)
+    let implicit = await fixture.coordinator.deliver(
+      WorkflowInput(action: .deliver, body: "x"), callerPane: Self.strangerCaller)
     #expect(implicit.error?.code == CLIErrorCode.stepNotExpecting)
     #expect(fixture.sent.isEmpty)
 
-    _ = await fixture.coordinator.done(
-      WorkflowInput(action: .done, runID: session.run.id.uuidString, stepID: "brief", body: "x"),
+    _ = await fixture.coordinator.deliver(
+      WorkflowInput(action: .deliver, runID: session.run.id.uuidString, stepID: "brief", body: "x"),
       callerPane: Self.strangerCaller)
     guard case .deliver(let request) = fixture.sent.first else {
       Issue.record("expected a deliver action")
@@ -203,14 +320,14 @@ struct WorkflowRuntimeCoordinatorTests {
     fixture.sessions = [session]
     fixture.answer = .failed(code: CLIErrorCode.stepNotExpecting, message: "no")
 
-    let mismatch = await fixture.coordinator.done(
-      WorkflowInput(action: .done, runID: session.run.id.uuidString, stepID: "launch", body: "x"),
+    let mismatch = await fixture.coordinator.deliver(
+      WorkflowInput(action: .deliver, runID: session.run.id.uuidString, stepID: "launch", body: "x"),
       callerPane: Self.authorCaller)
     #expect(mismatch.error?.code == CLIErrorCode.roleMismatch)
     #expect(fixture.sent.isEmpty)
 
-    let agreeing = await fixture.coordinator.done(
-      WorkflowInput(action: .done, runID: session.run.id.uuidString, stepID: "brief", body: "x", token: "TOKEN-1"),
+    let agreeing = await fixture.coordinator.deliver(
+      WorkflowInput(action: .deliver, runID: session.run.id.uuidString, stepID: "brief", body: "x", token: "TOKEN-1"),
       callerPane: Self.authorCaller)
     #expect(agreeing.error?.code == CLIErrorCode.stepNotExpecting)
     guard case .deliver(let agreed) = fixture.sent.last else {
@@ -220,8 +337,8 @@ struct WorkflowRuntimeCoordinatorTests {
     #expect(agreed.source == "pane")
     #expect(agreed.ordinal == 1)
 
-    _ = await fixture.coordinator.done(
-      WorkflowInput(action: .done, runID: session.run.id.uuidString, stepID: "launch", body: "x", force: true),
+    _ = await fixture.coordinator.deliver(
+      WorkflowInput(action: .deliver, runID: session.run.id.uuidString, stepID: "launch", body: "x", force: true),
       callerPane: Self.authorCaller)
     guard case .deliver(let forced) = fixture.sent.last else {
       Issue.record("expected a deliver action")
@@ -231,32 +348,32 @@ struct WorkflowRuntimeCoordinatorTests {
     #expect(forced.selector == .manual(stepID: "launch"))
   }
 
-  @Test func doneAwaitsTheReducerAndAProvisionalAnswerIsReportedAsProvisional() async throws {
+  @Test func deliverAwaitsTheReducerAndAProvisionalAnswerIsReportedAsProvisional() async throws {
     let fixture = try Fixture()
     defer { fixture.cleanUp() }
     let session = try fixture.waitingSession()
     fixture.sessions = [session]
     // No synchronous answer: the reducer resolves later, after persistence.
     let task = Task { @MainActor in
-      await fixture.coordinator.done(
-        WorkflowInput(action: .done, body: "## Scope\nonly", token: "TOKEN-1"), callerPane: Self.authorCaller)
+      await fixture.coordinator.deliver(
+        WorkflowInput(action: .deliver, body: "## Scope\nonly", token: "TOKEN-1"), callerPane: Self.authorCaller)
     }
     await Task.yield()
     #expect(fixture.rendezvous.pendingRequestIDs == [fixture.requestID])
     var machine = session.machine(now: { Self.now }, makeToken: { "T" })
     let (result, _) = machine.deliver(ordinal: 1, selector: .token("TOKEN-1"), body: "## Scope\nonly", verdict: nil)
-    _ = machine.apply(.outputPersisted(ordinal: 1))
+    _ = machine.apply(.deliveryPersisted(ordinal: 1))
     fixture.coordinator.resolve(fixture.requestID, .provisional(run: machine.run, receipt: try result.get()))
     let response = await task.value
     #expect(response.ok)
-    guard case .done(let done) = try payload(response) else {
-      Issue.record("expected a done payload")
+    guard case .deliver(let deliver) = try payload(response) else {
+      Issue.record("expected a deliver payload")
       return
     }
-    #expect(done.delivery.state == .provisional)
-    #expect(done.delivery.warnings.map(\.code) == ["missing_sections"])
-    #expect(done.run.status.state == "needs_attention")
-    #expect(done.run.status.attention?.issues == ["missing_sections"])
+    #expect(deliver.delivery.state == .provisional)
+    #expect(deliver.delivery.warnings.map(\.code) == ["missing_sections"])
+    #expect(deliver.run.status.state == "needs_attention")
+    #expect(deliver.run.status.attention?.issues == ["missing_sections"])
   }
 
   @Test func aDuplicateRequestIDIsRefusedWithoutEnteringTheReducer() async throws {
@@ -266,13 +383,13 @@ struct WorkflowRuntimeCoordinatorTests {
     fixture.sessions = [session]
     // No synchronous answer: the first request stays pending under the fixed request id.
     let first = Task { @MainActor in
-      await fixture.coordinator.done(
-        WorkflowInput(action: .done, body: "x", token: "TOKEN-1"), callerPane: Self.authorCaller)
+      await fixture.coordinator.deliver(
+        WorkflowInput(action: .deliver, body: "x", token: "TOKEN-1"), callerPane: Self.authorCaller)
     }
     await Task.yield()
     #expect(fixture.rendezvous.pendingRequestIDs == [fixture.requestID])
-    let duplicate = await fixture.coordinator.done(
-      WorkflowInput(action: .done, body: "y", token: "TOKEN-1"), callerPane: Self.authorCaller)
+    let duplicate = await fixture.coordinator.deliver(
+      WorkflowInput(action: .deliver, body: "y", token: "TOKEN-1"), callerPane: Self.authorCaller)
     #expect(duplicate.error?.code == CLIErrorCode.requestConflict)
     #expect(fixture.sent.count == 1, "the duplicate never reaches the reducer")
     fixture.coordinator.resolve(fixture.requestID, .failed(code: CLIErrorCode.stepNotExpecting, message: "no"))
@@ -288,24 +405,24 @@ struct WorkflowRuntimeCoordinatorTests {
     let session = try fixture.waitingSession()
     fixture.sessions = [session]
     let first = Task { @MainActor in
-      await fixture.coordinator.done(
-        WorkflowInput(action: .done, body: "x", token: "TOKEN-1"), callerPane: Self.authorCaller)
+      await fixture.coordinator.deliver(
+        WorkflowInput(action: .deliver, body: "x", token: "TOKEN-1"), callerPane: Self.authorCaller)
     }
     await Task.yield()
     first.cancel()
     #expect((await first.value).error?.code == CLIErrorCode.requestCancelled)
     #expect(fixture.rendezvous.pendingRequestIDs.isEmpty)
 
-    let reuse = await fixture.coordinator.done(
-      WorkflowInput(action: .done, runID: session.run.id.uuidString, stepID: "brief", body: "y"), callerPane: nil)
+    let reuse = await fixture.coordinator.deliver(
+      WorkflowInput(action: .deliver, runID: session.run.id.uuidString, stepID: "brief", body: "y"), callerPane: nil)
     #expect(reuse.error?.code == CLIErrorCode.requestConflict)
     #expect(fixture.sent.count == 1)
 
     // The old transaction's answer goes nowhere, and only then is the id free again.
     fixture.coordinator.resolve(fixture.requestID, .failed(code: CLIErrorCode.stepNotExpecting, message: "late"))
     fixture.answer = .failed(code: CLIErrorCode.stepNotExpecting, message: "fresh")
-    let fresh = await fixture.coordinator.done(
-      WorkflowInput(action: .done, runID: session.run.id.uuidString, stepID: "brief", body: "y"), callerPane: nil)
+    let fresh = await fixture.coordinator.deliver(
+      WorkflowInput(action: .deliver, runID: session.run.id.uuidString, stepID: "brief", body: "y"), callerPane: nil)
     #expect(fresh.error?.message == "fresh")
     #expect(fixture.sent.count == 2)
   }
@@ -321,25 +438,25 @@ struct WorkflowRuntimeCoordinatorTests {
     var machine = session.machine(now: { Self.now }, makeToken: { "TOKEN-2" })
     let (result, _) = machine.deliver(
       ordinal: nil, selector: .manual(stepID: "brief"), body: "## Scope\nx\n## Claims\ny", verdict: nil)
-    _ = machine.apply(.outputPersisted(ordinal: 1))
+    _ = machine.apply(.deliveryPersisted(ordinal: 1))
     #expect(machine.run.phase == .launching(ordinal: 2))
     let reviewerPane = WorkflowPaneIdentity(surfaceID: UUID(), tabID: nil, handle: "p9", displayName: "Pi", agent: "pi")
     _ = machine.apply(.launched(ordinal: 2, pane: reviewerPane, dispatchID: "dispatch-2"))
     fixture.answer = .delivered(run: machine.run, receipt: try result.get())
 
-    let response = await fixture.coordinator.done(
+    let response = await fixture.coordinator.deliver(
       WorkflowInput(
-        action: .done, runID: session.run.id.uuidString, stepID: "brief", body: "## Scope\nx\n## Claims\ny"),
+        action: .deliver, runID: session.run.id.uuidString, stepID: "brief", body: "## Scope\nx\n## Claims\ny"),
       callerPane: nil)
     #expect(response.ok, "\(response.error?.message ?? "")")
-    guard case .done(let done) = try payload(response) else {
-      Issue.record("expected a done payload")
+    guard case .deliver(let deliver) = try payload(response) else {
+      Issue.record("expected a deliver payload")
       return
     }
-    #expect(done.delivery.role == "author")
-    #expect(done.run.role == nil)
-    #expect(done.run.activation?.role == "reviewer")
-    #expect(done.run.activation?.expect.completion == [], "a manual caller is not the reviewer's pane")
+    #expect(deliver.delivery.role == "author")
+    #expect(deliver.run.role == nil)
+    #expect(deliver.run.activation?.role == "reviewer")
+    #expect(deliver.run.activation?.expect.completion == [], "a manual caller is not the reviewer's pane")
   }
 
   /// `run` spells the completion command only for the caller's own activation: a workflow whose
@@ -358,7 +475,7 @@ struct WorkflowRuntimeCoordinatorTests {
         - id: launch
           launch: reviewer
           prompt: "Review."
-          expect: { output: findings }
+          expect: { delivery: findings }
       """
     let definition = try #require(WorkflowDocumentParser.parse(yaml).definition)
     let started = try WorkflowRunMachine.start(
@@ -384,7 +501,7 @@ struct WorkflowRuntimeCoordinatorTests {
     let asNobody = WorkflowRunPayload(run: machine.run, callerRole: nil, includeSelfInitiated: true)
     #expect(asNobody.activation?.expect.completion == [])
     let asReviewer = WorkflowRunPayload(run: machine.run, callerRole: "reviewer", includeSelfInitiated: false)
-    #expect(asReviewer.activation?.expect.completion == ["PROWL_WORKFLOW_TOKEN=SECRET prowl workflow done -"])
+    #expect(asReviewer.activation?.expect.completion == ["PROWL_WORKFLOW_TOKEN=SECRET prowl workflow deliver -"])
   }
 
   /// `agents dispatch-complete` is refused for a workflow activation even after its run ended:
@@ -395,7 +512,7 @@ struct WorkflowRuntimeCoordinatorTests {
     let session = try fixture.waitingSession()
     let live = WorkflowRuntimeCoordinator.deliveryRefusal(dispatchID: "dispatch-1", sessions: [session])
     #expect(live?.code == CLIErrorCode.workflowDeliveryRequired)
-    #expect(live?.message.contains("prowl workflow done") == true)
+    #expect(live?.message.contains("prowl workflow deliver") == true)
     var machine = session.machine(now: { Self.now }, makeToken: { "T" })
     _ = machine.apply(.user(.cancel))
     var ended = session
@@ -422,7 +539,7 @@ struct WorkflowRuntimeCoordinatorTests {
     #expect(whoAmI.source == .live)
     #expect(whoAmI.role == "author")
     #expect(whoAmI.step == "brief")
-    #expect(whoAmI.activation?.expect.completion == ["PROWL_WORKFLOW_TOKEN=TOKEN-1 prowl workflow done -"])
+    #expect(whoAmI.activation?.expect.completion == ["PROWL_WORKFLOW_TOKEN=TOKEN-1 prowl workflow deliver -"])
     #expect(whoAmI.selfInitiated == nil)
 
     let stranger = fixture.coordinator.status(WorkflowInput(action: .status), callerPane: Self.strangerCaller)
@@ -460,8 +577,8 @@ struct WorkflowRuntimeCoordinatorTests {
     #expect(malformed.error?.code == CLIErrorCode.invalidArgument)
   }
 
-  /// An invocation stuck in an injection attention has no activation `done` could address, so
-  /// `status` must not advertise one (the caller would otherwise retry `done` forever).
+  /// An invocation stuck in an injection attention has no activation `deliver` could address, so
+  /// `status` must not advertise one (the caller would otherwise retry `deliver` forever).
   @Test func statusReportsNoActivationWhileTheStepIsInAnInjectionAttention() throws {
     let fixture = try Fixture()
     defer { fixture.cleanUp() }

@@ -2,10 +2,11 @@
 // The reducer that owns every live workflow run (docs-ai 063 B3, decision H2/W1). The pure
 // `WorkflowRunMachine` is reconstructed per transition; this reducer performs its effects against
 // the terminal, dispatch, launch, store, native-action, and watchdog boundaries, answers the CLI
-// `done` rendezvous when an activation leaves `persisting`, and cleans up what arrives late.
+// `deliver` rendezvous when an activation leaves `persisting`, and cleans up what arrives late.
 
 import ComposableArchitecture
 import Foundation
+import ProwlCLIShared
 
 /// The in-memory part of a run that `run.json` deliberately excludes: the worktree object, the
 /// frozen profile launch plans (their surface environment carries override values), the binding
@@ -35,7 +36,7 @@ nonisolated struct WorkflowRunSession: Equatable, Sendable {
     self.limits = limits
   }
 
-  var store: WorkflowRunStore { WorkflowRunStore(rootURL: run.context.worktree.rootURL) }
+  var store: WorkflowRunStore { WorkflowRunStore(rootURL: run.context.worktree.rootURL, directory: run.runDirectory) }
 
   /// Every pane the run currently occupies (dsl-spec §10: one run per pane).
   var boundSurfaceIDs: Set<UUID> {
@@ -49,14 +50,14 @@ nonisolated struct WorkflowRunSession: Equatable, Sendable {
   }
 }
 
-/// A CLI `done` accepted by the machine and waiting for its output to reach the run directory.
+/// A CLI `deliver` accepted by the machine and waiting for its output to reach the run directory.
 nonisolated struct WorkflowPendingDelivery: Equatable, Sendable {
   let runID: UUID
   let ordinal: Int
   let receipt: WorkflowDeliveryReceipt
 }
 
-/// `prowl workflow done` after the handler attributed it (decision W3).
+/// `prowl workflow deliver` after the handler attributed it (decision W3).
 nonisolated struct WorkflowDeliveryRequest: Equatable, Sendable {
   let requestID: UUID
   let runID: UUID
@@ -85,9 +86,16 @@ struct WorkflowRunsFeature {
     /// a clock. A pane a later run took over is not an earlier run's to close, even after the
     /// later run ended and kept it.
     var paneOwners: [UUID: UUID] = [:]
+    /// Runs that ended within the last `finishedNoticeDuration`: the toolbar status item keeps
+    /// showing them with their outcome so the end of a run is readable, then lets go.
+    var recentlyFinishedRunIDs: Set<UUID> = []
 
     var activeSessions: [WorkflowRunSession] {
       sessions.values.filter { !$0.run.status.isTerminal }
+    }
+
+    var recentlyFinishedSessions: [WorkflowRunSession] {
+      recentlyFinishedRunIDs.compactMap { sessions[$0] }.filter { $0.run.status.isTerminal }
     }
 
     /// The active run a pane belongs to, if any.
@@ -101,25 +109,36 @@ struct WorkflowRunsFeature {
     /// A self-initiated run passes the CLI request to answer once its first activation is open.
     case started(WorkflowRunSession, effects: [WorkflowRunEffect], requestID: UUID? = nil)
     case event(runID: UUID, WorkflowRunEvent)
+    case executeAction(
+      runID: UUID, stepID: String, actionID: String, inputs: [String: WorkflowJSONValue], executionID: String)
     case deliver(WorkflowDeliveryRequest)
     case userAction(runID: UUID, WorkflowUserAction)
     case markInterruptedRuns(worktreeRoots: [String])
+    /// The status item's hold on a finished run ran out.
+    case finishedNoticeExpired(UUID)
     case delegate(Delegate)
   }
+
+  /// How long the toolbar status item keeps a finished run on screen.
+  static let finishedNoticeDuration: Duration = .seconds(8)
 
   @CasePathable
   enum Delegate: Equatable {
     case notice(WorkflowRunNotice)
   }
 
+  @Dependency(TerminalClient.self) var terminal
+  @Dependency(WorkflowHistoryStorageKey.self) var historyStorage
   @Dependency(WorkflowRuntimeClient.self) var runtime
   @Dependency(WorkflowActivationClient.self) var activation
   @Dependency(WorkflowWatchdogClient.self) var watchdog
   @Dependency(WorkflowEffectQueueClient.self) var queue
   @Dependency(WorkflowCLIResponderClient.self) var responder
   @Dependency(WorkflowActionExecutorKey.self) var actionExecutor
+  @Dependency(\.date) var date
   @Dependency(\.date.now) var now
   @Dependency(\.uuid) var uuid
+  @Dependency(\.continuousClock) var clock
 
   nonisolated private static let logger = SupaLogger("WorkflowRuns")
 
@@ -144,12 +163,21 @@ struct WorkflowRunsFeature {
           statusNotice(from: nil, to: session.run, effects: effects)
         )
 
+      case .executeAction(let runID, let stepID, let actionID, let inputs, let executionID):
+        guard let session = state.sessions[runID], !session.run.status.isTerminal,
+          session.run.actionExecutionID == executionID
+        else { return .none }
+        return executeAction(
+          session: session, stepID: stepID, actionID: actionID, inputs: inputs, executionID: executionID)
+
       case .event(let runID, let event):
         guard var session = state.sessions[runID], !session.run.status.isTerminal else {
-          return lateEventCleanup(event, runID: runID, session: state.sessions[runID])
+          return archiveOrCleanLateEvent(event, runID: runID, state: &state)
         }
         let timestamp = now
         let generator = uuid
+        session.run.observations = runtime.observe(session.run)
+        session.run.captureParticipantSessions()
         var machine = session.machine(now: { timestamp }, makeToken: { generator().uuidString })
         let effects = machine.apply(event)
         let previous = session.run
@@ -168,7 +196,8 @@ struct WorkflowRunsFeature {
           resolvePendingStarts(&state, runID: runID, session: session),
           perform(effects, runID: runID, session: session),
           staleEventCleanup(event, session: session),
-          statusNotice(from: previous.status, to: session.run, effects: effects)
+          statusNotice(from: previous.status, to: session.run, effects: effects),
+          holdFinishedNotice(&state, runID: runID, previous: previous.status, current: session.run.status)
         )
 
       case .deliver(let request):
@@ -179,6 +208,8 @@ struct WorkflowRunsFeature {
         }
         let timestamp = now
         let generator = uuid
+        session.run.observations = runtime.observe(session.run)
+        session.run.captureParticipantSessions()
         var machine = session.machine(now: { timestamp }, makeToken: { generator().uuidString })
         let (result, effects) = machine.deliver(
           ordinal: request.ordinal, selector: request.selector, body: request.body,
@@ -206,6 +237,8 @@ struct WorkflowRunsFeature {
         }
         let timestamp = now
         let generator = uuid
+        session.run.observations = runtime.observe(session.run)
+        session.run.captureParticipantSessions()
         var machine = session.machine(now: { timestamp }, makeToken: { generator().uuidString })
         let effects = machine.apply(.user(userAction))
         let previous = session.run
@@ -216,36 +249,55 @@ struct WorkflowRunsFeature {
           resolvePendingDeliveries(&state, runID: runID, session: session),
           resolvePendingStarts(&state, runID: runID, session: session),
           perform(effects, runID: runID, session: session),
-          statusNotice(from: previous.status, to: session.run, effects: effects)
+          statusNotice(from: previous.status, to: session.run, effects: effects),
+          holdFinishedNotice(&state, runID: runID, previous: previous.status, current: session.run.status)
         )
 
       case .markInterruptedRuns(let roots):
-        let pending = roots.filter { !state.scannedWorktreeRoots.contains($0) }
-        guard !pending.isEmpty else { return .none }
-        state.scannedWorktreeRoots.formUnion(pending)
-        // Read only for a record that is marked: a scan that finds nothing needs no clock.
-        let clock = _now
+        guard state.scannedWorktreeRoots.isEmpty else { return .none }
+        state.scannedWorktreeRoots.formUnion(roots.isEmpty ? ["global"] : roots)
+        let storage = historyStorage
+        // Resolve the generator here: a detached task has no task-local
+        // dependency overrides, so reading the wrapper inside it would fall
+        // back to the live date (and fail under test).
+        let date = date
         return .run { _ in
-          for root in pending {
-            let store = WorkflowRunStore(rootURL: URL(filePath: root, directoryHint: .isDirectory))
+          await Task.detached(priority: .utility) {
             do {
-              let result = try store.markInterruptedRuns(now: { clock.wrappedValue })
+              _ = try WorkflowActionProcessRegistry(directory: storage.baseURL.appending(path: ".processes"))
+                .recoverAbandonedProcesses()
+              let store = WorkflowRunStore(rootURL: storage.baseURL, storage: storage)
+              let result = try store.markInterruptedRuns(now: { date() }, allRoots: true)
               if !result.interrupted.isEmpty || !result.unreadable.isEmpty {
                 Self.logger.info(
-                  "[Workflow] \(root): \(result.interrupted.count) run(s) marked interrupted, "
-                    + "\(result.unreadable.count) unreadable.")
+                  "Workflow history: \(result.interrupted.count) interrupted, \(result.unreadable.count) unreadable.")
               }
-            } catch {
-              Self.logger.warning(
-                "[Workflow] Could not scan \(root) for interrupted runs: \(error)")
-            }
-          }
+              _ = try WorkflowHistory(storage: storage).maintenance(now: date())
+            } catch { Self.logger.warning("Workflow history maintenance failed: \(error)") }
+          }.value
         }
+
+      case .finishedNoticeExpired(let runID):
+        state.recentlyFinishedRunIDs.remove(runID)
+        return .none
 
       case .delegate:
         return .none
       }
     }
+  }
+
+  /// A run that just ended stays in the status item for `finishedNoticeDuration`.
+  private func holdFinishedNotice(
+    _ state: inout State, runID: UUID, previous: WorkflowRunStatus, current: WorkflowRunStatus
+  ) -> Effect<Action> {
+    guard !previous.isTerminal, current.isTerminal else { return .none }
+    state.recentlyFinishedRunIDs.insert(runID)
+    return .run { send in
+      try await clock.sleep(for: Self.finishedNoticeDuration)
+      await send(.finishedNoticeExpired(runID))
+    }
+    .cancellable(id: CancelID.finishedNotice(runID), cancelInFlight: true)
   }
 
   private func statusNotice(
@@ -281,7 +333,7 @@ struct WorkflowRunsFeature {
 
   /// Answers a self-initiated `run` once its first activation is open — or once opening it failed
   /// and the run sits in attention or ended — so the caller never holds a completion command
-  /// before the dispatch record `done` is attributed by exists.
+  /// before the dispatch record `deliver` is attributed by exists.
   private func resolvePendingStarts(
     _ state: inout State, runID: UUID, session: WorkflowRunSession
   ) -> Effect<Action> {
@@ -321,7 +373,7 @@ struct WorkflowRunsFeature {
     }
   }
 
-  /// Answers every `done` whose activation left `persisting` (decision W1): delivered and
+  /// Answers every `deliver` whose activation left `persisting` (decision W1): delivered and
   /// provisional succeed; a revoked, skipped, or unpersistable activation and a run that ended fail.
   private func resolvePendingDeliveries(
     _ state: inout State, runID: UUID, session: WorkflowRunSession
@@ -365,6 +417,20 @@ struct WorkflowRunsFeature {
   }
 
   // MARK: - Late and stale events
+
+  private func archiveOrCleanLateEvent(_ event: WorkflowRunEvent, runID: UUID, state: inout State) -> Effect<Action> {
+    guard var session = state.sessions[runID] else { return lateEventCleanup(event, runID: runID, session: nil) }
+    let timestamp = now
+    let generator = uuid
+    var machine = session.machine(now: { timestamp }, makeToken: { generator().uuidString })
+    let effects = machine.apply(event)
+    guard !effects.isEmpty else { return lateEventCleanup(event, runID: runID, session: session) }
+    session.run = machine.run
+    state.sessions[runID] = session
+    // The non-revocable write precedes the cancellation batch. Its acknowledgement queues this
+    // snapshot before finish closes the stream; buffered archival writes still drain in order.
+    return perform(effects, runID: runID, session: session)
+  }
 
   /// An event that arrives after the run ended (or for an unknown run) may own a pane or a
   /// dispatch record nobody will use: a `.launched` abandons its record and closes the pane, an
@@ -446,9 +512,11 @@ struct WorkflowRunsFeature {
 
   nonisolated private enum CancelID: Hashable, Sendable {
     case executor(UUID)
+    case action(UUID)
     case roleWait(UUID, Int)
     case watchdog(UUID, Int)
     case observers(UUID)
+    case finishedNotice(UUID)
   }
 
   /// The run's ordered effect executor (one per run). It ends when `.finished` closes the queue.
@@ -508,6 +576,7 @@ struct WorkflowRunsFeature {
       case .finished:
         ordered.append(effect)
         observers.append(.cancel(id: CancelID.observers(runID)))
+        observers.append(.cancel(id: CancelID.action(runID)))
       default:
         ordered.append(effect)
       }
@@ -517,6 +586,43 @@ struct WorkflowRunsFeature {
       queue.enqueue(runID, WorkflowEffectBatch(session: session, effects: ordered))
     }
     return .merge(observers)
+  }
+
+  private func executeAction(
+    session: WorkflowRunSession, stepID: String, actionID: String,
+    inputs: [String: WorkflowJSONValue], executionID: String
+  ) -> Effect<Action> {
+    let run = session.run
+    let timestamp = now
+    let sourcePane = run.context.sourcePaneID ?? run.bindings.values.first { $0.source == .current }?.pane?.surfaceID
+    let sourceContext =
+      actionID == "builtin:save-handoff"
+      ? sourcePane.flatMap {
+        terminal.handoffSessionContextForSurface(session.worktree.id, $0)
+      } : nil
+    let context = WorkflowActionContext(
+      runID: run.id, rootURL: run.context.worktree.rootURL,
+      roleAgents: run.bindings.mapValues { $0.agent },
+      outgoingAgent: sourceContext?.agent ?? run.bindings.values.first { $0.source == .current }?.agent,
+      sessionContext: sourceContext, now: timestamp,
+      stepID: stepID, executionID: executionID, attempt: run.actionAttempts[stepID] ?? 1,
+      bundle: run.context.bundle, values: run.stepValues, runDirectory: run.runDirectory)
+    run.context.occupancy?.beginActivity()
+    return .run { send in
+      defer { run.context.occupancy?.endActivity() }
+      do {
+        let outputs = try await actionExecutor.execute(actionID: actionID, inputs: inputs, context: context)
+        await send(.event(runID: run.id, .actionCompleted(stepID: stepID, outputs: outputs, executionID: executionID)))
+      } catch {
+        guard !Task.isCancelled else { return }
+        await send(
+          .event(
+            runID: run.id,
+            .actionFailed(
+              stepID: stepID, reason: "\(error)", executionID: executionID,
+              retryAllowed: !(error is WorkflowBundleIntegrityError))))
+      }
+    }.cancellable(id: CancelID.action(run.id), cancelInFlight: true)
   }
 
   /// The idle wait of a `message` step (dsl-spec §10): ends as `.roleIdle`, or as the failed
@@ -579,7 +685,6 @@ struct WorkflowRunsFeature {
     sequence: Int
   ) async -> StepOutcome {
     let store = session.store
-    let timestamp = now
     let queue = queue
     // Read on the main actor right before a pane is touched: no cancel can slip in between.
     let isLive: @MainActor () -> Bool = { !queue.isStale(runID, sequence) }
@@ -602,17 +707,17 @@ struct WorkflowRunsFeature {
           .event(runID: runID, .injectionFailed(ordinal: ordinal, failure.injectionFailure)))
       }
 
-    case .materializeInstruction(let ordinal, let stepID, let text):
+    case .materializePrompt(let ordinal, let stepID, let text):
       do {
         try store.ensureLayout(runID: runID)
-        _ = try store.writeInstruction(runID: runID, stepID: stepID, ordinal: ordinal, text: text)
+        _ = try store.writePrompt(runID: runID, stepID: stepID, ordinal: ordinal, text: text)
       } catch {
-        await send(
-          .event(
-            runID: runID,
-            .injectionFailed(
-              ordinal: ordinal,
-              .activationUnavailable("the instruction file could not be written: \(error)"))))
+        let reason = "The instruction could not be persisted: \(error)"
+        let event: WorkflowRunEvent =
+          session.run.invocations.first { $0.ordinal == ordinal }?.kind == .launch
+          ? .launchFailed(ordinal: ordinal, reason: reason)
+          : .injectionFailed(ordinal: ordinal, .activationUnavailable(reason))
+        await send(.event(runID: runID, event))
         return .stop
       }
 
@@ -693,50 +798,22 @@ struct WorkflowRunsFeature {
       }
 
     case .runAction(let stepID, let actionID, let inputs):
-      let context = WorkflowActionContext(
-        runID: runID,
-        rootURL: session.run.context.worktree.rootURL,
-        roleAgents: session.run.bindings.mapValues {
-          $0.templateRole.agent.isEmpty ? nil : $0.templateRole.agent
-        },
-        outgoingAgent: session.run.bindings.values.first { $0.source == .current }?.pane?.agent,
-        now: timestamp)
-      // The last main-actor operation before the action starts. A cancel that lands during the
-      // hop to the action's executor can no longer stop it: the action runs to completion (its
-      // writes are the handoff store's own atomic operations) and the result is discarded. The
-      // run log records which of the two happened rather than guessing at cancel time.
-      guard isLive() else {
-        appendLog(
-          "Step '\(stepID)': native action '\(actionID)' not started; the run had moved on.", store: store,
-          runID: runID)
-        return .stop
-      }
-      do {
-        let outputs = try await actionExecutor.execute(actionID: actionID, inputs: inputs, context: context)
-        guard isLive() else {
-          appendLog(
-            "Step '\(stepID)': native action '\(actionID)' finished after the run moved on; result discarded.",
-            store: store, runID: runID)
-          return .stop
-        }
-        await send(.event(runID: runID, .actionCompleted(stepID: stepID, outputs: outputs)))
-      } catch {
-        guard isLive() else {
-          appendLog(
-            "Step '\(stepID)': native action '\(actionID)' failed after the run moved on (\(error)); ignored.",
-            store: store, runID: runID)
-          return .stop
-        }
-        await send(.event(runID: runID, .actionFailed(stepID: stepID, reason: "\(error)")))
-      }
+      guard isLive(), let executionID = session.run.actionExecutionID else { return .stop }
+      await send(
+        .executeAction(runID: runID, stepID: stepID, actionID: actionID, inputs: inputs, executionID: executionID))
+
+    case .yieldControl:
+      await Task.yield()
+      await send(.event(runID: runID, .continueControlFlow))
 
     case .notify(let text):
       runtime.notify(
         session.worktree,
         WorkflowRuntimeNotification(
-          title: "Workflow · \(session.run.definition.name)",
+          title: String(localized: "Workflow · \(session.run.definition.name)"),
           body: text,
-          targetSurfaceID: WorkflowRunNotice.targetSurfaceID(for: session.run)
+          targetSurfaceID: WorkflowRunNotice.targetSurfaceID(for: session.run),
+          workflowRunID: session.run.id
         )
       )
 
@@ -754,12 +831,12 @@ struct WorkflowRunsFeature {
     case .completeActivation(let dispatchID, let summary):
       activation.complete(dispatchID, summary)
 
-    case .persistOutput(let name, let ordinal, let body):
+    case .persistDelivery(let name, let ordinal, let body):
       do {
-        _ = try store.writeOutput(runID: runID, name: name, ordinal: ordinal, body: body)
-        await send(.event(runID: runID, .outputPersisted(ordinal: ordinal)))
+        _ = try store.writeDelivery(runID: runID, name: name, ordinal: ordinal, body: body)
+        await send(.event(runID: runID, .deliveryPersisted(ordinal: ordinal)))
       } catch {
-        await send(.event(runID: runID, .outputPersistFailed(ordinal: ordinal, reason: "\(error)")))
+        await send(.event(runID: runID, .deliveryPersistFailed(ordinal: ordinal, reason: "\(error)")))
       }
 
     case .persist:
@@ -775,6 +852,14 @@ struct WorkflowRunsFeature {
 
     case .finished:
       queue.finish(runID)
+      session.run.context.occupancy?.finish()
+      let storage = store.storage
+      let timestamp = now
+      await Task.detached(priority: .utility) {
+        do { _ = try WorkflowHistory(storage: storage).maintenance(now: timestamp) } catch {
+          Self.logger.warning("Workflow history maintenance failed: \(error)")
+        }
+      }.value
     }
     return .continue
   }
@@ -799,9 +884,9 @@ extension WorkflowRunEffect {
   nonisolated var isRevocable: Bool {
     switch self {
     case .openActivation, .inject, .typeLine, .launch, .runAction, .close: true
-    case .awaitRoleIdle, .cancelRoleWait, .materializeInstruction, .materializeSkill, .notify,
-      .abandonActivation, .completeActivation, .armWatchdog, .disarmWatchdog, .persistOutput, .persist, .log,
-      .finished:
+    case .awaitRoleIdle, .cancelRoleWait, .materializePrompt, .materializeSkill, .notify,
+      .abandonActivation, .completeActivation, .armWatchdog, .disarmWatchdog, .persistDelivery, .persist, .log,
+      .finished, .yieldControl:
       false
     }
   }

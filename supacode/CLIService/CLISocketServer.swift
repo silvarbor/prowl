@@ -2,6 +2,7 @@
 // Unix domain socket server that listens for CLI command requests.
 
 import Foundation
+import ProwlCLIShared
 
 #if canImport(Darwin)
   import Darwin
@@ -13,18 +14,26 @@ private let cliSocketLogger = SupaLogger("CLISocketServer")
 
 @MainActor
 final class CLISocketServer {
-  private static let maximumFrameLength = 32 * 1_024 * 1_024
+  private static let maximumFrameLength = WorkflowSizeLimits.transportFrame
 
   private let router: CLICommandRouter
   private let socketPath: String
   private let lockPath: String
   private let onClientAccepted: (@Sendable () -> Void)?
   private let onPeerMonitorUnavailable: (@Sendable () -> Void)?
+  private let onStatusChanged: (@MainActor (CLIServiceStatus) -> Void)?
   private let duplicatePeerDescriptor: @Sendable (Int32) -> Int32
   private var serverFD: Int32 = -1
   private var lockFD: Int32 = -1
   private var ownsSocket = false
   private var isRunning = false
+  /// Listening, stopped, or why the last `start()` failed (docs-ai 063 D1).
+  private(set) var status: CLIServiceStatus = .stopped {
+    didSet {
+      guard status != oldValue else { return }
+      onStatusChanged?(status)
+    }
+  }
   private let acceptQueue = DispatchQueue(
     label: "com.onevcat.prowl.cli-accept", qos: .userInitiated)
 
@@ -34,6 +43,7 @@ final class CLISocketServer {
     lockPath: String? = nil,
     onClientAccepted: (@Sendable () -> Void)? = nil,
     onPeerMonitorUnavailable: (@Sendable () -> Void)? = nil,
+    onStatusChanged: (@MainActor (CLIServiceStatus) -> Void)? = nil,
     duplicatePeerDescriptor: @escaping @Sendable (Int32) -> Int32 = {
       fcntl($0, F_DUPFD_CLOEXEC, 0)
     }
@@ -43,11 +53,22 @@ final class CLISocketServer {
     self.lockPath = lockPath ?? "\(socketPath).lock"
     self.onClientAccepted = onClientAccepted
     self.onPeerMonitorUnavailable = onPeerMonitorUnavailable
+    self.onStatusChanged = onStatusChanged
     self.duplicatePeerDescriptor = duplicatePeerDescriptor
   }
 
-  /// Start listening for CLI connections.
+  /// Start listening for CLI connections; `status` records the outcome either way.
   func start() throws {
+    do {
+      try startListening()
+      status = .listening(path: socketPath)
+    } catch let error as CLIServiceError {
+      status = .failed(error, path: socketPath)
+      throw error
+    }
+  }
+
+  private func startListening() throws {
     // Ensure parent directory exists (e.g. ~/Library/Application Support/com.onevcat.prowl)
     let parentDir = (socketPath as NSString).deletingLastPathComponent
     try ensureSocketDirectory(at: parentDir)
@@ -134,6 +155,7 @@ final class CLISocketServer {
   /// Stop the server and clean up.
   func stop() {
     isRunning = false
+    status = .stopped
     if serverFD >= 0 {
       close(serverFD)
       serverFD = -1
@@ -177,11 +199,15 @@ final class CLISocketServer {
   private func ensureSocketDirectory(at parentDir: String) throws {
     let fileManager = FileManager.default
     let existed = fileManager.fileExists(atPath: parentDir)
-    try fileManager.createDirectory(
-      atPath: parentDir,
-      withIntermediateDirectories: true,
-      attributes: [.posixPermissions: 0o700]
-    )
+    do {
+      try fileManager.createDirectory(
+        atPath: parentDir,
+        withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700]
+      )
+    } catch {
+      throw CLIServiceError.socketDirectoryUnavailable
+    }
 
     // Avoid chmod'ing arbitrary existing custom parents such as /tmp or $HOME
     // when PROWL_CLI_SOCKET is overridden.
@@ -271,7 +297,7 @@ final class CLISocketServer {
       let encoder = JSONEncoder()
       encoder.outputFormatting = [.sortedKeys]
       let responseData = try encoder.encode(response)
-      guard responseData.count > 0, responseData.count <= Self.maximumFrameLength else { return }
+      guard !responseData.isEmpty, responseData.count <= Self.maximumFrameLength else { return }
 
       var responseLength = UInt32(responseData.count).bigEndian
       try withUnsafeBytes(of: &responseLength) { try Self.fdWrite(fildes: clientFD, buffer: $0) }
@@ -483,7 +509,8 @@ nonisolated final class CLIPeerDisconnectMonitor: @unchecked Sendable {
 
 // MARK: - Errors
 
-enum CLIServiceError: Error, Equatable {
+nonisolated enum CLIServiceError: Error, Equatable, Sendable {
+  case socketDirectoryUnavailable
   case socketCreationFailed
   case socketPathTooLong
   case socketAlreadyOwned

@@ -33,25 +33,33 @@ exposes `ToolbarContent.sharedBackgroundVisibility(_:)` only on macOS 26+. The a
 | Main principal status | `supacode/Features/Repositories/Views/WorktreeDetailView.swift`, `ToolbarStatusView.swift` | One `.principal` status projection. | Correct: display-only content is not an action group. |
 | Normal/Shelf trailing actions | `supacode/Features/Repositories/Views/WorktreeDetailView.swift`, `WorktreeDetailToolbarViews.swift` | Open action group, fixed spacers, Run item, inline custom-command group, overflow item. | Correct: semantic actions retain native toolbar ownership. |
 | Canvas trailing actions | `supacode/Features/Repositories/Views/WorktreeDetailView.swift` | One `.primaryAction` item with a dynamic Run/custom-command `HStack`. | Approved stability exception: changing the number of toolbar items causes NSToolbar insert/remove animation and visible overflow. |
+| Remote Mirror | `supacode/Features/RemoteMirror/RemoteMirrorPaneView.swift` | Navigation Host button with native title/subtitle, principal connection status matching local status styling, primary action group for recovery, display size, history and disconnect. | Native window toolbar; display size is a stateful toggle and disconnect uses a red icon. |
 | Diff window | `supacode/Features/DiffView/DiffWindowContentView.swift` | Navigation sidebar toggle; principal and primary segmented pickers. | Correct native items; no custom glass. |
 | Sidebar | `supacode/Features/Repositories/Views/SidebarListView.swift` | Automatic Add Repository/Workspace item. | Correct single action. |
 | Archived Worktrees | `supacode/Features/Repositories/Views/ArchivedWorktreesDetailView.swift` | Automatic destructive Delete Selected item. | Correct single action. |
 
-`HandoffHudOverlayView`, `CommandPaletteOverlayView`, and terminal tab backgrounds use
-`glassEffect`, but are not window-toolbar content and are deliberately outside this guide.
+`CommandPaletteOverlayView` and terminal tab backgrounds use `glassEffect`, but are not
+window-toolbar content and are deliberately outside this guide. The legacy Handoff HUD and
+dedicated Agents-popover Hand Off action were removed; Handoff now uses the workflow entry.
 
 ## 3. The leading notification/update exception
 
 ### Required visible result
 
 ```
-[ Agents | Quick Launch ]    [ Bell | Update ]
+[ Agents | Quick Launch ]    [ Bell | Workflow History | Remote Mirror | Update ]
 ```
 
 - Agents and Quick Launch remain one native shared-glass group.
 - Bell and update form a second capsule immediately after it.
 - The two capsules are separate.
 - Bell retains its `.orange` unread state and `.secondary` idle state.
+- Workflow History uses `checklist` with the same `.secondary` idle tint.
+- Bell and History share a window-local `ToolbarPopoverCoordinator`. Only one owns
+  presentation; late hover/dismiss callbacks from a replaced panel are ignored.
+- Remote Mirror uses `.secondary` while stopped, muted system blue while listening,
+  and muted system green while at least one pane is mirrored. Its accessible label
+  exposes the same Host status. It shares the window-local hover coordinator.
 - Update retains `Color("ProwlAccent")`.
 
 ### Why it is an exception
@@ -63,8 +71,8 @@ system surface. Therefore `AgentNotificationsToolbarContent` uses exactly one is
 `ToolbarItem` with all of the following:
 
 1. `.sharedBackgroundVisibility(.hidden)` on that `ToolbarItem`;
-2. an `HStack(spacing: 0)` containing the existing
-   `ToolbarNotificationsPopoverButton` and conditional `ToolbarUpdateButton` unchanged;
+2. an `HStack(spacing: 0)` containing `ToolbarNotificationsPopoverButton`, conditional
+   `WorkflowHistoryPopoverButton`, experimental `MirrorHostButton`, and conditional `ToolbarUpdateButton`;
 3. one outer `.glassEffect(.regular.interactive(), in: Capsule())`.
 
 This is an ownership boundary, not a new style system. Do not add a divider, child glass,

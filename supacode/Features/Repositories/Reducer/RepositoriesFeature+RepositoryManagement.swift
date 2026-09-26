@@ -103,10 +103,12 @@ extension RepositoriesFeature {
         failures.map { ($0.rootID, $0.message) },
         uniquingKeysWith: { first, _ in first }
       )
-      let openFailureMessages = invalidRoots.map { "\($0) is not a Git repository." } + openFailures
+      state.gitUnavailableRepositoryIDs = Set(failures.filter(\.isGitUnavailable).map(\.rootID))
+      let invalidRootMessages = invalidRoots.map { String(localized: "\($0) is not a Git repository.") }
+      let openFailureMessages = invalidRootMessages + openFailures
       if !openFailureMessages.isEmpty {
         state.alert = messageAlert(
-          title: "Some folders couldn't be opened",
+          title: String(localized: "Some folders couldn't be opened"),
           message: openFailureMessages.joined(separator: "\n")
         )
       }
@@ -324,6 +326,7 @@ extension RepositoriesFeature {
     case .removeFailedRepository(let repositoryID):
       state.alert = nil
       state.loadFailuresByID.removeValue(forKey: repositoryID)
+      state.gitUnavailableRepositoryIDs.remove(repositoryID)
       state.repositoryRoots.removeAll {
         isSameRepositoryPath($0.standardizedFileURL.path(percentEncoded: false), repositoryID)
       }
@@ -334,6 +337,8 @@ extension RepositoriesFeature {
       let remainingRoots = state.repositoryRoots
       return .merge(
         failedIconCleanup,
+        // Failed roots are absent from the loaded models, so a reload may not emit this delegate.
+        .send(.delegate(.repositoriesChanged(state.repositories))),
         .run { send in
           let loadedEntries = await loadPersistedRepositoryEntries(fallbackRoots: remainingRoots)
           let remainingEntries = loadedEntries.filter { !isSameRepositoryPath($0.path, repositoryID) }
@@ -414,7 +419,7 @@ extension RepositoriesFeature {
     selectionWasRemoved: Bool
   ) -> AlertState<Alert> {
     AlertState {
-      TextState("Some worktrees couldn't be removed")
+      TextState(String(localized: "Some worktrees couldn't be removed"))
     } actions: {
       ButtonState(
         role: .destructive,
@@ -424,7 +429,7 @@ extension RepositoriesFeature {
           selectionWasRemoved: selectionWasRemoved
         )
       ) {
-        TextState("Delete Folder Anyway")
+        TextState(String(localized: "Delete Folder Anyway"))
       }
       ButtonState(
         role: .cancel,
@@ -433,13 +438,17 @@ extension RepositoriesFeature {
           selectionWasRemoved: selectionWasRemoved
         )
       ) {
-        TextState("Keep Folder")
+        TextState(String(localized: "Keep Folder"))
       }
     } message: {
       TextState(
-        "Couldn't unregister worktrees for \(failedRepositoryNames.joined(separator: ", ")). "
-          + "Deleting the workspace folder now would leave those worktrees registered in their "
-          + "source repositories. Delete it anyway?"
+        String(
+          localized: """
+            Couldn't unregister worktrees for \(failedRepositoryNames.joined(separator: ", ")). \
+            Deleting the workspace folder now would leave those worktrees registered in their source \
+            repositories. Delete it anyway?
+            """
+        )
       )
     }
   }

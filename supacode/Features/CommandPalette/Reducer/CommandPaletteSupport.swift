@@ -32,6 +32,10 @@ enum CommandPaletteItemID {
   static let globalRenameBranch = "global.rename-branch"
   static let globalDeleteWorktree = "global.delete-worktree"
 
+  static func editWorkspace(_ repositoryID: Repository.ID) -> CommandPaletteItem.ID {
+    "repo.\(repositoryID).edit-workspace"
+  }
+
   static func openRepositorySettings(_ repositoryID: Repository.ID) -> CommandPaletteItem.ID {
     "repo.\(repositoryID).open-settings"
   }
@@ -40,10 +44,12 @@ enum CommandPaletteItemID {
     command.paletteID
   }
 
-  static let handOff = "handoff.open"
-
   static func launchAgentProfile(_ id: AgentProfile.ID) -> String {
     "agent-profile.launch.\(id.uuidString)"
+  }
+
+  static func runWorkflow(_ key: String) -> String {
+    "workflow.run.\(key)"
   }
 
   static var globalIDs: [CommandPaletteItem.ID] {
@@ -152,6 +158,9 @@ func delegateAction(for kind: CommandPaletteItem.Kind) -> CommandPaletteFeature.
   if let appAction = appDelegateAction(for: kind) {
     return appAction
   }
+  if let agentAction = agentDelegateAction(for: kind) {
+    return agentAction
+  }
   switch kind {
   case .worktreeSelect(let id):
     return .selectWorktree(id)
@@ -167,10 +176,6 @@ func delegateAction(for kind: CommandPaletteItem.Kind) -> CommandPaletteFeature.
     return .openRepositorySettings(repositoryID)
   case .runCustomCommand(let id, _):
     return .runCustomCommand(id)
-  case .handOff:
-    return .handOff
-  case .launchAgentProfile(let profileID):
-    return .launchAgentProfile(profileID)
   case .openPullRequest,
     .openRepositoryOnCodeHost,
     .markPullRequestReady,
@@ -194,6 +199,7 @@ func delegateAction(for kind: CommandPaletteItem.Kind) -> CommandPaletteFeature.
     .newWorktree,
     .openRepository,
     .newWorkspace,
+    .editWorkspace,
     .viewArchivedWorktrees,
     .refreshWorktrees,
     .jumpToLatestUnread,
@@ -216,6 +222,21 @@ func delegateAction(for kind: CommandPaletteItem.Kind) -> CommandPaletteFeature.
     .stopRunScript,
     .renameBranch:
     fatalError("appDelegateAction should handle app-level command palette actions")
+  case .launchAgentProfile, .runWorkflow:
+    fatalError("agentDelegateAction should handle agent-scoped command palette actions")
+  }
+}
+
+/// The agent-scoped kinds, split out to keep `delegateAction`'s switch within the
+/// complexity budget.
+func agentDelegateAction(for kind: CommandPaletteItem.Kind) -> CommandPaletteFeature.Delegate? {
+  switch kind {
+  case .launchAgentProfile(let profileID):
+    return .launchAgentProfile(profileID)
+  case .runWorkflow(let key):
+    return .runWorkflow(key)
+  default:
+    return nil
   }
 }
 
@@ -224,6 +245,9 @@ func appDelegateAction(for kind: CommandPaletteItem.Kind) -> CommandPaletteFeatu
     return delegate
   }
   if let delegate = viewDelegateAction(for: kind) {
+    return delegate
+  }
+  if let delegate = workspaceDelegateAction(for: kind) {
     return delegate
   }
   switch kind {
@@ -235,8 +259,6 @@ func appDelegateAction(for kind: CommandPaletteItem.Kind) -> CommandPaletteFeatu
     return .newWorktree
   case .openRepository:
     return .openRepository
-  case .newWorkspace:
-    return .newWorkspace
   case .viewArchivedWorktrees:
     return .viewArchivedWorktrees
   case .refreshWorktrees:
@@ -251,6 +273,17 @@ func appDelegateAction(for kind: CommandPaletteItem.Kind) -> CommandPaletteFeatu
     return .stopRunScript
   case .renameBranch:
     return .renameBranch
+  default:
+    return nil
+  }
+}
+
+func workspaceDelegateAction(for kind: CommandPaletteItem.Kind) -> CommandPaletteFeature.Delegate? {
+  switch kind {
+  case .newWorkspace:
+    return .newWorkspace
+  case .editWorkspace(let repositoryID):
+    return .editWorkspace(repositoryID)
   default:
     return nil
   }
@@ -351,9 +384,10 @@ func pullRequestDelegateAction(
     .renameBranch,
     .deleteWorktree,
     .openRepositorySettings,
+    .editWorkspace,
     .runCustomCommand,
-    .handOff,
-    .launchAgentProfile:
+    .launchAgentProfile,
+    .runWorkflow:
     return nil
   #if DEBUG
     case .debugTestToast, .debugSimulateUpdateFound, .debugLightDockNotificationDot:
@@ -386,11 +420,77 @@ func ghosttyCommandItems(_ commands: [GhosttyCommand]) -> [CommandPaletteItem] {
   }
 }
 
+private func commandPaletteAppShortcutID(for kind: CommandPaletteItem.Kind) -> String? {
+  coreCommandPaletteAppShortcutID(for: kind)
+    ?? worktreeCommandPaletteAppShortcutID(for: kind)
+    ?? viewCommandPaletteAppShortcutID(for: kind)
+}
+
+private func coreCommandPaletteAppShortcutID(for kind: CommandPaletteItem.Kind) -> String? {
+  switch kind {
+  case .checkForUpdates: AppShortcuts.CommandID.checkForUpdates
+  case .openRepository: AppShortcuts.CommandID.openRepository
+  case .openSettings: AppShortcuts.CommandID.openSettings
+  case .newWorktree: AppShortcuts.CommandID.newWorktree
+  case .viewArchivedWorktrees: AppShortcuts.CommandID.archivedWorktrees
+  case .refreshWorktrees: AppShortcuts.CommandID.refreshWorktrees
+  case .jumpToLatestUnread: AppShortcuts.CommandID.jumpToLatestUnread
+  default: nil
+  }
+}
+
+private func worktreeCommandPaletteAppShortcutID(for kind: CommandPaletteItem.Kind) -> String? {
+  switch kind {
+  case .runScript: AppShortcuts.CommandID.runScript
+  case .stopRunScript: AppShortcuts.CommandID.stopScript
+  case .renameBranch: AppShortcuts.CommandID.renameBranch
+  default: nil
+  }
+}
+
+private func viewCommandPaletteAppShortcutID(for kind: CommandPaletteItem.Kind) -> String? {
+  sidebarCommandPaletteAppShortcutID(for: kind)
+    ?? canvasCommandPaletteAppShortcutID(for: kind)
+    ?? displayCommandPaletteAppShortcutID(for: kind)
+}
+
+private func sidebarCommandPaletteAppShortcutID(for kind: CommandPaletteItem.Kind) -> String? {
+  switch kind {
+  case .toggleLeftSidebar: AppShortcuts.CommandID.toggleLeftSidebar
+  case .toggleActiveAgentsPanel: AppShortcuts.CommandID.toggleActiveAgentsPanel
+  case .toggleCanvas: AppShortcuts.CommandID.toggleCanvas
+  default: nil
+  }
+}
+
+private func canvasCommandPaletteAppShortcutID(for kind: CommandPaletteItem.Kind) -> String? {
+  switch kind {
+  case .expandCanvasCard: AppShortcuts.CommandID.expandCanvasCard
+  case .arrangeCanvasCards: AppShortcuts.CommandID.arrangeCanvasCards
+  case .organizeCanvasCards: AppShortcuts.CommandID.organizeCanvasCards
+  case .tileCanvasCards: AppShortcuts.CommandID.tileCanvasCards
+  case .selectAllCanvasCards: AppShortcuts.CommandID.selectAllCanvasCards
+  default: nil
+  }
+}
+
+private func displayCommandPaletteAppShortcutID(for kind: CommandPaletteItem.Kind) -> String? {
+  switch kind {
+  case .toggleShelf: AppShortcuts.CommandID.toggleShelf
+  case .showDiff: AppShortcuts.CommandID.showDiff
+  case .outgoingChanges: AppShortcuts.CommandID.outgoingChanges
+  case .revealInSidebar: AppShortcuts.CommandID.revealInSidebar
+  default: nil
+  }
+}
+
 extension CommandPaletteItem {
   /// Build a top-level command backed by an `AppShortcuts` hotkey. Defaults to
   /// `defaultSuggestion: true` (since these are the kinds of actions worth
   /// listing when the palette opens with no query) and uses no subtitle (the
   /// hotkey hint and title already do the work).
+  /// `title` is the raw English localization key, retained for bilingual search;
+  /// only the displayed fallback is localized here.
   static func appShortcut(
     id: String,
     title: String,
@@ -399,14 +499,19 @@ extension CommandPaletteItem {
     keywords: [String] = [],
     priorityTier: Int = defaultPriorityTier
   ) -> CommandPaletteItem {
-    CommandPaletteItem(
+    let localizedTitle =
+      commandPaletteAppShortcutID(for: kind)
+      .flatMap(AppShortcuts.binding(for:))?
+      .localizedTitle
+      ?? String(localized: String.LocalizationValue(title))
+    return CommandPaletteItem(
       id: id,
-      title: title,
+      title: localizedTitle,
       subtitle: nil,
       kind: kind,
       category: category,
       defaultSuggestion: true,
-      keywords: keywords,
+      keywords: [title] + keywords,
       priorityTier: priorityTier
     )
   }
@@ -418,11 +523,12 @@ extension CommandPaletteItem {
     let subtitle = command.description.trimmingCharacters(in: .whitespacesAndNewlines)
     return CommandPaletteItem(
       id: CommandPaletteItemID.ghosttyCommand(command),
-      title: command.title,
+      title: String(localized: String.LocalizationValue(command.title)),
       subtitle: subtitle.isEmpty ? nil : subtitle,
       kind: .ghosttyCommand(command.action),
       category: .terminal,
       defaultSuggestion: false,
+      keywords: [command.title],
       priorityTier: CommandPaletteItem.defaultPriorityTier + 100
     )
   }

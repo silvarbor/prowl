@@ -52,8 +52,10 @@ struct SidebarActiveAgentsOverlay: View {
     ActiveAgentsPanel(
       store: store.scope(state: \.activeAgents, action: \.activeAgents),
       rowDisplays: rowDisplays,
+      workflowBadges: state.workflowRoleBadgesBySurfaceID,
       selectedSurfaceID: selectedSurfaceID,
       navigationShortcutHint: shortcutHint,
+      isCommandKeyPressed: commandKeyObserver.isPressed,
       showTabTitles: state.showActiveAgentTabTitles,
       height: panelHeight,
       maximumHeight: maximumPanelHeight,

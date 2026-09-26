@@ -10,7 +10,7 @@ Keep `onevcat/Prowl` close to `supabitapp/supacode` while preserving local custo
 
 ### Version Scheme
 
-Date-based versioning: `YYYY.M.DD` (e.g., `2026.3.18`). Same-day collisions append `.N` suffix (e.g., `2026.3.18.2`). Build number is `YYYYMMDD` integer, incrementing for same-day builds.
+Date-based versioning: `YYYY.M.D` (e.g., `2026.9.6`), without leading zeros in the month or day. Same-day collisions append `.N` suffix (e.g., `2026.9.6.2`). Build number is `YYYYMMDD` integer, incrementing for same-day builds.
 
 ### Sparkle Auto-Update
 
@@ -25,6 +25,12 @@ Each release produces:
 - `Prowl.dmg` — signed, notarized disk image for download
 - `Prowl.app.zip` — signed zip for Sparkle updates
 - `appcast.xml` — Sparkle feed with EdDSA signature
+
+The DMG uses LZMA (`ULMO`). `create-dmg` first produces the Finder layout, then
+`scripts/recompress-dmg.sh` converts the image before signing and notarization.
+Conversion invalidates an existing image signature, so always sign the final image.
+The bundled release CLI has local and debug symbols stripped from its staged copy;
+the SwiftPM executable and its matching dSYM remain available for symbolication.
 
 ## Branch Strategy
 
@@ -73,6 +79,51 @@ make build-app
 
 ## Release Workflow
 
+### Workflow UI release scope
+
+The next public release includes the default-on Workflow UI, action bundles, run history,
+and workflow-only Handoff. The hidden-UI scope applied to v2026.9.6 and is historical.
+Follow the current [workflow release scope](../063-agent-workflows/release-plan.md).
+
+- Launch the candidate without `PROWL_WORKFLOW_UI`: workflow launch, status, history,
+  Settings, and the bundled workflow skill are available. A fresh process with
+  `PROWL_WORKFLOW_UI=0` hides the UI; CLI workflow and skill commands remain available.
+- D3 Handoff acceptance is recorded in [020](../063-agent-workflows/020-handoff-workflow.md).
+  Distinguish its live workflow tests from later retirement UI checks and the receiver-focus
+  amendment's stated evidence limit. D2 adversarial review remains deferred to R3.
+- Advertise workflows and Handoff in this release. Do not present the deferred built-in
+  adversarial review as available.
+- Keep normal signing/notarization, version checks, and runtime contract verification below.
+  Surface these results in maintainer approval before publishing.
+
+### Agent contract release check
+
+Before every public release, before bumping the version or creating a tag, follow the
+[agent contract runbook](../064-agent-completion-signals/agent-contracts-runbook.md).
+Use the owner's existing DeepSeek V4 Flash configuration for compatible runtimes.
+
+- Run `make test-agent-contracts AGENT_CONTRACT_ARGS="--mode verify"` against the release
+  source/resources and installed versions. This composes all eight headless checks, required
+  configuration checks, and supported zero-turn lifecycle checks in one report.
+- Publish that report using `--mode publish --report PATH`, then commit the generated receipt,
+  T0 baseline, and research matrix. Keep the local run directory and Xcode result bundles until
+  publication; reports expire after 24 hours and source/binary/route changes require a rerun.
+  Follow the linked runbook for exact commands and version/matrix checks.
+- Keep headless results separate from interactive permission/lifecycle and workflow E2E.
+  A successful report has `contract_passed: true` and `release_ready: false`. T1's headless
+  scope does not replace D3/D2 workflow acceptance under the [release plan](../063-agent-workflows/release-plan.md).
+- Present a short maintainer-facing status with the release-notes confirmation: passed,
+  failed, blocked, or not run; name incomplete runtimes and link the evidence. An incomplete
+  required check needs resolution or an explicit owner-approved release-scope exception,
+  recorded in the release plan. It must not be silently treated as success.
+- Add targeted Debug workflow E2E for workflow behavior changes and important release
+  acceptance. D3 handoff and D2 review require their own E2E when they ship; T1 does not
+  replace those checks. D3 is in this release; D2 remains deferred to R3.
+
+The `/release` skill surfaces this reminder. Direct invocation of `scripts/release.sh` does
+not currently enforce T1; maintainers running the script must complete this check first.
+These diagnostics belong in the release conversation/evidence, not public release notes.
+
 ### Full Public Release
 
 ```bash
@@ -84,6 +135,11 @@ make build-app
 ```
 
 Or use the `/release` command.
+
+Generate notes with `./scripts/release-notes.sh <VERSION>` before publishing. It uses
+`codex exec` with the local model configuration and writes `build/release-notes.md`.
+Review that file before running the release script. If generation fails, inspect
+`build/release-notes-generation.log`; the script falls back to GitHub auto-notes.
 
 The script handles:
 1. Version bump (date-based) + signed git tag

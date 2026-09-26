@@ -108,7 +108,10 @@ nonisolated private func detectPi(_ content: String) -> AgentRawState {
   let lines = content.split(separator: "\n", omittingEmptySubsequences: false).map {
     $0.trimmingCharacters(in: .whitespaces)
   }
-  return lines.contains(where: isPiWorkingText) || hasPiRunningAsyncSubagentCard(lines)
+  let liveFooterLines = lines.filter { !$0.isEmpty }.suffix(5)
+  return lines.contains(where: isPiWorkingText)
+    || liveFooterLines.contains(where: isPiFramedWorkingFooter)
+    || hasPiRunningAsyncSubagentCard(lines)
     ? .working
     : .idle
 }
@@ -271,12 +274,18 @@ nonisolated private func hasOMPAskPrompt(_ content: String) -> Bool {
 }
 
 nonisolated private func hasOMPWorkingLine(_ content: String) -> Bool {
-  content.split(separator: "\n", omittingEmptySubsequences: false).contains { line in
-    let trimmed = line.trimmingCharacters(in: .whitespaces)
-    return isPiWorkingText(trimmed)
-      || hasOMPInterruptHint(trimmed)
-      || hasLabeledBrailleSpinner(trimmed)
-  }
+  let lines = content.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+    .filter { !$0.isEmpty }
+  return lines.contains { line in
+    isPiWorkingText(line) || hasOMPInterruptHint(line) || hasLabeledBrailleSpinner(line)
+  } || lines.suffix(5).contains(where: hasOMPLeadingEscapeHint)
+}
+
+nonisolated private func hasOMPLeadingEscapeHint(_ line: String) -> Bool {
+  // OMP 18.1.10 puts its theme's Esc symbol before the loader message.
+  let parts = line.split(maxSplits: 1, whereSeparator: \.isWhitespace)
+  guard parts.count == 2, ["󱊷", "⎋", "esc"].contains(String(parts[0])) else { return false }
+  return piWorkingMessages.contains(String(parts[1]))
 }
 
 nonisolated private let piWorkingMessages: Set<String> = ["Working...", "Working…", "Interrupting…"]
@@ -293,6 +302,12 @@ nonisolated private func isPiWorkingText(_ line: String) -> Bool {
   }
   let message = String(line.unicodeScalars.dropFirst()).trimmingCharacters(in: .whitespaces)
   return piWorkingMessages.contains(message)
+}
+
+nonisolated private func isPiFramedWorkingFooter(_ line: String) -> Bool {
+  guard line.hasPrefix("── "), line.hasSuffix("──") else { return false }
+  let content = line.trimmingCharacters(in: CharacterSet(charactersIn: "─ "))
+  return labeledBrailleSpinnerContent(content) == "Working"
 }
 
 nonisolated private func hasOMPInterruptHint(_ line: String) -> Bool {
@@ -378,15 +393,37 @@ nonisolated private func detectOpenCode(_ content: String) -> AgentRawState {
 
 nonisolated private func detectCopilot(_ content: String) -> AgentRawState {
   let lower = content.lowercased()
-  if lower.contains("│ do you want")
+  let lines = lower.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+    .filter { !$0.isEmpty }
+  if hasCopilotSelectionPrompt(lines)
+    || lower.contains("│ do you want")
     || (lower.contains("confirm with") && lower.contains("enter"))
   {
     return .blocked
   }
-  if lower.contains("esc to cancel") {
+  let hasWorkingFooter = lines.suffix(5).contains(where: isCopilotWorkingFooter)
+  if hasWorkingFooter || lower.contains("esc to cancel") {
     return .working
   }
   return .idle
+}
+
+nonisolated private func isCopilotWorkingFooter(_ line: String) -> Bool {
+  // Copilot 1.0.83 uses these frames in its normal and alternate-screen animations.
+  // Streaming response size is optional and appears before the interrupt shortcut.
+  let pattern = #"^[∙∘○◎◉]\s+working(?:\s+·\s+\d+(?:\.\d+)?\s+[kmgt]?i?b)?\s+esc\s+interrupt(?:\s|$)"#
+  return line.range(of: pattern, options: .regularExpression) != nil
+}
+
+nonisolated private func hasCopilotSelectionPrompt(_ lines: [String]) -> Bool {
+  // The trust/permission picker shares "esc to cancel" with the legacy working footer.
+  // Require live dialog chrome so a completed choice in transcript history does not block.
+  guard lines.last?.hasPrefix("╰") == true,
+    lines.suffix(3).contains(where: { $0.contains("enter to select") && $0.contains("esc to cancel") })
+  else { return false }
+  return lines.suffix(16).contains { line in
+    line.range(of: #"^│\s*❯\s*\d+\."#, options: .regularExpression) != nil
+  }
 }
 
 nonisolated private func detectKimi(_ content: String) -> AgentRawState {

@@ -180,10 +180,9 @@ struct WorktreeRowsView: View {
       }
     }
     .onDragSessionUpdated { session in
+      // Data transfer can finish before the drag becomes active on macOS.
       let didEnd =
         if case .ended = session.phase {
-          true
-        } else if case .dataTransferCompleted = session.phase {
           true
         } else {
           false
@@ -462,12 +461,12 @@ struct WorktreeRowsView: View {
       }
     let archiveTitle =
       isBulkSelection
-      ? "Archive Selected Worktrees"
-      : "Archive Worktree"
+      ? String(localized: "Archive Selected Worktrees")
+      : String(localized: "Archive Worktree")
     let deleteTitle =
       isBulkSelection
-      ? "Delete Selected Worktrees (\(deleteShortcut))"
-      : "Delete Worktree (\(deleteShortcut))"
+      ? String(localized: "Delete Selected Worktrees (\(deleteShortcut))")
+      : String(localized: "Delete Worktree (\(deleteShortcut))")
     let tabCount = terminalManager.stateIfExists(for: row.id)?.tabManager.tabs.count ?? 0
     Button("New Terminal Tab") {
       newTerminalTab(for: row)
@@ -604,7 +603,7 @@ struct WorktreeRowsView: View {
 
   private func worktreeName(for row: WorktreeRowModel) -> String {
     if row.isMainWorktree {
-      return "Default"
+      return String(localized: "Default")
     }
     if row.isPending {
       return row.detail

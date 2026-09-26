@@ -156,12 +156,29 @@ final class GhosttySurfaceView: NSView, Identifiable {
   var focused = false
   private var detachedFocusClearTask: Task<Void, Never>?
   var markedText = NSMutableAttributedString()
+  private(set) var lastEditingAt: TimeInterval?
+
+  func recordEditingActivity() {
+    lastEditingAt = ProcessInfo.processInfo.systemUptime
+  }
+
   var keyboardLayoutChangeKeyUpSuppression: KeyboardLayoutChangeKeyUpSuppression?
   var keyTextAccumulator: [String]?
   var cellSize: CGSize = .zero
   private var lastScrollbar: ScrollbarState?
   private var occlusionState = OcclusionState()
   private var lastSurfaceFocus: Bool?
+  /// True between a close that keeps the surface alive for undo and its
+  /// restore or free. While set, the view stays out of every host: a detached
+  /// view must not ask its old scroll wrapper to re-adopt it.
+  private(set) var isPendingClose = false
+  /// The child process has exited, per libghostty's own flag or the
+  /// `show_child_exited` report. Such a surface is not worth keeping for undo:
+  /// there is no running process to bring back.
+  var childProcessHasExited: Bool {
+    if let surface, ghostty_surface_process_exited(surface) { return true }
+    return bridge.state.childExitCode != nil
+  }
   private var eventMonitor: Any?
   private var notificationObservers: [NSObjectProtocol] = []
   var prevPressureStage: Int = 0
@@ -264,6 +281,9 @@ final class GhosttySurfaceView: NSView, Identifiable {
 
   override var acceptsFirstResponder: Bool { true }
 
+  var mirrorGrid: (columns: UInt32, rows: UInt32)?
+  private var commandCString: UnsafeMutablePointer<CChar>?
+
   init(
     runtime: GhosttyRuntime,
     workingDirectory: URL?,
@@ -271,6 +291,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     fontSize: Float32? = nil,
     context: ghostty_surface_context_e,
     environment: [String: String] = [:],
+    command: String? = nil,
     skipsSurfaceCreationForTesting: Bool = false,
     failsSurfaceCreationForTesting: Bool = false,
     defersSurfaceCreation: Bool = false
@@ -282,6 +303,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     self.fontSize = fontSize ?? 0
     self.appliesFontSizeAdjustmentMarker = fontSize != nil
     self.context = context
+    commandCString = command.flatMap { strdup($0) }
     self.skipsSurfaceCreationForTesting = skipsSurfaceCreationForTesting
     self.failsSurfaceCreationForTesting = failsSurfaceCreationForTesting
     if let workingDirectory {
@@ -359,6 +381,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     if let workingDirectoryCString {
       free(workingDirectoryCString)
     }
+    if let commandCString { free(commandCString) }
     if let initialInputCString {
       free(initialInputCString)
     }
@@ -394,7 +417,25 @@ final class GhosttySurfaceView: NSView, Identifiable {
     return true
   }
 
+  /// Takes the surface out of the view tree without freeing it, so a close can
+  /// be undone. The renderer pauses (occluding needs no hierarchy) and the
+  /// process keeps running until `closeSurface()` or `resumeFromPendingClose()`.
+  func suspendForPendingClose() {
+    isPendingClose = true
+    focusDidChange(false)
+    setOcclusion(false)
+    scrollWrapper = nil
+    removeFromSuperview()
+  }
+
+  /// Lets a host adopt the view again after an undo; occlusion is re-applied by
+  /// the host's normal activity sync once the view is attached.
+  func resumeFromPendingClose() {
+    isPendingClose = false
+  }
+
   func closeSurface() {
+    isPendingClose = false
     clearNotificationObservers()
     if let surface {
       if let surfaceRef {
@@ -611,6 +652,18 @@ final class GhosttySurfaceView: NSView, Identifiable {
   func updateSurfaceSize() {
     resumeDeferredOcclusionIfNeeded()
     guard let surface else { return }
+    if let grid = mirrorGrid {
+      let size = ghostty_surface_size(surface)
+      if size.cell_width_px > 0, size.cell_height_px > 0 {
+        // set_size includes padding and fractional-cell space; preserve that inset
+        // when changing the grid instead of shrinking the replica by a row/column.
+        let extraWidth = size.width_px - min(size.width_px, UInt32(size.columns) * size.cell_width_px)
+        let extraHeight = size.height_px - min(size.height_px, UInt32(size.rows) * size.cell_height_px)
+        ghostty_surface_set_size(
+          surface, grid.columns * size.cell_width_px + extraWidth, grid.rows * size.cell_height_px + extraHeight)
+      }
+      return
+    }
     // When pinnedSize is set (canvas mode), convertToBacking() includes the
     // .scaleEffect() layer transform, producing scale-dependent backing sizes.
     // Use the pinned size with the window's raw backing scale factor instead.
@@ -698,6 +751,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     config.font_size = fontSize
     config.working_directory = workingDirectoryCString.map { UnsafePointer($0) }
     config.initial_input = initialInputCString.map { UnsafePointer($0) }
+    config.command = commandCString.map { UnsafePointer($0) }
     config.context = context
     if let envVarEntries, envVarCount > 0 {
       config.env_vars = envVarEntries
@@ -785,7 +839,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
     // tree and pause Ghostty's renderer. Invalidate the applied cache so the
     // currently desired occlusion value is sent again after reattachment.
     _ = occlusionState.invalidateForAttachmentChange()
-    if superview == nil {
+    if superview == nil, !isPendingClose {
       DispatchQueue.main.async { [weak self] in
         self?.scrollWrapper?.ensureSurfaceAttached()
       }

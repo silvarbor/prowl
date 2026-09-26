@@ -10,6 +10,9 @@ nonisolated struct UserGlobalSettings: Codable, Equatable, Sendable {
   var disabledWorkflowIDs: [String]
   /// Remembered `launch` role bindings (dsl-spec §3): one profile per requirements-digest key.
   var workflowBindings: [WorkflowRememberedBinding]
+  /// Per-workflow bind-mode overrides (docs-ai 063 C2): "Don't ask again" writes `auto`, D1's
+  /// Settings control drives the same value; an absent key follows the YAML `bind` declaration.
+  var workflowBindModeOverrides: [WorkflowBindModeOverride]
 
   static let `default` = UserGlobalSettings(customCommands: [])
 
@@ -19,6 +22,7 @@ nonisolated struct UserGlobalSettings: Codable, Equatable, Sendable {
     case didSeedAgentProfiles
     case disabledWorkflowIDs
     case workflowBindings
+    case workflowBindModeOverrides
   }
 
   init(
@@ -26,13 +30,15 @@ nonisolated struct UserGlobalSettings: Codable, Equatable, Sendable {
     agentProfiles: [AgentProfile] = [],
     didSeedAgentProfiles: Bool = false,
     disabledWorkflowIDs: [String] = [],
-    workflowBindings: [WorkflowRememberedBinding] = []
+    workflowBindings: [WorkflowRememberedBinding] = [],
+    workflowBindModeOverrides: [WorkflowBindModeOverride] = []
   ) {
     self.customCommands = UserCustomCommand.normalizedCommands(customCommands)
     self.agentProfiles = AgentProfile.normalizedProfiles(agentProfiles)
     self.didSeedAgentProfiles = didSeedAgentProfiles
     self.disabledWorkflowIDs = Self.normalizedWorkflowIDs(disabledWorkflowIDs)
     self.workflowBindings = WorkflowRememberedBinding.normalized(workflowBindings)
+    self.workflowBindModeOverrides = WorkflowBindModeOverride.normalized(workflowBindModeOverrides)
   }
 
   init(from decoder: Decoder) throws {
@@ -46,6 +52,9 @@ nonisolated struct UserGlobalSettings: Codable, Equatable, Sendable {
     disabledWorkflowIDs = Self.normalizedWorkflowIDs(disabled)
     let bindings = try container.decodeIfPresent([WorkflowRememberedBinding].self, forKey: .workflowBindings) ?? []
     workflowBindings = WorkflowRememberedBinding.normalized(bindings)
+    let modeOverrides =
+      try container.decodeIfPresent([WorkflowBindModeOverride].self, forKey: .workflowBindModeOverrides) ?? []
+    workflowBindModeOverrides = WorkflowBindModeOverride.normalized(modeOverrides)
   }
 
   func normalized() -> UserGlobalSettings {
@@ -54,7 +63,8 @@ nonisolated struct UserGlobalSettings: Codable, Equatable, Sendable {
       agentProfiles: agentProfiles,
       didSeedAgentProfiles: didSeedAgentProfiles,
       disabledWorkflowIDs: disabledWorkflowIDs,
-      workflowBindings: workflowBindings
+      workflowBindings: workflowBindings,
+      workflowBindModeOverrides: workflowBindModeOverrides
     )
   }
 
@@ -67,9 +77,56 @@ nonisolated struct UserGlobalSettings: Codable, Equatable, Sendable {
       workflowBindings.filter { $0.key != key } + [WorkflowRememberedBinding(key: key, profileID: profileID)])
   }
 
+  /// Drops a remembered binding so the next start resolves the role afresh (Settings "Ask at start").
+  mutating func forget(workflowBinding key: WorkflowBindingMemoryKey) {
+    workflowBindings = WorkflowRememberedBinding.normalized(workflowBindings.filter { $0.key != key })
+  }
+
+  /// The user's bind-mode override for a `<scope>/<id>` workflow key; nil follows the YAML `bind`.
+  func workflowBindMode(for workflowKey: String) -> WorkflowBindModeOverride.Mode? {
+    workflowBindModeOverrides.first { $0.workflowKey == workflowKey }?.mode
+  }
+
+  mutating func setWorkflowBindMode(_ mode: WorkflowBindModeOverride.Mode?, for workflowKey: String) {
+    let kept = workflowBindModeOverrides.filter { $0.workflowKey != workflowKey }
+    guard let mode else {
+      workflowBindModeOverrides = WorkflowBindModeOverride.normalized(kept)
+      return
+    }
+    workflowBindModeOverrides = WorkflowBindModeOverride.normalized(
+      kept + [WorkflowBindModeOverride(workflowKey: workflowKey, mode: mode)])
+  }
+
   /// Stable order, no duplicates: the set semantics of a persisted list.
   static func normalizedWorkflowIDs(_ ids: [String]) -> [String] {
     Array(Set(ids)).sorted()
+  }
+}
+
+/// A per-workflow bind-mode override (docs-ai 063 C2), keyed like `disabledWorkflowIDs`.
+nonisolated struct WorkflowBindModeOverride: Codable, Equatable, Sendable {
+  enum Mode: String, Codable, Sendable {
+    case ask
+    case auto
+  }
+
+  /// `<scope>/<id>` of the workflow definition.
+  let workflowKey: String
+  let mode: Mode
+
+  enum CodingKeys: String, CodingKey {
+    case workflowKey = "workflow_key"
+    case mode
+  }
+
+  /// One entry per key (last write wins), in a stable order.
+  static func normalized(_ overrides: [WorkflowBindModeOverride]) -> [WorkflowBindModeOverride] {
+    var seen: Set<String> = []
+    var unique: [WorkflowBindModeOverride] = []
+    for override in overrides.reversed() where seen.insert(override.workflowKey).inserted {
+      unique.append(override)
+    }
+    return unique.sorted { $0.workflowKey < $1.workflowKey }
   }
 }
 

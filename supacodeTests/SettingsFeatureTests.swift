@@ -2,6 +2,7 @@ import ComposableArchitecture
 import CustomDump
 import DependenciesTestSupport
 import Foundation
+import ProwlCLIShared
 import Sharing
 import Testing
 
@@ -51,6 +52,39 @@ struct SettingsFeatureTests {
       $0.promptForWorktreeCreation = true
     }
     await store.receive(\.delegate.settingsChanged)
+  }
+
+  @Test(.dependencies) func selectingWorkflowsOwnsThePageStateAndLeavingTearsItDown() async {
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    }
+
+    await store.send(.setSelection(.workflows)) {
+      $0.selection = .workflows
+      $0.workflows = .init()
+    }
+    await store.send(.setSelection(.commandLineTool)) {
+      $0.selection = .commandLineTool
+      $0.workflows = nil
+      $0.agentSkills = .init()
+    }
+    await store.send(.setSelection(.workflows)) {
+      $0.selection = .workflows
+      $0.workflows = .init()
+      $0.agentSkills = nil
+    }
+  }
+
+  @Test(.dependencies) func refreshCLIServiceStatusReadsTheServer() async {
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    } withDependencies: {
+      $0[CLIServiceStatusClient.self].current = { .failed(.socketAlreadyOwned, path: "/tmp/cli.sock") }
+    }
+
+    await store.send(.refreshCLIServiceStatus) {
+      $0.cliServiceStatus = .failed(.socketAlreadyOwned, path: "/tmp/cli.sock")
+    }
   }
 
   @Test(.dependencies) func savesUpdatesChanges() async {
@@ -212,6 +246,34 @@ struct SettingsFeatureTests {
     await store.send(.setSelection(.general)) {
       $0.selection = .general
     }
+  }
+
+  @Test(.dependencies) func showShortcutNavigatesToAndTargetsEditableCommand() async {
+    var state = SettingsFeature.State()
+    state.selection = .notifications
+    let commandID = AppShortcuts.CommandID.toggleAgentIsland
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    }
+
+    await store.send(.showShortcutButtonTapped(commandID: commandID)) {
+      $0.shortcutNavigationTargetCommandID = commandID
+    }
+    await store.receive(\.setSelection) {
+      $0.selection = .shortcuts
+    }
+    await store.send(.shortcutNavigationTargetConsumed) {
+      $0.shortcutNavigationTargetCommandID = nil
+    }
+  }
+
+  @Test(.dependencies) func showShortcutIgnoresFixedAndUnknownCommands() async {
+    let store = TestStore(initialState: SettingsFeature.State()) {
+      SettingsFeature()
+    }
+
+    await store.send(.showShortcutButtonTapped(commandID: AppShortcuts.CommandID.quitApplication))
+    await store.send(.showShortcutButtonTapped(commandID: "unknown_command"))
   }
 
   @Test(.dependencies) func loadingSettingsDoesNotResetSelection() async {
@@ -614,6 +676,82 @@ struct SettingsFeatureTests {
     #expect(settingsFile.global.showActiveAgentStatusInShelf == false)
   }
 
+  @Test(.dependencies) func emptyIslandVisibilitySettingPersistsBothDirections() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = .default }
+    let store = TestStore(initialState: SettingsFeature.State(settings: .default)) {
+      SettingsFeature()
+    }
+    #expect(!store.state.agentIslandOnlyShowWithAgents)
+    for enabled in [true, false] {
+      await store.send(.binding(.set(\.agentIslandOnlyShowWithAgents, enabled))) {
+        $0.agentIslandOnlyShowWithAgents = enabled
+      }
+      await store.receive(\.delegate.settingsChanged)
+      #expect(settingsFile.global.agentIslandOnlyShowWithAgents == enabled)
+    }
+  }
+
+  @Test(.dependencies) func agentIslandSettingsPersistChanges() async {
+    let initialSettings = GlobalSettings.default
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = initialSettings }
+
+    let store = TestStore(initialState: SettingsFeature.State(settings: initialSettings)) {
+      SettingsFeature()
+    }
+
+    await store.send(.binding(.set(\.agentIslandEnabled, true))) {
+      $0.agentIslandEnabled = true
+    }
+    await store.receive(\.delegate.settingsChanged)
+    await store.send(
+      .setAgentIslandFloatingPosition(displayID: "display-uuid", normalizedPosition: 0.25)
+    ) {
+      $0.agentIslandFloatingPositions.setNormalizedPosition(0.25, for: "display-uuid")
+    }
+    await store.receive(\.delegate.settingsChanged)
+    await store.send(.setAgentIslandSilentOpacity(0.6)) {
+      $0.agentIslandSilentOpacity = 0.6
+    }
+    await store.receive(\.delegate.settingsChanged)
+    await store.send(
+      .setAgentIslandDisplayPreference(.display(id: "display-uuid", name: "Studio Display"))
+    ) {
+      $0.agentIslandDisplayPreference = .display(id: "display-uuid", name: "Studio Display")
+    }
+    await store.receive(\.delegate.settingsChanged)
+
+    #expect(settingsFile.global.agentIslandEnabled)
+    #expect(
+      settingsFile.global.agentIslandDisplayPreference
+        == .display(id: "display-uuid", name: "Studio Display")
+    )
+    #expect(
+      settingsFile.global.agentIslandFloatingPositions.normalizedPosition(for: "display-uuid")
+        == 0.25
+    )
+    #expect(settingsFile.global.agentIslandSilentOpacity == 0.6)
+  }
+
+  @Test(.dependencies) func resettingAgentIslandFloatingPositionsPersists() async {
+    var initialSettings = GlobalSettings.default
+    initialSettings.agentIslandFloatingPositions.setNormalizedPosition(0.25, for: "display-uuid")
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global = initialSettings }
+
+    let store = TestStore(initialState: SettingsFeature.State(settings: initialSettings)) {
+      SettingsFeature()
+    }
+
+    await store.send(.resetIslandFloatingPositionsTapped) {
+      $0.agentIslandFloatingPositions = .init()
+    }
+    await store.receive(\.delegate.settingsChanged)
+
+    #expect(settingsFile.global.agentIslandFloatingPositions.isEmpty)
+  }
+
   @Test(.dependencies) func disablingAnalyticsResetsClient() async {
     var initialSettings = GlobalSettings.default
     initialSettings.analyticsEnabled = true
@@ -738,5 +876,115 @@ struct SettingsFeatureTests {
       }
     }
     await store.receive(\.delegate.cliInstallCompleted)
+  }
+
+  @Test(.dependencies) func settingsLoadedLeavesTheLanguageAlone() async {
+    // The language is not part of settings.json, so a settings load must not touch the
+    // choice or the launch snapshot.
+    let store = TestStore(
+      initialState: SettingsFeature.State(appLanguage: .zhHans, effectiveLanguageAtLaunch: .zhHans)
+    ) {
+      SettingsFeature()
+    }
+
+    await store.send(.settingsLoaded(.default))
+    await store.receive(\.delegate.settingsChanged)
+
+    #expect(store.state.appLanguage == .zhHans)
+    #expect(store.state.effectiveLanguageAtLaunch == .zhHans)
+  }
+
+  @Test(.dependencies) func setAppLanguageWritesTheChoice() async {
+    let written = LockIsolated<[AppLanguage]>([])
+    let store = TestStore(initialState: SettingsFeature.State(effectiveLanguageAtLaunch: .english)) {
+      SettingsFeature()
+    } withDependencies: {
+      $0.analyticsClient.capture = { _, _ in }
+      $0.appLanguage.set = { language in written.withValue { $0.append(language) } }
+    }
+
+    await store.send(.setAppLanguage(.zhHans)) {
+      $0.appLanguage = .zhHans
+    }
+    await store.finish()
+
+    #expect(written.value == [.zhHans])
+  }
+
+  @Test(.dependencies) func setAppLanguageIgnoresTheCurrentChoice() async {
+    let written = LockIsolated<[AppLanguage]>([])
+    let store = TestStore(initialState: SettingsFeature.State(appLanguage: .english)) {
+      SettingsFeature()
+    } withDependencies: {
+      $0.appLanguage.set = { language in written.withValue { $0.append(language) } }
+    }
+
+    await store.send(.setAppLanguage(.english))
+    await store.finish()
+
+    #expect(written.value.isEmpty)
+  }
+
+  @Test(.dependencies) func systemToMatchingExplicitLanguageShowsNoPendingRelaunch() async {
+    // The system already resolved to Chinese this launch; picking explicit
+    // Chinese changes nothing next launch, so no restart hint.
+    var state = SettingsFeature.State(effectiveLanguageAtLaunch: .zhHans)
+    state.systemPreferredLanguages = ["zh-Hans"]
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    } withDependencies: {
+      $0.analyticsClient.capture = { _, _ in }
+      $0.appLanguage.set = { _ in }
+    }
+
+    #expect(!store.state.languageChangePending)
+    await store.send(.setAppLanguage(.zhHans)) {
+      $0.appLanguage = .zhHans
+    }
+    #expect(!store.state.languageChangePending)
+  }
+
+  @Test(.dependencies) func differentResolvedLanguageShowsPendingRelaunch() async {
+    var state = SettingsFeature.State(effectiveLanguageAtLaunch: .english)
+    state.systemPreferredLanguages = ["en"]
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    } withDependencies: {
+      $0.analyticsClient.capture = { _, _ in }
+      $0.appLanguage.set = { _ in }
+    }
+
+    #expect(!store.state.languageChangePending)
+    await store.send(.setAppLanguage(.zhHans)) {
+      $0.appLanguage = .zhHans
+    }
+    #expect(store.state.languageChangePending)
+  }
+
+  @Test(.dependencies) func refreshReadsAChoiceMadeInSystemSettings() async {
+    // The user picked Chinese for Prowl in System Settings while the app was in the background.
+    var state = SettingsFeature.State(effectiveLanguageAtLaunch: .english)
+    state.systemPreferredLanguages = ["en"]
+    let store = TestStore(initialState: state) {
+      SettingsFeature()
+    } withDependencies: {
+      $0.appLanguage.current = { .zhHans }
+      $0.appLanguage.systemLanguages = { ["en", "zh-Hans"] }
+    }
+
+    await store.send(.refreshAppLanguage) {
+      $0.appLanguage = .zhHans
+      $0.systemPreferredLanguages = ["en", "zh-Hans"]
+    }
+    #expect(store.state.languageChangePending)
+  }
+
+  @Test func pendingPredictionIgnoresAnyCommandLineOverride() {
+    // This launch ran in Chinese via a temporary `-AppleLanguages zh-Hans`
+    // override; the choice still resolves to English for the next normal
+    // launch, so the hint compares against that, not the override.
+    var state = SettingsFeature.State(effectiveLanguageAtLaunch: .zhHans)
+    state.systemPreferredLanguages = ["en"]
+    #expect(state.languageChangePending)
   }
 }

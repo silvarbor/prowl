@@ -13,18 +13,18 @@ struct SidebarListView: View {
     var title: String {
       switch self {
       case .expandAll:
-        return "Expand All"
+        return String(localized: "Expand All")
       case .expandActive:
-        return "Expand Active"
+        return String(localized: "Expand Active")
       case .collapseAll:
-        return "Collapse All"
+        return String(localized: "Collapse All")
       }
     }
 
     var helpText: String {
       switch self {
       case .expandActive:
-        return "Expand repositories with open tabs"
+        return String(localized: "Expand repositories with open tabs")
       case .expandAll, .collapseAll:
         return title
       }
@@ -91,6 +91,7 @@ struct SidebarListView: View {
         // Avoid LazyVStack here: after collapsing and expanding large sections,
         // SwiftUI's lazy placement cache can spin on the main thread while scrolling.
         VStack(spacing: 0) {
+          RemoteMirrorSidebar()
           // When there are no repositories the sidebar stays empty — the
           // detail pane's `EmptyStateView` ("Open a repository or folder")
           // carries the prompt and the Add button instead.
@@ -121,11 +122,8 @@ struct SidebarListView: View {
         sidebarHeight = newHeight
       }
       .onDragSessionUpdated { session in
+        // Data transfer can finish before the drag becomes active on macOS.
         if case .ended = session.phase {
-          endSidebarDrag()
-          return
-        }
-        if case .dataTransferCompleted = session.phase {
           endSidebarDrag()
         }
       }
@@ -259,7 +257,7 @@ struct SidebarListView: View {
   private func topSegmentButton(
     _ segment: TopSegment,
     systemImage: String,
-    title: String,
+    title: LocalizedStringResource,
     accessibilityIdentifier: String,
     shortcutCommandID: String? = nil,
     requiresRepository: Bool = false
@@ -267,13 +265,19 @@ struct SidebarListView: View {
     let isSelected = store.topSegment == segment
     // Canvas and Shelf need at least one repository; with none, only Normal
     // (Default) is available, so disable them.
-    let isDisabled = requiresRepository && store.repositories.isEmpty
+    let isDisabled =
+      segment == .shelf
+      ? !store.canEnterShelf
+      : requiresRepository && store.repositories.isEmpty
+    let localizedTitle = String(localized: title)
     let helpText =
       isDisabled
-      ? "\(title) — add a repository first"
+      ? (segment == .shelf
+        ? String(localized: "Shelf — open a worktree or folder first")
+        : String(localized: "\(localizedTitle) — add a repository first"))
       : shortcutCommandID.map {
         AppShortcuts.helpText(title: title, commandID: $0, in: resolvedKeybindings)
-      } ?? title
+      } ?? localizedTitle
     return Button {
       store.send(.setTopSegment(segment))
     } label: {
@@ -295,7 +299,7 @@ struct SidebarListView: View {
     .buttonStyle(.plain)
     .disabled(isDisabled)
     .help(helpText)
-    .accessibilityLabel(Text(title))
+    .accessibilityLabel(Text(localizedTitle))
     .accessibilityIdentifier(accessibilityIdentifier)
     .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
   }
@@ -375,10 +379,9 @@ struct SidebarListView: View {
         FailedRepositoryRow(
           name: model.name,
           path: model.path,
-          showFailure: {
-            let message = "\(model.path)\n\n\(model.failureMessage)"
-            store.send(.presentAlert(title: "Unable to load \(model.name)", message: message))
-          },
+          isGitUnavailable: model.isGitUnavailable,
+          retry: { store.send(.refreshWorktrees) },
+          showFailure: { store.send(.showRepositoryLoadFailure(model.id)) },
           removeRepository: {
             store.send(.repositoryManagement(.removeFailedRepository(model.id)))
           }

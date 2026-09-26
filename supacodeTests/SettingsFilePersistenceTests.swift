@@ -7,6 +7,44 @@ import Testing
 @testable import supacode
 
 struct SettingsFilePersistenceTests {
+  @Test func legacyGlobalSettingsDefaultsAgentIslandFields() throws {
+    let encoded = try JSONEncoder().encode(GlobalSettings.default)
+    var dictionary = try #require(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    dictionary.removeValue(forKey: "agentIslandOnlyShowWithAgents")
+    dictionary.removeValue(forKey: "agentIslandEnabled")
+    dictionary.removeValue(forKey: "agentIslandDisplayPreference")
+    dictionary.removeValue(forKey: "agentIslandFloatingPositions")
+    dictionary.removeValue(forKey: "agentIslandSilentOpacity")
+
+    let legacyData = try JSONSerialization.data(withJSONObject: dictionary)
+    let decoded = try JSONDecoder().decode(GlobalSettings.self, from: legacyData)
+
+    #expect(!decoded.agentIslandOnlyShowWithAgents)
+    #expect(!decoded.agentIslandEnabled)
+    #expect(decoded.agentIslandDisplayPreference == .automatic)
+    #expect(decoded.agentIslandFloatingPositions.isEmpty)
+    #expect(decoded.agentIslandSilentOpacity == AgentIslandOpacityPolicy.defaultSilentOpacity)
+  }
+
+  @Test func agentIslandDisplayPreferenceRoundTripsStableDisplayID() throws {
+    var settings = GlobalSettings.default
+    settings.agentIslandOnlyShowWithAgents = true
+    settings.agentIslandEnabled = true
+    settings.agentIslandDisplayPreference = .display(id: "display-uuid", name: "Studio Display")
+    settings.agentIslandFloatingPositions.setNormalizedPosition(0.25, for: "display-uuid")
+    settings.agentIslandSilentOpacity = 0.6
+
+    let data = try JSONEncoder().encode(settings)
+    let decoded = try JSONDecoder().decode(GlobalSettings.self, from: data)
+
+    #expect(decoded.agentIslandOnlyShowWithAgents)
+    #expect(decoded.agentIslandEnabled)
+    #expect(
+      decoded.agentIslandDisplayPreference == .display(id: "display-uuid", name: "Studio Display"))
+    #expect(decoded.agentIslandFloatingPositions.normalizedPosition(for: "display-uuid") == 0.25)
+    #expect(decoded.agentIslandSilentOpacity == 0.6)
+  }
+
   @Test(.dependencies) func loadWritesDefaultsWhenMissing() throws {
     let storage = SettingsTestStorage()
 
@@ -374,6 +412,25 @@ struct SettingsFilePersistenceTests {
     #expect(settings.global.appearanceMode == .dark)
     #expect(settings.global.systemNotificationsEnabled == true)
     #expect(settings.global.updatesAutomaticallyDownloadUpdates == true)
+  }
+
+  // The language lives in the per-app `AppleLanguages` default, not in settings.json.
+  @Test func settingsFileDoesNotCarryTheAppLanguage() throws {
+    let encoded = try JSONEncoder().encode(GlobalSettings.default)
+    let globalDict = try #require(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+
+    #expect(globalDict["appLanguage"] == nil)
+  }
+
+  @Test func fileFromABuildThatStoredTheLanguageStillDecodes() throws {
+    let encoded = try JSONEncoder().encode(GlobalSettings.default)
+    var globalDict = try #require(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    globalDict["appLanguage"] = "zh-Hans"
+
+    let data = try JSONSerialization.data(withJSONObject: globalDict)
+    let decoded = try JSONDecoder().decode(GlobalSettings.self, from: data)
+
+    #expect(decoded == .default)
   }
 }
 

@@ -1,4 +1,5 @@
 import Foundation
+import ProwlCLIShared
 
 #if canImport(Darwin)
   import Darwin
@@ -126,6 +127,10 @@ final class CodexForwardingRecordStore {
   func retire(_ record: CodexForwardingRecord) {
     retired[record.locator] = now().addingTimeInterval(retirementGrace)
     scheduleCleanupIfNeeded()
+  }
+
+  func isRetired(_ record: CodexForwardingRecord) -> Bool {
+    retired[record.locator] != nil
   }
 
   func cleanupRetired() {

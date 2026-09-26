@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import Foundation
+import ProwlCLIShared
 
 /// Settings → Agents → CLI & Skills → Agent Skills (docs-ai 065): the `user`-audience
 /// skills bundled in this app, one status chip per detected user target, and one explicit
@@ -118,9 +119,9 @@ struct AgentSkillsFeature {
       case .linkChangeCompleted(.failure(let error)):
         reload(&state)
         state.alert = AlertState {
-          TextState("Agent Skills Error")
+          TextState(String(localized: "Agent Skills Error"))
         } actions: {
-          ButtonState(action: .dismiss) { TextState("OK") }
+          ButtonState(action: .dismiss) { TextState(String(localized: "OK")) }
         } message: {
           TextState(error.message)
         }

@@ -10,15 +10,17 @@ struct WorkflowCommand: ParsableCommand {
     commandName: "workflow",
     abstract: "Discover, validate, and run Agent Workflow definitions.",
     discussion: """
-      Definitions are YAML files (`prowl.workflow/v1`) found in the app bundle, ~/.prowl/workflows, \
+      Definitions are .pwlworkflow bundles (`prowl.workflow/v1`) found in the app bundle, ~/.prowl/workflows, \
       and <repo>/.prowl/workflows. `validate` and `schema` work with Prowl closed; every other \
       subcommand needs the running app.
       """,
     subcommands: [
       WorkflowListCommand.self,
+      WorkflowReadCommand.self,
       WorkflowRunCommand.self,
+      WorkflowTestActionCommand.self,
       WorkflowStatusCommand.self,
-      WorkflowDoneCommand.self,
+      WorkflowDeliverCommand.self,
       WorkflowCancelCommand.self,
       WorkflowValidateCommand.self,
       WorkflowSchemaCommand.self,
@@ -103,14 +105,14 @@ struct WorkflowStatusCommand: ParsableCommand {
   }
 }
 
-struct WorkflowDoneCommand: ParsableCommand {
+struct WorkflowDeliverCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
-    commandName: "done",
+    commandName: "deliver",
     abstract: "Deliver one workflow step's output from stdin or a UTF-8 file."
   )
 
   /// The body always travels with the request; the hard cap of dsl-spec §5 (`OUTPUT_TOO_LARGE`).
-  static let maximumBodyBytes = 4 * 1024 * 1024
+  static let maximumBodyBytes = WorkflowSizeLimits.payload
 
   @Argument(help: "'-' reads the output body from piped stdin (or use --file).") var input: String?
   @Option(name: .long, help: "Read the UTF-8 output body from this file instead of stdin.")
@@ -132,7 +134,7 @@ struct WorkflowDoneCommand: ParsableCommand {
         output: options.outputMode,
         command: .workflow(
           WorkflowInput(
-            action: .done,
+            action: .deliver,
             runID: runID,
             stepID: step,
             body: body,
@@ -180,7 +182,7 @@ struct WorkflowDoneCommand: ParsableCommand {
       guard isatty(fileno(stdin)) == 0 else {
         throw ExitError(
           code: CLIErrorCode.emptyInput,
-          message: "workflow done - reads the output body from piped stdin.")
+          message: "workflow deliver - reads the output body from piped stdin.")
       }
       data = (try? FileHandle.standardInput.readToEnd()) ?? Data()
     }
@@ -233,7 +235,7 @@ struct WorkflowValidateCommand: ParsableCommand {
     }
   }
 
-  @Argument(help: "Path to a workflow YAML file.") var file: String
+  @Argument(help: "Path to a .pwlworkflow bundle directory.") var file: String
   @Option(name: .long, help: "Source scope (bundle, user, repo); inferred when omitted.") var scope: Scope?
   @OptionGroup var options: GlobalOptions
 
@@ -270,9 +272,10 @@ struct WorkflowValidateCommand: ParsableCommand {
 struct WorkflowSchemaCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "schema",
-    abstract: "Print the JSON Schema of a workflow file (for authoring agents and editors)."
+    abstract: "Print the JSON Schema of a workflow bundle (for authoring agents and editors)."
   )
 
+  @Flag(help: "Print the local script action manifest schema.") var action = false
   @OptionGroup var options: GlobalOptions
 
   mutating func run() throws {
@@ -281,7 +284,7 @@ struct WorkflowSchemaCommand: ParsableCommand {
       colorEnabled: options.colorEnabled
     ) {
       try WorkflowCommandRunner.render(
-        .schema(try WorkflowCommandExecutor.current().schema()), options: options)
+        .schema(try WorkflowCommandExecutor.current().schema(action: action)), options: options)
     }
   }
 }
@@ -306,5 +309,49 @@ enum WorkflowCommandRunner {
       data: try RawJSON(encoding: payload)
     )
     OutputRenderer.render(response, mode: options.outputMode)
+  }
+}
+
+
+struct WorkflowTestActionCommand: ParsableCommand {
+  static let configuration = CommandConfiguration(commandName: "test-action",
+    abstract: "Run one action from an installed workflow bundle with the same native approval policy.")
+
+  @Argument(help: "Workflow id or unique name.") var workflow: String
+  @Argument(help: "builtin:collect-worktree-context or local:<action-id>.") var action: String
+  @Argument(help: "Source worktree or pane.") var source: String?
+  @Option(name: .long, help: "JSON object supplied to the action.") var inputJSON = "{}"
+  @OptionGroup var selector: SelectorOptions
+  @OptionGroup var options: GlobalOptions
+
+  mutating func run() throws {
+    guard let data = inputJSON.data(using: .utf8), data.count <= WorkflowSizeLimits.payload,
+      let value = try? JSONDecoder().decode(WorkflowJSONValue.self, from: data), case .object(let inputs) = value
+    else { throw ValidationError("--input-json must be a JSON object of at most 16 MiB.") }
+    try WorkflowJSON.validate(value)
+    try WorkflowSocketCommand.execute(options: options) {
+      CommandEnvelope(output: options.outputMode, command: .workflow(WorkflowInput(action: .run,
+        target: try selector.resolve(positionalTarget: source), workflow: workflow,
+        testAction: action, actionInputs: inputs)))
+    }
+  }
+}
+
+struct WorkflowReadCommand: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "read", abstract: "Read the current workflow task or one of its granted resources.")
+  @Argument(help: "Resource ID from the task response; omit to read the task.") var resource: String?
+  @Option(name: .long, help: "Byte offset from the previous response; reads at most 256 KiB.") var offset: Int64 = 0
+  @Option(name: .customLong("run"), help: "Assigned workflow run UUID.") var runID: String
+  @Option(name: .long, help: "Assigned invocation number.") var invocation: Int
+  @OptionGroup var options: GlobalOptions
+
+  mutating func run() throws {
+    try WorkflowSocketCommand.execute(options: options) {
+      CommandEnvelope(
+        output: options.outputMode,
+        command: .workflow(WorkflowInput(
+          action: .read, invocation: invocation, contentOffset: offset, contentResource: resource, runID: runID)))
+    }
   }
 }

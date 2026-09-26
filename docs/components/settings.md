@@ -1,11 +1,13 @@
 # Settings
 
+> Workflow UI is enabled by default. Start Prowl with `PROWL_WORKFLOW_UI=0` to hide its UI and skill row; CLI workflow and skill commands remain available. The switch is read at process startup.
+
 > The Settings window (`⌘,`): what each tab controls. For the exhaustive
 > field-by-field list, see [`reference/settings-fields.md`](../reference/settings-fields.md).
 
-**Keywords:** settings, preferences, ⌘comma, general, notifications, shortcuts, worktree, updates, advanced, github, agents, agent profiles, cli & skills, command line tool, cli, agent skills, skills install, repo settings, appearance
+**Keywords:** settings, preferences, ⌘comma, general, notifications, shortcuts, worktree, updates, advanced, github, agents, agent profiles, workflows, workflow settings, enable workflow, bindings, cli & skills, command line tool, cli, socket status, agent skills, skills install, repo settings, appearance
 
-**Related:** [reference/settings-fields](../reference/settings-fields.md) · [custom-actions](custom-actions.md) · [updates](updates.md) · [notifications](notifications.md)
+**Related:** [reference/settings-fields](../reference/settings-fields.md) · [custom-actions](custom-actions.md) · [updates](updates.md) · [notifications](notifications.md) · [workflows](workflows.md)
 
 ## Opening
 
@@ -25,7 +27,7 @@ and opens that section's root.
 
 | Section | Controls |
 |-----|----------|
-| **General** | Appearance (system/light/dark), default app for opening worktrees, diff tool, confirm-before-quit, default view mode, window chrome tint, automatic repository icon detection, toolbar buttons (Run / Open-in-editor), dim unfocused splits, Active Agents panel auto-show & terminal titles. |
+| **General** | Application language (Follow System, 简体中文, English; the same per-app setting as System Settings → Language & Region → Applications; takes effect on next launch), appearance (system/light/dark), default app for opening worktrees, diff tool, confirm-before-quit, default view mode, window chrome tint, automatic repository icon detection, toolbar buttons (Run / Open-in-editor), dim unfocused splits. |
 | **Notifications** | In-app alerts, notification sound picker (Never / system sounds / Prowl Classic), macOS system notifications, move-notified-to-top, command-finished notification + threshold, Dock badge & bounce. → [notifications](notifications.md) |
 | **Shortcuts** | Remap app keyboard shortcuts; view defaults; resolve conflicts. → [keyboard-shortcuts](../reference/keyboard-shortcuts.md) |
 | **Worktree** | Worktree creation/deletion defaults: prompt on create, fetch before create, base directory, copy ignored/untracked files, automatic local-branch cleanup, merged-worktree action, archived auto-delete period. |
@@ -33,14 +35,17 @@ and opens that section's root.
 | **GitHub** | Enable GitHub integration (uses the `gh` CLI). → [github-pull-requests](github-pull-requests.md) |
 | **Commands** | Global Custom Commands. Enabled commands appear in the window toolbar; each repo can independently hide a Global command. → [custom-actions](custom-actions.md) |
 | **Advanced** | Analytics, crash reports, restore terminal layout on launch (experimental) + clear saved layout. |
+| **Agents → Display** | Active Agents panel auto-show, terminal titles, Shelf status markers, and Agent Island enablement, Monitor, global shortcut, silent opacity, and floating-position reset. → [active-agents](active-agents.md), [agent-island](agent-island.md) |
 | **Agents → Profiles** | Named launch presets for supported agent runtimes (model, effort, execution mode, tab/split placement, extra arguments, opt-in dedicated home for a separate account) with a live launch preview. List order is the recommendation fallback. → [agent-profiles](agent-profiles.md) |
-| **Agents → CLI & Skills** | Install/status for the bundled `prowl` CLI, the local socket path it uses to reach the app, and the **Agent Skills** section that links the bundled skills into your agents' skill folders. → [cli](cli.md) |
-| **Repositories / Repo Settings** | Per-repository: setup/archive/run scripts, **Custom Commands**, Global-command visibility, **Default Agent Profile**, default base ref & directory, copy-files overrides, open-with app, custom title, icon & color, PR merge strategy, line-diff & PR-state fetching. Reached from the sidebar context menu → "Repo Settings". → [custom-actions](custom-actions.md), [repositories-and-worktrees](repositories-and-worktrees.md) |
+| **Agents → CLI & Skills** | Install/status for the bundled `prowl` CLI, the local socket path it uses to reach the app and whether this app is **listening** on it, and the **Agent Skills** section that links the bundled skills into your agents' skill folders. → [cli](cli.md) |
+| **Agents → Workflows** | Compact Built-in and personal workflow lists. Select a row for Enabled, explicit Run target, role profile preferences, Run Setup, validation, and source-file actions; **New Workflow…**, **Create with Agent…**, the **Run History** summary with **Clear History…**, and the CLI dependency banner remain on the index. → [workflows](workflows.md) |
+| **Repositories / Repo Settings** | Per-repository: setup/archive/run scripts, **Custom Commands**, Global-command visibility, **Default Agent Profile**, a direct **Workflows** list, default base ref & directory, copy-files overrides, open-with app, custom title, icon & color, PR merge strategy, line-diff & PR-state fetching. Reached from the sidebar context menu → "Repo Settings". A workspace's page also shows its metadata with an **Edit Workspace…** button that opens the editor on the main window. → [custom-actions](custom-actions.md), [repositories-and-worktrees](repositories-and-worktrees.md), [workflows](workflows.md), [workspaces](workspaces.md) |
 
 ## Where settings live on disk
 
 - **Global:** `~/.prowl/settings.json`
-- **Global custom commands + agent profiles:** `~/.prowl/global.onevcat.json`
+- **Global custom commands + agent profiles + workflow settings:** `~/.prowl/global.onevcat.json`
+- **Your workflow files:** `~/.prowl/workflows/*.pwlworkflow` (per repository: `<repo root>/.prowl/workflows/*.pwlworkflow`)
 - **Per-repo:** `~/.prowl/repo/<repo-name>/prowl.json`
 - **Per-repo custom commands + agent profile default/memory:** `~/.prowl/repo/<repo-name>/prowl.onevcat.json`
 - **Dedicated agent profile homes:** `~/.prowl/agent-profiles/<uuid>/`
@@ -53,10 +58,32 @@ Legacy `~/.supacode` is migrated to `~/.prowl` on first launch.
 (prompting for admin rights if needed). Also available via Command Palette →
 "Install Command Line Tool". See [cli](cli.md).
 
+The page's **Connection** section shows the socket path and a **Status** row:
+**Listening** (this app accepts `prowl` connections), **Not listening** with the
+reason (another Prowl instance already owns the socket — quit it or give this
+instance its own `PROWL_CLI_SOCKET`; a permission or path-length problem), or
+**Not running**. The same reason blocks Run in the workflow start sheet and tops
+the Workflows page, since workflow participants deliver through `prowl`.
+
+## Workflows
+
+**Agents → Workflows** lists Built-in and personal workflows; repository
+workflows appear in the matching Repository Settings immediately after
+**Agents**. Select any compact row for **Enabled**, **Run in <worktree>**, every
+role's behavior, **Preferred Agent Profile** for launch roles, **Run Setup**
+(Follow Workflow / Always Review Before Running / Run Directly When Possible),
+validation, and source-file actions. **New Workflow…** asks for a name, id,
+icon, and a single- or multi-agent starter, then opens the YAML in the default
+app; **Create with Agent…** provides an authoring prompt, including a valid
+creation draft when opened from that form. **Manage Workflows…** in the Agents
+capsule opens this Settings page directly. **Run History** shows
+the archive size with **Clear History…**. Rows and open details follow file
+changes live. See [workflows](workflows.md#settings--agents--workflows).
+
 ## Agent Skills
 
 **Agents → CLI & Skills → Agent Skills** lists the user-installable skills bundled in
-the app (`Prowl.app/Contents/Resources/skills/`, today `prowl-cli`) and links them into
+the app (`Prowl.app/Contents/Resources/skills/`, today `prowl-cli` and `prowl-workflow`) and links them into
 your agents' skill folders so every agent reads the version that matches the installed
 app. It is the GUI for [`prowl skills`](cli.md#prowl-skills) in user scope and shows the
 same status as `prowl skills list`.

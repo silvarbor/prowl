@@ -10,6 +10,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct ContentView: View {
+  @Environment(RemoteMirrorStore.self) private var mirrors
+  @Dependency(FeatureFlags.self) private var featureFlags
   @Bindable var store: StoreOf<AppFeature>
   @Bindable var repositoriesStore: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
@@ -57,6 +59,11 @@ struct ContentView: View {
       }
     }
     .environment(\.surfaceBackgroundOpacity, terminalManager.surfaceBackgroundOpacity())
+    .onChange(of: mirrors.selectedID) { _, selectedID in
+      if selectedID != nil {
+        repositoriesStore.send(.selectWorktree(nil))
+      }
+    }
     .task {
       store.send(.scenePhaseChanged(scenePhase))
     }
@@ -75,8 +82,8 @@ struct ContentView: View {
         store.send(
           .repositories(
             .presentAlert(
-              title: "Unable to open folders",
-              message: "Prowl could not read the selected folders."
+              title: String(localized: "Unable to open folders"),
+              message: String(localized: "Prowl could not read the selected folders.")
             )
           )
         )
@@ -88,9 +95,9 @@ struct ContentView: View {
       promptStore in
       WorktreeCreationPromptView(store: promptStore)
     }
-    .sheet(item: $repositoriesStore.scope(state: \.workspaceCreationPrompt, action: \.workspaceCreationPrompt)) {
+    .sheet(item: $repositoriesStore.scope(state: \.workspaceEditor, action: \.workspaceEditor)) {
       promptStore in
-      WorkspaceCreationPromptView(store: promptStore)
+      WorkspaceEditorView(store: promptStore)
     }
     .sheet(item: renameBranchPromptRequest) { request in
       RenameBranchPromptView(
@@ -166,17 +173,26 @@ struct ContentView: View {
           actionTargetWorktreeID: store.repositories.isShowingCanvas
             ? terminalManager.canvasFocusedWorktreeID
             : nil,
-          ghosttyCommands: ghosttyShortcuts.commandPaletteEntries
+          ghosttyCommands: ghosttyShortcuts.commandPaletteEntries,
+          workflowItems: featureFlags.workflowUI ? store.workflowPaletteItems : []
         ),
         resolvedKeybindings: store.resolvedKeybindings
       )
     }
     .overlay {
-      if let handoffHudStore = store.scope(state: \.handoffHud, action: \.handoffHud.presented) {
-        HandoffHudOverlayView(store: handoffHudStore)
+      if featureFlags.workflowUI, !store.workflowStartFromSettings,
+        let workflowStartStore = store.scope(state: \.workflowStart, action: \.workflowStart.presented)
+      {
+        WorkflowStartOverlayView(store: workflowStartStore)
       }
     }
-    .background(WindowTabbingDisabler())
+    .background(windowTabbingDisabler)
+  }
+
+  /// Also carries the ⌘Z route for an emptied worktree (docs-ai 069.002).
+  private var windowTabbingDisabler: WindowTabbingDisabler {
+    let manager = terminalManager
+    return WindowTabbingDisabler(dispatchUndoRedoKey: { manager.performAppUndoRedoKey($0) })
   }
 
   private var renameBranchPromptRequest: Binding<PendingRenameBranchRequest?> {
@@ -212,7 +228,11 @@ struct ContentView: View {
       SidebarView(store: repositoriesStore, terminalManager: terminalManager)
         .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
     } detail: {
-      WorktreeDetailView(store: store, terminalManager: terminalManager)
+      if let client = mirrors.selected {
+        RemoteMirrorPaneView(client: client)
+      } else {
+        WorktreeDetailView(store: store, terminalManager: terminalManager)
+      }
     }
     .navigationSplitViewStyle(.automatic)
     .animation(.easeOut(duration: 0.2), value: store.leftSidebarVisibility)

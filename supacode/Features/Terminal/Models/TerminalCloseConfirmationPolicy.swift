@@ -4,9 +4,12 @@ struct TerminalCloseProtectionCandidate: Equatable {
   let hasAgent: Bool
   let agentDisplayState: AgentDisplayState?
   let commandRunningDuration: TimeInterval?
+  var editingAge: TimeInterval?
+  var hasMarkedText = false
 }
 
 enum TerminalCloseProtectionReason: Equatable, Hashable {
+  case recentInput
   case agentActive
   case longRunningCommand
 }
@@ -21,6 +24,7 @@ struct TerminalCloseConfirmationDecision: Equatable {
 }
 
 enum TerminalCloseConfirmationPolicy {
+  static let recentEditingThreshold: TimeInterval = 10
   static let longRunningCommandThreshold: TimeInterval = 10
 
   static func decision(
@@ -31,9 +35,16 @@ enum TerminalCloseConfirmationPolicy {
     var reasons: Set<TerminalCloseProtectionReason> = []
 
     for candidate in candidates {
-      guard let reason = protectionReason(for: candidate, threshold: threshold) else { continue }
+      var paneReasons: Set<TerminalCloseProtectionReason> = []
+      if candidate.hasMarkedText || candidate.editingAge.map({ $0 <= recentEditingThreshold }) == true {
+        paneReasons.insert(.recentInput)
+      }
+      if let reason = protectionReason(for: candidate, threshold: threshold) {
+        paneReasons.insert(reason)
+      }
+      guard !paneReasons.isEmpty else { continue }
       protectedPaneCount += 1
-      reasons.insert(reason)
+      reasons.formUnion(paneReasons)
     }
 
     return TerminalCloseConfirmationDecision(
@@ -49,19 +60,32 @@ enum TerminalCloseConfirmationPolicy {
     for decision: TerminalCloseConfirmationDecision,
     worktreeName: String
   ) -> String {
-    let paneText = decision.protectedPaneCount == 1 ? "pane" : "panes"
+    let paneText =
+      decision.protectedPaneCount == 1
+      ? String(localized: "pane")
+      : String(localized: "panes")
     let reasonText: String
-    if decision.reasons == Set([.agentActive]) {
-      reasonText = "active agent work or an unseen agent result"
+    if decision.reasons.contains(.recentInput) {
+      var activities = [String(localized: "recent input")]
+      if decision.reasons.contains(.agentActive) {
+        activities.append(String(localized: "active agent work or an unseen agent result"))
+      }
+      if decision.reasons.contains(.longRunningCommand) {
+        activities.append(String(localized: "a command that has been running for at least 10 seconds"))
+      }
+      let activitiesList = activities.joined(separator: ", ")
+      let template = String(localized: "This will close %lld %@ in “%@” with %@. Closing may lose unsubmitted input.")
+      return String(format: template, decision.protectedPaneCount, paneText, worktreeName, activitiesList)
+    } else if decision.reasons == Set([.agentActive]) {
+      reasonText = String(localized: "active agent work or an unseen agent result")
     } else if decision.reasons == Set([.longRunningCommand]) {
-      reasonText = "a command that has been running for at least 10 seconds"
+      reasonText = String(localized: "a command that has been running for at least 10 seconds")
     } else {
-      reasonText = "active agent work, unseen agent results, or long-running commands"
+      reasonText = String(localized: "active agent work, unseen agent results, or long-running commands")
     }
-    return
-      "This will close \(decision.protectedPaneCount) \(paneText) in “\(worktreeName)” with \(reasonText)."
+    let template = String(localized: "This will close %lld %@ in “%@” with %@.")
+    return String(format: template, decision.protectedPaneCount, paneText, worktreeName, reasonText)
   }
-
   private static func protectionReason(
     for candidate: TerminalCloseProtectionCandidate,
     threshold: TimeInterval

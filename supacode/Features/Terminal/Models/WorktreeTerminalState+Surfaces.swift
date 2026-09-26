@@ -2,6 +2,7 @@ import AppKit
 import CoreGraphics
 import Foundation
 import GhosttyKit
+import ProwlCLIShared
 
 enum SplitCreationError: Error, Equatable, Sendable {
   case anchorNotFound(UUID)
@@ -9,6 +10,60 @@ enum SplitCreationError: Error, Equatable, Sendable {
 }
 
 extension WorktreeTerminalState {
+  func deliverAgentDispatch(_ text: String, surfaceID: UUID) async -> Bool {
+    guard dispatchInputProtection(surfaceID: surfaceID) == nil,
+      let surface = surfaces[surfaceID]
+    else { return false }
+    if surfaceAgentStates[surfaceID]?.detectedAgent == .claude {
+      let delivery = ClaudePromptDelivery(
+        observe: { [weak self, weak surface] in
+          guard let self, let surface, self.surfaces[surfaceID] === surface,
+            self.surfaceAgentStates[surfaceID]?.detectedAgent == .claude,
+            let text = surface.readActiveContentsForCLI()
+          else { return nil }
+          return .init(
+            composer: ClaudeScreenProfile.composerContents(in: AgentScreenSnapshot(text: text)),
+            editingRevision: surface.lastEditingAt, hasMarkedText: surface.hasMarkedText())
+        },
+        insert: { [weak self] in self?.insertCommittedText($0, in: surfaceID) == true },
+        submit: { [weak self] in self?.submitLine(in: surfaceID) == true })
+      return await delivery.deliver(text)
+    }
+    guard !Task.isCancelled, insertCommittedText(text, in: surfaceID) else { return false }
+    return submitLine(in: surfaceID)
+  }
+
+  func dispatchInputProtection(surfaceID: UUID) -> String? {
+    guard let surface = surfaces[surfaceID] else {
+      return "The target terminal is no longer available."
+    }
+    if let refusal = AgentDispatchInputProtection.refusal(
+      hasMarkedText: surface.hasMarkedText(), lastEditingAt: surface.lastEditingAt,
+      now: ProcessInfo.processInfo.systemUptime)
+    {
+      return refusal
+    }
+    if surfaceAgentStates[surfaceID]?.detectedAgent == .claude {
+      guard let text = surface.readActiveContentsForCLI(),
+        let draft = ClaudeScreenProfile.composerContents(in: AgentScreenSnapshot(text: text))
+      else {
+        return "The Claude input area could not be verified. Check Host before dispatching."
+      }
+      guard draft.isEmpty else {
+        return "Claude has an existing draft or attachment. Clear it on Host before dispatching."
+      }
+    }
+    if surfaceAgentStates[surfaceID]?.detectedAgent == .codex {
+      guard let text = surface.readStyledSnapshotForCLI(),
+        CodexScreenProfile.composerHasNoDraft(styledSnapshot: text)
+      else {
+        return
+          "Codex has a draft, attachment, or an unrecognized input area. Check Host before dispatching."
+      }
+    }
+    return nil
+  }
+
   func confirmCloseIfNeeded(
     tabIds: [TerminalTabID],
     mode: TerminalCloseConfirmationMode
@@ -37,13 +92,16 @@ extension WorktreeTerminalState {
 
   func closeProtectionCandidates(surfaceIDs: [UUID]) -> [TerminalCloseProtectionCandidate] {
     let now = Date()
+    let uptime = ProcessInfo.processInfo.systemUptime
     return surfaceIDs.map { surfaceID in
       let agentState = surfaceAgentStates[surfaceID]
       let runningDuration = surfaceRunningStartedAtById[surfaceID].map { now.timeIntervalSince($0) }
       return TerminalCloseProtectionCandidate(
         hasAgent: agentState?.detectedAgent != nil,
         agentDisplayState: agentState?.displayState,
-        commandRunningDuration: runningDuration
+        commandRunningDuration: runningDuration,
+        editingAge: surfaces[surfaceID]?.lastEditingAt.map { uptime - $0 },
+        hasMarkedText: surfaces[surfaceID]?.hasMarkedText() ?? false
       )
     }
   }
@@ -54,11 +112,11 @@ extension WorktreeTerminalState {
   ) -> Bool {
     let confirmed = TerminalCloseConfirmationGate.run {
       let alert = NSAlert()
-      alert.messageText = target.messageText
+      alert.messageText = localizedMessageText(for: target)
       alert.informativeText = closeConfirmationMessage(for: decision)
       alert.alertStyle = .warning
-      alert.addButton(withTitle: target.confirmButtonTitle)
-      alert.addButton(withTitle: "Cancel")
+      alert.addButton(withTitle: localizedConfirmButtonTitle(for: target))
+      alert.addButton(withTitle: String(localized: "Cancel"))
       return alert.runModal() == .alertFirstButtonReturn
     }
     return confirmed ?? false
@@ -66,6 +124,36 @@ extension WorktreeTerminalState {
 
   func closeConfirmationMessage(for decision: TerminalCloseConfirmationDecision) -> String {
     TerminalCloseConfirmationPolicy.informativeMessage(for: decision, worktreeName: worktree.name)
+  }
+
+  private func localizedMessageText(for target: TerminalCloseConfirmationTarget) -> String {
+    switch target {
+    case .pane:
+      return String(localized: "Close Terminal Pane?")
+    case .tab:
+      return String(localized: "Close Terminal Tab?")
+    case .tabs(let count):
+      if count == 1 {
+        return String(localized: "Close Terminal Tab?")
+      } else {
+        return String(localized: "Close Terminal Tabs?")
+      }
+    }
+  }
+
+  private func localizedConfirmButtonTitle(for target: TerminalCloseConfirmationTarget) -> String {
+    switch target {
+    case .pane:
+      return String(localized: "Close Pane")
+    case .tab:
+      return String(localized: "Close Tab")
+    case .tabs(let count):
+      if count == 1 {
+        return String(localized: "Close Tab")
+      } else {
+        return String(localized: "Close Tabs")
+      }
+    }
   }
 
   func splitTree(
@@ -214,7 +302,8 @@ extension WorktreeTerminalState {
       try? await Task.sleep(for: Self.autoCloseDelay)
       guard let self else { return }
       guard let view = self.surfaces[surfaceId] else { return }
-      self.handleCloseRequest(for: view, processAlive: false)
+      // Close-on-success is the command's own outcome, not something to undo.
+      self.handleCloseRequest(for: view, processAlive: false, retainForUndo: false)
     }
   }
 
@@ -328,6 +417,7 @@ extension WorktreeTerminalState {
   }
 
   func closeAllSurfaces() {
+    onSurfacesReset?()
     for tab in tabManager.tabs {
       unregisterTargetHandle(for: tab.id)
     }
@@ -388,6 +478,13 @@ extension WorktreeTerminalState {
   }
 
   func configureBridgeCallbacks(for view: GhosttySurfaceView, tabId: TerminalTabID) {
+    view.bridge.onChildExited = nil
+    view.bridge.onUndo = { [weak self] in
+      self?.onUndoRequested?() ?? false
+    }
+    view.bridge.onRedo = { [weak self] in
+      self?.onRedoRequested?() ?? false
+    }
     view.bridge.onTitleChange = { [weak self, weak view] title in
       guard let self, let view else { return }
       if self.focusedSurfaceIdByTab[tabId] == view.id,
@@ -454,6 +551,7 @@ extension WorktreeTerminalState {
     }
     view.onKeyInput = { [weak self, weak view] in
       guard let self, let view else { return }
+      self.agentDetectionCoordinators[view.id]?.interacted()
       self.recordKeyInput(forSurfaceID: view.id)
       self.wakeAgentDetection(for: view, tabId: tabId)
       self.markNotificationsRead(forSurfaceID: view.id)
@@ -566,16 +664,16 @@ extension WorktreeTerminalState {
     guard let tabIndex = tabManager.tabs.firstIndex(where: { $0.id == tabId }) else { return }
 
     let alert = NSAlert()
-    alert.messageText = "Change Tab Title"
-    alert.informativeText = "Leave blank to restore the default."
+    alert.messageText = String(localized: "Change Tab Title")
+    alert.informativeText = String(localized: "Leave blank to restore the default.")
     alert.alertStyle = .informational
 
     let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 250, height: 24))
     textField.stringValue = tabManager.tabs[tabIndex].displayTitle
     alert.accessoryView = textField
 
-    alert.addButton(withTitle: "OK")
-    alert.addButton(withTitle: "Cancel")
+    alert.addButton(withTitle: String(localized: "OK"))
+    alert.addButton(withTitle: String(localized: "Cancel"))
     alert.window.initialFirstResponder = textField
 
     alert.beginSheetModal(for: window) { [weak self] response in
@@ -638,6 +736,7 @@ extension WorktreeTerminalState {
     unregisterTargetHandle(for: surfaceID)
     surfaces.removeValue(forKey: surfaceID)
     launchProfilesBySurface.removeValue(forKey: surfaceID)
+    launchHookRegistrationsBySurface.removeValue(forKey: surfaceID)
     surfaceRunningStartedAtById.removeValue(forKey: surfaceID)
     autoCloseSurfaceIds.remove(surfaceID)
     pendingCustomCommands.removeValue(forKey: surfaceID)
@@ -692,10 +791,21 @@ extension WorktreeTerminalState {
     return isSelected() && lastWindowIsKey == true && lastWindowIsVisible == true
   }
 
-  /// Whether the user is actively looking at `surfaceId` right now: its worktree
-  /// is visible and it is the focused pane of the selected tab.
+  /// Whether the user is actively looking at `surfaceId` right now.
   func isViewedSurface(_ surfaceId: UUID) -> Bool {
-    isViewingWorktree() && isFocusedSurface(surfaceId)
+    if isCanvasManaged {
+      // Canvas owns focus separately from normal-mode selection and window observers.
+      // Its logical focus callback runs before requestFocus actually installs the responder.
+      // Panning preserves focus. visibleRect can extend outside bounds on non-clipping views.
+      guard isFocusedSurface(surfaceId), let view = surfaces[surfaceId],
+        view.focused, !view.isHiddenOrHasHiddenAncestor,
+        let window = view.window
+      else { return false }
+      let visibleBounds = view.bounds.intersection(view.visibleRect)
+      return !visibleBounds.isEmpty && window.isKeyWindow && window.occlusionState.contains(.visible)
+        && window.firstResponder === view
+    }
+    return isViewingWorktree() && isFocusedSurface(surfaceId)
   }
 
   func updateRunningState(for tabId: TerminalTabID) {
@@ -823,19 +933,37 @@ extension WorktreeTerminalState {
   }
 
   @discardableResult
-  func closeSurface(id surfaceID: UUID, confirmation: TerminalCloseConfirmationMode = .prompt(.pane)) -> Bool {
+  func closeSurface(
+    id surfaceID: UUID,
+    confirmation: TerminalCloseConfirmationMode = .prompt(.pane),
+    retainForUndo: Bool = true
+  ) -> Bool {
     guard let view = surfaces[surfaceID] else { return false }
-    return closeSurface(view, confirmation: confirmation)
+    return closeSurface(view, confirmation: confirmation, retainForUndo: retainForUndo)
   }
 
+  /// Ghostty asked to close the surface. `processAlive` is Ghostty's
+  /// `needsConfirmQuit()`: false for an idle shell at its prompt as well as for
+  /// an exited child, so it only decides whether to confirm. Whether the close
+  /// is undoable follows the child's real state, which Ghostty reports through
+  /// `show_child_exited` before its close request.
   @discardableResult
-  func handleCloseRequest(for view: GhosttySurfaceView, processAlive: Bool) -> Bool {
+  func handleCloseRequest(
+    for view: GhosttySurfaceView,
+    processAlive: Bool,
+    retainForUndo: Bool? = nil
+  ) -> Bool {
     let confirmation: TerminalCloseConfirmationMode = processAlive ? .prompt(.pane) : .skip
-    return closeSurface(view, confirmation: confirmation)
+    return closeSurface(
+      view, confirmation: confirmation, retainForUndo: retainForUndo ?? !view.childProcessHasExited)
   }
 
   @discardableResult
-  private func closeSurface(_ view: GhosttySurfaceView, confirmation: TerminalCloseConfirmationMode) -> Bool {
+  private func closeSurface(
+    _ view: GhosttySurfaceView,
+    confirmation: TerminalCloseConfirmationMode,
+    retainForUndo: Bool
+  ) -> Bool {
     guard surfaces[view.id] != nil else { return false }
     guard confirmCloseIfNeeded(surfaceIDs: [view.id], mode: confirmation) else { return false }
     guard let tabId = tabId(containing: view.id), let tree = trees[tabId] else {
@@ -848,14 +976,19 @@ extension WorktreeTerminalState {
       forgetSurface(view.id)
       return true
     }
-    let nextSurface =
-      focusedSurfaceIdByTab[tabId] == view.id
-      ? tree.focusTargetAfterClosing(node)
-      : nil
+    let retain = retainForUndo && undoCloseTimeout > .zero && !view.childProcessHasExited
+    let wasFocused = focusedSurfaceIdByTab[tabId] == view.id
+    let nextSurface = wasFocused ? tree.focusTargetAfterClosing(node) : nil
     let newTree = tree.removing(node)
-    view.closeSurface()
-    forgetSurface(view.id)
     if newTree.isEmpty {
+      // The last pane goes with its tab, so the undo record is a tab record.
+      let record = retain ? makeClosedTabRecord(for: tabId) : nil
+      if record != nil {
+        detachAndForgetSurface(view)
+      } else {
+        view.closeSurface()
+        forgetSurface(view.id)
+      }
       trees.removeValue(forKey: tabId)
       focusedSurfaceIdByTab.removeValue(forKey: tabId)
       removeBoundDirectoryTab(tabId)
@@ -870,16 +1003,35 @@ extension WorktreeTerminalState {
       // Shelf's "retire the book when its last tab closes" logic
       // never saw this very common path.
       onTabClosed?()
+      if let record {
+        recordClosedTab(record)
+      }
       return true
+    }
+    let context = retainedContext(for: view.id)
+    if retain {
+      detachAndForgetSurface(view)
+    } else {
+      view.closeSurface()
+      forgetSurface(view.id)
     }
     updateTree(newTree, for: tabId)
     updateRunningState(for: tabId)
-    if focusedSurfaceIdByTab[tabId] == view.id {
+    if wasFocused {
       if let nextSurface {
         focusSurface(nextSurface, in: tabId)
       } else {
         focusedSurfaceIdByTab.removeValue(forKey: tabId)
       }
+    }
+    if retain {
+      onCloseRecorded?(
+        .pane(
+          worktreeID: worktreeID,
+          TerminalClosedPaneRecord(
+            tabID: tabId, view: view, previousTree: tree, wasFocused: wasFocused, context: context)
+        )
+      )
     }
     return true
   }

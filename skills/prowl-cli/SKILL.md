@@ -14,7 +14,7 @@ The authoritative per-command reference is Prowl's manual, `components/cli.md` u
 
 ```bash
 prowl_docs="$(dirname "$(dirname "$(readlink -f "$(command -v prowl)")")")/docs"
-ls "$prowl_docs/components/"   # cli.md, agent-detection.md, handoff.md, …
+ls "$prowl_docs/components/"   # cli.md, agent-detection.md, workflows.md, …
 ```
 
 Other `docs/components/*.md` references below live in that same folder.
@@ -150,8 +150,8 @@ record is in `.error.details.record`) until you wait for or `dispatch-abandon` t
 one. The prompt is piped stdin (multi-line is fine; it arrives as one message), and the
 reviewer completes with the usual `agents dispatch-complete` — from its own pane, no id needed.
 
-Run a workflow file instead of scripting the rounds yourself (`workflow list` shows what is
-visible to your worktree; `workflow validate <file>` checks a new one locally):
+Run a workflow bundle instead of scripting the rounds yourself (`workflow list` shows what is
+visible to your worktree; `workflow validate <bundle.pwlworkflow>` checks a new one locally):
 
 ```bash
 run="$(prowl workflow run review --role reviewer=Codex --input max_rounds=3 --json)"
@@ -168,16 +168,16 @@ delivers your output. Every step Prowl types into a pane ends with the exact com
 completes it — run it with the output on stdin when your work for that step is fully done:
 
 ```bash
-PROWL_WORKFLOW_TOKEN=… prowl workflow done - <<'EOF'      # the token Prowl handed you; launched roles have it in $PROWL_WORKFLOW_TOKEN
+PROWL_WORKFLOW_TOKEN=… prowl workflow deliver - <<'EOF'      # the token Prowl handed you; launched roles have it in $PROWL_WORKFLOW_TOKEN
 ## Findings
 …
 EOF
 prowl workflow status --json | jq '.data.activation'       # what this pane still owes, with its requirements
 ```
 
-`done` answers after the output is saved: `.data.delivery.state` is `delivered`, or
+`deliver` answers after the output is saved: `.data.delivery.state` is `delivered`, or
 `provisional` when the body had issues a non-strict step tolerates (`.data.delivery.warnings[]`)
-— then the run waits for the user, not for another `done`. A pane whose step moved on gets
+— then the run waits for the user, not for another `deliver`. A pane whose step moved on gets
 `STEP_NOT_EXPECTING`; a wrong token `TOKEN_INVALID`; `agents dispatch-complete` in a workflow
 pane is refused with `WORKFLOW_DELIVERY_REQUIRED` and the command to run instead. `prowl
 workflow cancel <run-id>` ends a run and keeps every pane and output; `status <run-id>` reads a
@@ -227,7 +227,7 @@ Every `--json` response is `{ "ok", "command", "schema_version", "data": {...} }
 Key fields by command:
 
 - `list` → `.data.items[]` with `.worktree.{id,name,path,root_path,kind}`, `.tab.{id,title,selected}`, `.pane.{id,title,cwd,focused,agent}`, `.task.status` (`running`|`idle`|null).
-- `agents` → `.data.agents[]` with `.status`, `.raw_state`, `.detection_reason`, `.type`, `.name`, `.pane.{id,focused,cwd}`, `.tab`, `.worktree`, `.project.{name,branch,path}`.
+- `agents` → `.data.agents[]` with `.status`, `.raw_state`, `.detection_reason`, `.screen_reason`, `.type`, `.name`, `.pane.{id,focused,cwd}`, `.tab`, `.worktree`, `.project.{name,branch,path}`.
 - `agents read` → `.data.agent`, `.data.blocker.text`, `.data.result.{state,text}` — `pending`, `unavailable`, `missing`, `incomplete`, `too_large` carry no partial text; `pending` is returned whenever the agent is working or blocked, even if an earlier turn completed.
 - `agents signal` → `.data.pane.{id,worktree_id}`, `.data.signal.{event,source,confidence,binding,at,session_id,detail,claimed_origin}`, optional `.data.warnings[]` (`code=signal_unbound`); optional fields are omitted.
 - `agents dispatch` → `.data.target` and the new pending `.data.dispatch.{id,state,created_at}`; refusals carry `.error.details.{target,record,observation,signals}`.
@@ -237,6 +237,10 @@ Key fields by command:
 - `send` → `.data.input`, `.data.wait.{exit_code,duration_ms}` when waiting, `.data.capture.{text,line_count,truncated}` with `--capture`.
 - `create tab` / `open` → `.data.target.{pane,tab,worktree}`; `create pane` → `.data.anchor`, `.data.direction`, `.data.target`; Profile launches also include `.data.launch.{profile_id,profile_name,agent}`, prompted launches require `.data.dispatch.{id,state,created_at}`, and a safe managed-signal fallback may add `.data.warnings[]` with `code=managed_hook_degraded`.
 - `profiles list` → `.data.profiles[]` with `.id`, `.name`, `.enabled`, `.runtime`, `.availability.{status,reason}`.
+
+`detection_reason` explains the final status; `screen_reason` explains the screen classifier.
+Log decisions can suppress a retained prompt. Only treat `status: blocked` as a current
+blocker; do not send Enter solely because `screen_reason` names a confirmation rule.
 
 Terminal text is `.data.text` (read) and `.data.capture.text` (send) — never `.content`, `.output`, or `.stdout`.
 
@@ -258,6 +262,13 @@ printf '%s\n' "$result" | jq '.data.observation, .data.screen'
 ```
 
   `--until idle|blocked` observe the current state: a signal that already existed when the wait was armed counts only if the screen detector agrees, a signal arriving afterwards counts on its own, and an already-idle agent with such a signal returns immediately. Detection-only evidence (no hook or cooperative signal, the usual case for a manually launched agent) resolves only after the state has stayed unchanged for two seconds. The same stabilized fallback applies to a Profile agent whose `verified_live` channel holds no terminal signal yet — a freshly launched, unprompted Profile has only reported `session-start` — so `--until idle` before the first prompt resolves with `confidence: heuristic`; once the channel holds a `turn-ended` or `needs-input`, that runtime evidence decides and the screen never overrides it. Give those waits a `--timeout` of at least a few seconds. To wait for the *next* turn edge (for example after `send`ing a new prompt), use `--until changed`; with a `verified_live` hook channel it returns at the next runtime signal, not at a screen change.
+
+  For Codex, observed open main or child work in the selected log prevents an Idle
+  result even after a parent `turn-ended` signal. Claude native state applies the
+  same veto for current work, including assigned children and background shell jobs.
+  The same rule protects dispatch
+  admission and workflow readiness. Provider attribution remains heuristic and never
+  substitutes for a task-completion receipt.
 
   Exact/high evidence can establish the requested observable condition. If
   `jq -e '.data.observation.confidence == "heuristic"'` matches, inspect the included stable
@@ -297,7 +308,7 @@ printf '%s\n' "$result" | jq '.data.observation, .data.screen'
 - `TRANSPORT_FAILED`: the connection broke or the socket path is invalid (`ENOTSOCK`, too-long `PROWL_CLI_SOCKET`).
 - `TARGET_NOT_FOUND` / `TARGET_NOT_UNIQUE`: re-run `prowl list --json` and pass an explicit UUID or a current `pN`.
 - `PROFILE_NOT_FOUND` / `PROFILE_NOT_UNIQUE`: re-run `prowl profiles list --json`; choose an enabled Profile UUID.
-- `NO_ACTIVE_PANE`: focused-pane targeting found nothing — pass `--pane`. `SOURCE_REQUIRED`: a caller-owned command (`agents signal`, selector-free `handoff`) could not map process ancestry to a Prowl pane.
+- `NO_ACTIVE_PANE`: focused-pane targeting found nothing — pass `--pane`. `SOURCE_REQUIRED`: a caller-owned command (`agents signal`, `workflow run` with a `current` role) could not map process ancestry to a Prowl pane.
 - `EMPTY_INPUT`, `INVALID_ARGUMENT`, `UNSUPPORTED_KEY`, `INVALID_REPEAT`: fix the arguments (`prowl <cmd> --help`).
 - `CAPTURE_UNSUPPORTED`: drop `--capture` and use `read --wait-stable` or file redirection.
 - `WAIT_TIMEOUT`: inspect `.error.details`, then re-arm the wait if the task remains active.
@@ -310,22 +321,16 @@ printf '%s\n' "$result" | jq '.data.observation, .data.screen'
 
 ## Handing Off Your Task
 
-`prowl handoff to <agent> --brief -` hands your task to another agent. Run it from your own pane (the calling pane is the source — no selector needed) and pipe your briefing on stdin. Prowl finds the calling pane through process ancestry, so any descendant of the pane's shell (an agent, its tool shell) works; under tmux/screen or a detached wrapper that resolution fails with `SOURCE_REQUIRED`, and in exactly those setups `$PROWL_PANE_ID` is not trustworthy either (it names the pane the tmux server started in, which may still exist) — identify your pane by other means (`prowl agents --json`, a unique `pane.cwd`) and pass it with `--pane` explicitly.
+Use the built-in `prowl.handoff` workflow: it requests a briefing from you and saves
+context before optionally launching a receiver. See the `prowl-workflow` skill for the full
+flow. `prowl handoff` (`to`/`save`) is retired: it performs no action and only returns a
+`HANDOFF_RETIRED` error with the replacement commands.
 
-```bash
-prowl handoff to codex --brief - <<'EOF'
-# Handoff
-## Objective
-…
-## Current State
-…
-## Next Steps
-…
-EOF
-```
-
-Required sections are `## Objective`, `## Current State`, and `## Next Steps`; optional ones are `## What Has Been Done`, `## Open Questions`, `## Risks / Watch Out`, and `## Suggested Prompt For Next Agent`. The receiver launches in a background tab of the same worktree; your session stays open. `prowl handoff save --brief -` checkpoints the same briefing without launching anyone; `--no-brief` is for an intentional context-only handoff; `--pane` hands off a pane other than your own. Details: `components/handoff.md` in the docs folder.
+Choose a receiver Profile with `--role receiver=<Profile>`, or pass `--input next=save` to
+save without launching a receiver. Follow the returned `data.self_initiated.line` and deliver
+the required briefing through the workflow protocol. See `components/handoff.md` and
+`components/workflows.md` in the docs folder.
 
 ## Command Set
 
-`list`, `agents`, `agents read`, `agents signal`, `agents dispatch`, `agents dispatch-complete`, `agents dispatch-abandon`, `agents wait`, `profiles list`, `skills list|install|uninstall|path` (local-only), `workflow list|run|status|done|cancel` (`workflow validate|schema` local-only), `read`, `send`, `key`, `focus`, `create tab`, `create pane`, `close`, `handoff to`, `handoff save`, and `open` (default). There is no CLI `quit`; close temporary tabs or panes with an explicit `close`. `tab create`, `tab close`, and `pane close` remain deprecated aliases for one release.
+`list`, `agents`, `agents read`, `agents signal`, `agents dispatch`, `agents dispatch-complete`, `agents dispatch-abandon`, `agents wait`, `profiles list`, `skills list|install|uninstall|path` (local-only), `workflow list|run|status|deliver|cancel` (`workflow validate|schema` local-only), `read`, `send`, `key`, `focus`, `create tab`, `create pane`, `close`, and `open` (default). There is no CLI `quit`; close temporary tabs or panes with an explicit `close`. `tab create`, `tab close`, and `pane close` remain deprecated aliases for one release; `handoff` remains for one release as a non-executing `HANDOFF_RETIRED` stub.

@@ -1,12 +1,13 @@
 // supacode/Domain/Workflow/WorkflowDeliveryValidator.swift
-// Validation of a `prowl workflow done` body against the step's `expect` (dsl-spec §5): size
+// Validation of a `prowl workflow deliver` body against the step's `expect` (dsl-spec §5): size
 // caps, format, required sections, and the verdict declaration.
 
 import Foundation
+import ProwlCLIShared
 
 nonisolated struct WorkflowDeliveryLimits: Equatable, Sendable {
-  static let defaultMaximumBytes = 1 << 20
-  static let hardMaximumBytes = 4 << 20
+  static let defaultMaximumBytes = WorkflowSizeLimits.payload
+  static let hardMaximumBytes = WorkflowSizeLimits.payload
 
   /// Bytes of UTF-8 a delivered body may have; clamped to `1…hardMaximumBytes`.
   let maximumBytes: Int
@@ -127,7 +128,7 @@ nonisolated enum WorkflowDeliveryValidator {
     }
     var issues: [WorkflowDeliveryIssue] = []
     var acceptedVerdict: String?
-    switch (expect.verdict, verdict) {
+    switch (expect.verdicts, verdict) {
     case (nil, nil):
       break
     case (nil, .some(let value)):

@@ -1,4 +1,5 @@
 import Foundation
+import ProwlCLIShared
 
 struct LifecycleResolvedTarget: Sendable, Equatable {
   let resource: LifecycleResource
@@ -127,9 +128,11 @@ final class LifecycleCommandHandler: CommandHandler {
   typealias CloseTabProvider = @MainActor (TabResolvedTarget, Bool) -> Bool
   typealias ClosePaneProvider = @MainActor (TabResolvedTarget, Bool) -> Bool
 
+  private let resolveTabCreationTarget: ResolveCreateTargetProvider
   private let resolveCreateTarget: ResolveCreateTargetProvider
   private let resolveCloseTarget: ResolveCloseTargetProvider
   private let createTab: CreateTabProvider
+  private let createBackgroundTab: CreateTabProvider?
   private let createPane: CreatePaneProvider
   private let profiles: ProfilesProvider
   private let prepareAgentProfile: PrepareProfileLaunchProvider
@@ -147,6 +150,8 @@ final class LifecycleCommandHandler: CommandHandler {
     resolveCloseTarget: @escaping ResolveCloseTargetProvider,
     createTab: @escaping CreateTabProvider,
     createPane: @escaping CreatePaneProvider,
+    createBackgroundTab: CreateTabProvider? = nil,
+    resolveTabCreationTarget: ResolveCreateTargetProvider? = nil,
     profiles: @escaping ProfilesProvider = { [] },
     prepareAgentProfile: @escaping PrepareProfileLaunchProvider = { .success($0) },
     launchAgentProfile: @escaping ProfileLaunchProvider = {
@@ -160,9 +165,11 @@ final class LifecycleCommandHandler: CommandHandler {
     closeTab: @escaping CloseTabProvider,
     closePane: @escaping ClosePaneProvider
   ) {
+    self.resolveTabCreationTarget = resolveTabCreationTarget ?? resolveCreateTarget
     self.resolveCreateTarget = resolveCreateTarget
     self.resolveCloseTarget = resolveCloseTarget
     self.createTab = createTab
+    self.createBackgroundTab = createBackgroundTab
     self.createPane = createPane
     self.profiles = profiles
     self.prepareAgentProfile = prepareAgentProfile
@@ -228,16 +235,16 @@ final class LifecycleCommandHandler: CommandHandler {
         message: "create tab requires a worktree target and does not accept a direction."
       )
     }
-    guard input.launch != nil || !input.background else {
+    guard input.launch != nil || !input.background || createBackgroundTab != nil else {
       return backgroundRequiresProfileError()
     }
 
     let target: TabResolvedTarget
-    switch resolveCreateTarget(input.selector) {
+    switch resolveTabCreationTarget(input.selector) {
     case .success(let resolved):
       target = resolved
     case .failure(let error):
-      return mapResolverError(command: "create", error: error)
+      return error.commandResponse(command: "create")
     }
 
     let path = normalizedAllowedPath(input.path, worktreePath: target.worktreePath)
@@ -256,8 +263,10 @@ final class LifecycleCommandHandler: CommandHandler {
         path: path
       )
     }
-    guard let createdTarget = createTab(target, path) else {
-      return errorResponse(command: "create", code: CLIErrorCode.createFailed, message: "Failed to create tab.")
+    let create = input.background ? createBackgroundTab : createTab
+    guard let createdTarget = create?(target, path) else {
+      return errorResponse(
+        command: "create", code: CLIErrorCode.createFailed, message: "Failed to create tab.")
     }
     return success(command: "create", resource: .tab, target: createdTarget)
   }
@@ -279,7 +288,7 @@ final class LifecycleCommandHandler: CommandHandler {
     case .success(let resolved):
       anchor = resolved
     case .failure(let error):
-      return mapResolverError(command: "create", error: error)
+      return error.commandResponse(command: "create")
     }
 
     if let launch = input.launch {
@@ -487,7 +496,7 @@ final class LifecycleCommandHandler: CommandHandler {
     case .success(let target):
       resolved = target
     case .failure(let error):
-      return mapResolverError(command: "close", error: error)
+      return error.commandResponse(command: "close")
     }
 
     let didClose =
@@ -558,15 +567,6 @@ final class LifecycleCommandHandler: CommandHandler {
 
   private func makePayloadTarget(from target: TabResolvedTarget) -> TabTarget {
     TabTarget(from: target)
-  }
-
-  private func mapResolverError(command: String, error: TargetResolverError) -> CommandResponse {
-    switch error {
-    case .notFound(let message):
-      errorResponse(command: command, code: CLIErrorCode.targetNotFound, message: message)
-    case .notUnique(let message):
-      errorResponse(command: command, code: CLIErrorCode.targetNotUnique, message: message)
-    }
   }
 
   private func errorResponse(command: String, code: String, message: String) -> CommandResponse {

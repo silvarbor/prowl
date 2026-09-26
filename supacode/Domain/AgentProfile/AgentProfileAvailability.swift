@@ -1,4 +1,5 @@
 import Foundation
+import ProwlCLIShared
 
 /// One shared availability judgment for every profile launcher surface
 /// (Agents popover, Command Palette), so entry points can never disagree
@@ -23,9 +24,9 @@ nonisolated enum AgentProfileAvailability {
     case true?:
       return nil
     case false?:
-      return "\(name) is not on your shell's PATH"
+      return String(localized: "\(name) is not on your shell's PATH")
     case nil:
-      return isRuntimeInstalled(profile.runtime) ? nil : "\(name) may not be installed"
+      return isRuntimeInstalled(profile.runtime) ? nil : String(localized: "\(name) may not be installed")
     }
   }
 

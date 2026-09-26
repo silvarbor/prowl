@@ -1,6 +1,6 @@
 // ProwlShared/WorkflowCommandPayload.swift
 // `prowl workflow` response data (`prowl.cli.workflow.v1`), discriminated by `action`.
-// `list`, `run`, `status`, `done`, and `cancel` cross the socket; `validate` and `schema` are
+// `list`, `run`, `status`, `deliver`, and `cancel` cross the socket; `validate` and `schema` are
 // produced locally by the CLI.
 
 import Foundation
@@ -9,20 +9,22 @@ nonisolated public enum WorkflowCommandPayload: Codable, Equatable, Sendable {
   public static let schemaVersion = "prowl.cli.workflow.v1"
   public static let commandName = "workflow"
 
+  case read(WorkflowContentPayload)
   case list(WorkflowListPayload)
   case run(WorkflowRunPayload)
   case status(WorkflowRunPayload)
-  case done(WorkflowDonePayload)
+  case deliver(WorkflowDeliverPayload)
   case cancel(WorkflowRunPayload)
   case validate(WorkflowValidatePayload)
   case schema(WorkflowSchemaPayload)
 
   public var action: WorkflowCommandAction {
     switch self {
+    case .read: .read
     case .list: .list
     case .run: .run
     case .status: .status
-    case .done: .done
+    case .deliver: .deliver
     case .cancel: .cancel
     case .validate: .validate
     case .schema: .schema
@@ -36,10 +38,11 @@ nonisolated public enum WorkflowCommandPayload: Codable, Equatable, Sendable {
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     switch try container.decode(WorkflowCommandAction.self, forKey: .action) {
+    case .read: self = .read(try WorkflowContentPayload(from: decoder))
     case .list: self = .list(try WorkflowListPayload(from: decoder))
     case .run: self = .run(try WorkflowRunPayload(from: decoder))
     case .status: self = .status(try WorkflowRunPayload(from: decoder))
-    case .done: self = .done(try WorkflowDonePayload(from: decoder))
+    case .deliver: self = .deliver(try WorkflowDeliverPayload(from: decoder))
     case .cancel: self = .cancel(try WorkflowRunPayload(from: decoder))
     case .validate: self = .validate(try WorkflowValidatePayload(from: decoder))
     case .schema: self = .schema(try WorkflowSchemaPayload(from: decoder))
@@ -50,10 +53,11 @@ nonisolated public enum WorkflowCommandPayload: Codable, Equatable, Sendable {
     var container = encoder.container(keyedBy: CodingKeys.self)
     try container.encode(action, forKey: .action)
     switch self {
+    case .read(let payload): try payload.encode(to: encoder)
     case .list(let payload): try payload.encode(to: encoder)
     case .run(let payload), .status(let payload), .cancel(let payload):
       try payload.encode(to: encoder)
-    case .done(let payload): try payload.encode(to: encoder)
+    case .deliver(let payload): try payload.encode(to: encoder)
     case .validate(let payload): try payload.encode(to: encoder)
     case .schema(let payload): try payload.encode(to: encoder)
     }
@@ -61,10 +65,11 @@ nonisolated public enum WorkflowCommandPayload: Codable, Equatable, Sendable {
 }
 
 nonisolated public enum WorkflowCommandAction: String, Codable, Equatable, Sendable {
+  case read
   case list
   case run
   case status
-  case done
+  case deliver
   case cancel
   case validate
   case schema
@@ -196,7 +201,7 @@ nonisolated public struct WorkflowRunPayload: Codable, Equatable, Sendable {
   /// The activation currently waiting for (or persisting) a delivery.
   public let activation: WorkflowActivationPayload?
   /// Latest delivered output per name.
-  public let outputs: [String: WorkflowOutputPayload]
+  public let deliveries: [String: WorkflowDeliveryRecordPayload]
   public let startedAt: String
   public let updatedAt: String
   public let finishedAt: String?
@@ -217,7 +222,7 @@ nonisolated public struct WorkflowRunPayload: Codable, Equatable, Sendable {
     case runDirectory = "run_directory"
     case bindings
     case activation
-    case outputs
+    case deliveries
     case startedAt = "started_at"
     case updatedAt = "updated_at"
     case finishedAt = "finished_at"
@@ -237,7 +242,7 @@ nonisolated public struct WorkflowRunPayload: Codable, Equatable, Sendable {
     runDirectory: String,
     bindings: [String: WorkflowBindingPayload],
     activation: WorkflowActivationPayload?,
-    outputs: [String: WorkflowOutputPayload],
+    deliveries: [String: WorkflowDeliveryRecordPayload],
     startedAt: String,
     updatedAt: String,
     finishedAt: String?,
@@ -255,7 +260,7 @@ nonisolated public struct WorkflowRunPayload: Codable, Equatable, Sendable {
     self.runDirectory = runDirectory
     self.bindings = bindings
     self.activation = activation
-    self.outputs = outputs
+    self.deliveries = deliveries
     self.startedAt = startedAt
     self.updatedAt = updatedAt
     self.finishedAt = finishedAt
@@ -269,7 +274,7 @@ nonisolated public enum WorkflowRunPayloadSource: String, Codable, Equatable, Se
 }
 
 nonisolated public struct WorkflowRunStatusPayload: Codable, Equatable, Sendable {
-  /// `running`, `needs_attention`, `completed`, `cancelled`, `skipped`, `max_rounds_reached`, `interrupted`.
+  /// `running`, `needs_attention`, `completed`, `cancelled`, `skipped`, `iteration_limit_reached`, `interrupted`.
   public let state: String
   /// The step that ended a `skipped` run, or the step in attention.
   public let step: String?
@@ -393,7 +398,7 @@ nonisolated public struct WorkflowActivationPayload: Codable, Equatable, Sendabl
   /// `waiting`, `persisting`, `provisional`, `delivered`, `skipped`, `revoked`.
   public let state: String
   public let dispatchID: String?
-  public let output: String
+  public let delivery: String
   public let expect: WorkflowExpectationPayload
   /// The absolute `expect.timeout` deadline, when the step declares one.
   public let deadline: String?
@@ -404,7 +409,7 @@ nonisolated public struct WorkflowActivationPayload: Codable, Equatable, Sendabl
     case role
     case state
     case dispatchID = "dispatch_id"
-    case output
+    case delivery
     case expect
     case deadline
   }
@@ -415,7 +420,7 @@ nonisolated public struct WorkflowActivationPayload: Codable, Equatable, Sendabl
     role: String,
     state: String,
     dispatchID: String?,
-    output: String,
+    delivery: String,
     expect: WorkflowExpectationPayload,
     deadline: String?
   ) {
@@ -424,7 +429,7 @@ nonisolated public struct WorkflowActivationPayload: Codable, Equatable, Sendabl
     self.role = role
     self.state = state
     self.dispatchID = dispatchID
-    self.output = output
+    self.delivery = delivery
     self.expect = expect
     self.deadline = deadline
   }
@@ -432,31 +437,31 @@ nonisolated public struct WorkflowActivationPayload: Codable, Equatable, Sendabl
 
 /// What a waiting activation requires of its delivery (dsl-spec §5).
 nonisolated public struct WorkflowExpectationPayload: Codable, Equatable, Sendable {
-  public let format: WorkflowOutputFormat
+  public let format: WorkflowDeliveryFormat
   public let sections: [String]
-  public let verdict: [String]?
+  public let verdicts: [String]?
   public let strict: Bool
-  /// The exact `prowl workflow done` commands that complete the step, one per allowed verdict.
+  /// The exact `prowl workflow deliver` commands that complete the step, one per allowed verdict.
   public let completion: [String]
 
   public init(
-    format: WorkflowOutputFormat, sections: [String], verdict: [String]?, strict: Bool,
+    format: WorkflowDeliveryFormat, sections: [String], verdicts: [String]?, strict: Bool,
     completion: [String]
   ) {
     self.format = format
     self.sections = sections
-    self.verdict = verdict
+    self.verdicts = verdicts
     self.strict = strict
     self.completion = completion
   }
 }
 
-nonisolated public struct WorkflowOutputPayload: Codable, Equatable, Sendable {
+nonisolated public struct WorkflowDeliveryRecordPayload: Codable, Equatable, Sendable {
   public let name: String
   public let ordinal: Int
-  /// `outputs/<name>.<ordinal>.md`.
+  /// `deliveries/<name>.<ordinal>.md`.
   public let path: String
-  /// `outputs/<name>.md`, the atomically replaced latest view.
+  /// `deliveries/<name>.md`, the atomically replaced latest view.
   public let latestPath: String
   public let verdict: String?
   public let deliveredAt: String
@@ -486,27 +491,27 @@ nonisolated public struct WorkflowOutputPayload: Codable, Equatable, Sendable {
 nonisolated public struct WorkflowSelfInitiatedPayload: Codable, Equatable, Sendable {
   /// The line the runner would have typed, completion command included.
   public let line: String
-  /// The materialized instruction file the line points at, for `instruction` steps.
-  public let instructionPath: String?
-  /// The `prowl workflow done` commands that complete the step, one per allowed verdict.
+  /// The saved task-only prompt for this invocation.
+  public let promptPath: String?
+  /// The `prowl workflow deliver` commands that complete the step, one per allowed verdict.
   public let completion: [String]
 
   enum CodingKeys: String, CodingKey {
     case line
-    case instructionPath = "instruction_path"
+    case promptPath = "prompt_path"
     case completion
   }
 
-  public init(line: String, instructionPath: String?, completion: [String]) {
+  public init(line: String, promptPath: String?, completion: [String]) {
     self.line = line
-    self.instructionPath = instructionPath
+    self.promptPath = promptPath
     self.completion = completion
   }
 }
 
-// MARK: - done
+// MARK: - deliver
 
-nonisolated public struct WorkflowDonePayload: Codable, Equatable, Sendable {
+nonisolated public struct WorkflowDeliverPayload: Codable, Equatable, Sendable {
   public let run: WorkflowRunPayload
   public let delivery: WorkflowDeliveryPayload
 
@@ -516,7 +521,7 @@ nonisolated public struct WorkflowDonePayload: Codable, Equatable, Sendable {
   }
 }
 
-/// The receipt of one `prowl workflow done`. `delivered` means the output is the step's output
+/// The receipt of one `prowl workflow deliver`. `delivered` means the output is the step's output
 /// and the run advanced; `provisional` means it is on disk with the listed `warnings` and the
 /// run waits for the user to accept it, ask again, or skip (decision H14 of docs-ai 063.007).
 nonisolated public struct WorkflowDeliveryPayload: Codable, Equatable, Sendable {
@@ -524,7 +529,7 @@ nonisolated public struct WorkflowDeliveryPayload: Codable, Equatable, Sendable 
   public let ordinal: Int
   public let step: String
   public let role: String
-  public let output: WorkflowOutputPayload
+  public let record: WorkflowDeliveryRecordPayload
   public let warnings: [WorkflowDeliveryWarningPayload]
 
   public init(
@@ -532,14 +537,14 @@ nonisolated public struct WorkflowDeliveryPayload: Codable, Equatable, Sendable 
     ordinal: Int,
     step: String,
     role: String,
-    output: WorkflowOutputPayload,
+    record: WorkflowDeliveryRecordPayload,
     warnings: [WorkflowDeliveryWarningPayload]
   ) {
     self.state = state
     self.ordinal = ordinal
     self.step = step
     self.role = role
-    self.output = output
+    self.record = record
     self.warnings = warnings
   }
 }

@@ -6,6 +6,7 @@
 
 import ComposableArchitecture
 import Foundation
+import ProwlCLIShared
 
 nonisolated enum WorkflowTextDelivery: Equatable, Sendable {
   case delivered
@@ -43,14 +44,17 @@ nonisolated struct WorkflowRuntimeNotification: Equatable, Sendable {
   let title: String
   let body: String
   let targetSurfaceID: UUID?
+  let workflowRunID: UUID?
   let treatAsViewedWhenWorktreeIsVisible: Bool
 
   init(
     title: String,
     body: String,
     targetSurfaceID: UUID?,
-    treatAsViewedWhenWorktreeIsVisible: Bool = true
+    treatAsViewedWhenWorktreeIsVisible: Bool = true,
+    workflowRunID: UUID? = nil
   ) {
+    self.workflowRunID = workflowRunID
     self.title = title
     self.body = body
     self.targetSurfaceID = targetSurfaceID
@@ -59,6 +63,7 @@ nonisolated struct WorkflowRuntimeNotification: Equatable, Sendable {
 }
 
 struct WorkflowRuntimeClient: Sendable {
+  var observe: @MainActor @Sendable (WorkflowRun) -> [String: WorkflowJSONValue] = { _ in [:] }
   /// The #733 idle precondition without its five-second cap: exact `turn-ended` evidence first,
   /// a stabilized detector view otherwise; returns when the role can receive a line.
   var waitForRole: @MainActor @Sendable (UUID) async -> WorkflowRoleWaitOutcome

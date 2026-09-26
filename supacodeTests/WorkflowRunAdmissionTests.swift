@@ -2,8 +2,11 @@
 // Preflight of `prowl workflow run` (docs-ai 063 B3): definition selection, source and binding
 // legality, one run per pane, frozen plans, and the initial record.
 
+import ComposableArchitecture
+import ConcurrencyExtras
 import Foundation
 import GhosttyKit
+import ProwlCLIShared
 import Testing
 
 @testable import supacode
@@ -27,15 +30,15 @@ struct WorkflowRunAdmissionTests {
     steps:
       - id: brief
         message: author
-        text: "Brief {{ inputs.rounds }}"
-        expect: { output: brief }
+        prompt: "Brief {{ inputs.rounds }}"
+        expect: { delivery: brief }
       - id: launch
         launch: reviewer
-        prompt: "Review {{ outputs.brief.path }}"
-        expect: { output: findings }
+        prompt: "Review {{ deliveries.brief.path }}"
+        expect: { delivery: findings }
       - id: ping
         message: partner
-        text: "Findings: {{ outputs.findings.path }}"
+        prompt: "Findings: {{ deliveries.findings.path }}"
     """
 
   private static let contextOnly = """
@@ -47,8 +50,8 @@ struct WorkflowRunAdmissionTests {
         source: current
     steps:
       - id: ctx
-        action: git.context
-        with: { root: "{{ worktree.path }}" }
+        action: builtin:collect-worktree-context
+        with: { root: "{{ context.worktree.path }}" }
     """
 
   private static let worktreeOnly = """
@@ -103,13 +106,18 @@ struct WorkflowRunAdmissionTests {
       ]
     }
 
+    nonisolated let nextRunID = LockIsolated(UUID())
+    nonisolated let beforeToken = LockIsolated<(@Sendable () throws -> Void)?>(nil)
+
     func cleanUp() {
       try? FileManager.default.removeItem(at: root)
     }
 
     func write(_ yaml: String, to name: String, scope: WorkflowScope = .repo) throws {
       let directory = scope == .repo ? WorkflowSources.repoDirectory(root: repoRoot) : userWorkflows
-      try Data(yaml.utf8).write(to: directory.appending(path: "\(name).yaml"))
+      let bundle = directory.appending(path: "\(name).pwlworkflow")
+      try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+      try Data(yaml.utf8).write(to: bundle.appending(path: "workflow.yaml"))
     }
 
     var worktree: Worktree {
@@ -175,8 +183,16 @@ struct WorkflowRunAdmissionTests {
             dedicatedHome: nil)
         },
         now: Date(timeIntervalSince1970: 1_760_000_000),
-        makeRunID: { UUID(uuidString: "0BADCAFE-0000-4000-8000-000000000042")! },
-        makeToken: { "TOKEN" })
+        makeRunID: { [self] in
+          nextRunID.withValue { value in
+            defer { value = UUID() }
+            return value
+          }
+        },
+        makeToken: { [self] in
+          try? beforeToken.value?()
+          return "TOKEN"
+        })
     }
 
     func source(pane: UUID?, isCaller: Bool = true) -> WorkflowRunSource {
@@ -203,17 +219,64 @@ struct WorkflowRunAdmissionTests {
     return nil
   }
 
+  @Test(arguments: ["save", "launch"])
+  func shippedHandoffResolvesOnlyTheSelectedPath(next: String) throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanUp() }
+    let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+    let yaml = try String(
+      contentsOf: root.appending(path: "Resources/workflows/handoff.pwlworkflow/workflow.yaml"), encoding: .utf8
+    )
+    .replacing("id: prowl.handoff", with: "id: handoff")
+    try fixture.write(yaml, to: "handoff")
+    let admitted = try admit(
+      fixture, workflow: "handoff", pane: fixture.authorPane,
+      roles: next == "launch" ? ["receiver=Codex"] : [], inputs: ["next=\(next)"]
+    ).get()
+    #expect(admitted.session.run.selfInitiatedLine?.contains("prowl workflow deliver -") == true)
+    #expect((admitted.session.run.bindings["receiver"] != nil) == (next == "launch"))
+    #expect(fixture.plannedProfiles.isEmpty == (next == "save"))
+  }
+
+  @Test func testActionTreatsJSONInputAsLiteralData() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanUp() }
+    try fixture.write(Self.contextOnly, to: "context")
+    let admitted = try WorkflowRunAdmission.admit(
+      WorkflowInput(
+        action: .run, workflow: "context", testAction: "builtin:collect-worktree-context",
+        actionInputs: ["root": .string("{{ literal.directory }}")]),
+      source: fixture.source(pane: nil), snapshot: fixture.snapshot(), environment: fixture.environment
+    ).get()
+    #expect(
+      admitted.effects.contains(
+        .runAction(
+          stepID: "action-test", actionID: "builtin:collect-worktree-context",
+          inputs: ["root": .string("{{ literal.directory }}")])))
+  }
+
+  @Test func sourceContextPreservesTheInitiatingTab() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanUp() }
+    try fixture.write(Self.contextOnly, to: "context")
+    let admitted = try admit(fixture, workflow: "context", pane: fixture.authorPane).get()
+    #expect(
+      try WorkflowExpression.evaluate("context.initiator.tab_id", values: admitted.session.run.stepValues)
+        == .string(fixture.tabID.uuidString))
+  }
+
   @Test func aCompleteRequestFreezesEveryBindingAndWritesTheInitialRecord() throws {
     let fixture = try Fixture()
     defer { fixture.cleanUp() }
     try fixture.write(Self.review, to: "review")
+    let expectedRunID = fixture.nextRunID.value
     let admitted = try admit(
       fixture, workflow: "review", pane: fixture.authorPane,
       roles: ["partner=p2", "reviewer=Codex"],
       inputs: ["rounds=3"]
     ).get()
     let run = admitted.session.run
-    #expect(run.id.uuidString == "0BADCAFE-0000-4000-8000-000000000042")
+    #expect(run.id == expectedRunID)
     #expect(run.context.scope == .repo(repositoryID: fixture.repoRoot.path(percentEncoded: false)))
     #expect(run.context.worktree.branch == "feat/x")
     #expect(run.inputs["rounds"] == "3")
@@ -232,7 +295,7 @@ struct WorkflowRunAdmissionTests {
     #expect(admitted.session.bindingMemoryKeys["reviewer"]?.role == "reviewer")
     #expect(admitted.callerRole == "author")
     #expect(
-      run.selfInitiatedLine?.contains("PROWL_WORKFLOW_TOKEN=TOKEN prowl workflow done -") == true)
+      run.selfInitiatedLine?.contains("PROWL_WORKFLOW_TOKEN=TOKEN prowl workflow deliver -") == true)
     #expect(
       run.phase == .injecting(ordinal: 1), "self-initiated: the activation opens without typing")
     #expect(fixture.plannedProfiles == ["Codex"])
@@ -261,7 +324,7 @@ struct WorkflowRunAdmissionTests {
       Self.contextOnly.replacing("id: context", with: "id: other"), to: "other", scope: .user)
     try fixture.write(
       Self.contextOnly.replacing("id: context", with: "id: broken").replacing(
-        "git.context", with: "nope"), to: "broken")
+        "collect-worktree-context", with: "nope"), to: "broken")
 
     #expect(
       code(admit(fixture, workflow: "missing", pane: fixture.authorPane))
@@ -275,7 +338,11 @@ struct WorkflowRunAdmissionTests {
     if case .failure(let failure) = broken {
       #expect(failure.details?.valid == false)
     }
-    fixture.disabled = ["repo/context"]
+    fixture.disabled = [
+      WorkflowPreferenceKey.make(
+        scope: .repo(repositoryID: fixture.repoRoot.path(percentEncoded: false)),
+        workflowID: "context")
+    ]
     #expect(
       code(admit(fixture, workflow: "context", pane: fixture.authorPane))
         == CLIErrorCode.workflowDisabled)
@@ -324,7 +391,8 @@ struct WorkflowRunAdmissionTests {
     defer { fixture.cleanUp() }
     try fixture.write(Self.review, to: "review")
     fixture.pendingDispatches = [fixture.authorPane: "launch-dispatch"]
-    let current = admit(fixture, workflow: "review", pane: fixture.authorPane, roles: ["partner=p2"])
+    let current = admit(
+      fixture, workflow: "review", pane: fixture.authorPane, roles: ["partner=p2"])
     #expect(code(current) == CLIErrorCode.dispatchPending)
     if case .failure(let failure) = current {
       #expect(failure.message.contains("launch-dispatch"))
@@ -435,10 +503,73 @@ struct WorkflowRunAdmissionTests {
     #expect(admitted.session.run.phase == .launching(ordinal: 1))
     // Restrict the role to Amp, whose runtime cannot start with a prompt: the resolver reaches `.ask`.
     try fixture.write(
-      Self.worktreeOnly.replacing("source: launch", with: "source: launch\n    agents: [amp]"), to: "launch-only")
+      Self.worktreeOnly.replacing("source: launch", with: "source: launch\n    agents: [amp]"),
+      to: "launch-only")
     #expect(
       code(admit(fixture, workflow: "launch-only", pane: nil, isCaller: false))
         == CLIErrorCode.profileNotFound)
+  }
+
+  @Test func rejectedStartLeavesNoHistory() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanUp() }
+    try fixture.write(Self.review, to: "review")
+    let storage = WorkflowHistoryStorage(baseURL: fixture.root.appending(path: "history"))
+    withDependencies {
+      $0[WorkflowHistoryStorageKey.self] = storage
+    } operation: {
+      #expect(
+        code(
+          admit(
+            fixture, workflow: "review", pane: fixture.authorPane,
+            roles: ["partner=p2"], inputs: ["rounds=9"])) == CLIErrorCode.invalidArgument)
+    }
+    #expect(try storage.directories().isEmpty)
+  }
+
+  @Test func initialRecordFailureLeavesNoHistory() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanUp() }
+    try fixture.write(Self.review, to: "review")
+    let storage = WorkflowHistoryStorage(baseURL: fixture.root.appending(path: "history"))
+    let directory = storage.directory(
+      root: fixture.repoRoot, createdAt: fixture.environment.now, runID: fixture.nextRunID.value)
+    fixture.beforeToken.setValue {
+      try FileManager.default.createDirectory(
+        at: directory.appending(path: "run.json"), withIntermediateDirectories: true)
+    }
+    withDependencies {
+      $0[WorkflowHistoryStorageKey.self] = storage
+    } operation: {
+      #expect(
+        code(
+          admit(
+            fixture, workflow: "review", pane: fixture.authorPane, roles: ["partner=p2"]))
+          == CLIErrorCode.workflowFailed)
+    }
+    #expect(try storage.directories().isEmpty)
+  }
+
+  @Test func duplicateRunIDFailurePreservesExistingHistory() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanUp() }
+    try fixture.write(Self.review, to: "review")
+    let storage = WorkflowHistoryStorage(baseURL: fixture.root.appending(path: "history"))
+    let directory = storage.directory(
+      root: fixture.repoRoot, createdAt: fixture.environment.now, runID: fixture.nextRunID.value)
+    try storage.prepare(directory)
+    let marker = directory.appending(path: "existing.txt")
+    try Data("existing".utf8).write(to: marker)
+    withDependencies {
+      $0[WorkflowHistoryStorageKey.self] = storage
+    } operation: {
+      #expect(
+        code(
+          admit(
+            fixture, workflow: "review", pane: fixture.authorPane, roles: ["partner=p2"]))
+          == CLIErrorCode.workflowFailed)
+    }
+    #expect(try Data(contentsOf: marker) == Data("existing".utf8))
   }
 
   @Test func startTimeValidationMapsToInvalidArgument() throws {

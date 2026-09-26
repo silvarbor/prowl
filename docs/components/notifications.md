@@ -78,6 +78,9 @@ top of its section. **Jump to Latest Unread** (`⌘⌥U`) takes you straight to 
 - `commandFinishedNotificationEnabled` + `commandFinishedNotificationThreshold` —
   long-command notifications and their minimum duration.
 - `showNotificationDotOnDock`, `dockBounceMode` — Dock badge & bounce.
+- **Agent Island** — an opt-in (`agentIslandEnabled`, default off) top-of-screen projection of
+  Active Agents. Settings → Agents → Display selects Automatic placement or a fixed display; see
+  [agent-island](agent-island.md).
 
 Full field detail: [`reference/settings-fields.md`](../reference/settings-fields.md).
 

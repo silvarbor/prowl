@@ -17,8 +17,9 @@ small colored marker.
 Books near the open one are brighter; distant ones fade — so you always know where
 you are in the stack.
 
-**Toggle Shelf:** `⌘⇧↩` (`toggle_shelf`). Requires at least one open worktree;
-otherwise it's a no-op.
+**Toggle Shelf:** `⌘⇧↩` (`toggle_shelf`). Requires at least one available worktree
+or plain folder. A plain folder can open Shelf even if no Git repository is loaded;
+entering Shelf opens its terminal if necessary.
 
 ## Keyboard navigation (the whole point)
 
@@ -72,7 +73,7 @@ selection.
   active while visible, even if the Active Agents panel is hidden.
 - Spine tint follows the **repository color** when set (toggle
   `shelfSpineTintFollowsRepositoryColor`); otherwise a fallback
-  (`shelfSpineTintFallback`: neutral or system tint) is used.
+  (`shelfSpineTintFallback`: Gray (`neutral`) or System Tint) is used.
 - In Shelf, the toolbar and leading band are tinted with the open book's repo
   color (`windowTintMode`).
 

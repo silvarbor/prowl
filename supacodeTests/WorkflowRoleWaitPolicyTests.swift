@@ -3,6 +3,7 @@
 // precedence, detector stabilization, blocked grace, appearance grace, pending records.
 
 import Foundation
+import ProwlCLIShared
 import Testing
 
 @testable import supacode
@@ -20,13 +21,14 @@ struct WorkflowRoleWaitPolicyTests {
 
   private func snapshot(
     _ status: AgentDisplayState?, signal: AgentSignal? = nil, revision: UInt64 = 1, live: Bool = true,
-    channelCoversTurnEnded: Bool = true
+    channelCoversTurnEnded: Bool = true, decision: AgentStateDecision? = nil,
+    screenDetection: AgentScreenDetection? = nil
   ) -> AgentConditionSnapshot {
     let agent = status.map { status in
       ActiveAgentEntry(
         id: surfaceID, worktreeID: "w1", worktreeName: "App", workingDirectory: URL(fileURLWithPath: "/App"),
         tabID: TerminalTabID(rawValue: UUID()), paneTitle: "Agent", surfaceID: surfaceID, paneIndex: 0,
-        iconLookupToken: "claude", agent: .claude,
+        iconLookupToken: "claude", agent: .claude, stateDecision: decision,
         rawState: status == .working ? .working : status == .blocked ? .blocked : .idle,
         displayState: status, lastChangedAt: Self.start)
     }
@@ -39,7 +41,35 @@ struct WorkflowRoleWaitPolicyTests {
       ] : []
     return AgentConditionSnapshot(
       agent: agent, signal: signal, revision: revision, isLive: live,
-      signals: AgentSignalsPayload(channels: channels, last: nil, lastBinding: nil))
+      signals: AgentSignalsPayload(channels: channels, last: nil, lastBinding: nil),
+      screenDetection: screenDetection)
+  }
+
+  @Test func unpromptedStarfieldComposerReleasesWorkflowAfterStabilizing() {
+    let detection = DetectedAgent.codex.detectScreen(
+      in: """
+          ⠈    ⠐
+        ›⠁Ask Codex to do anything⡀
+          ⠠    ⢀
+          gpt-6-astra medium · Context 0% used
+        """)
+    let idle = snapshot(.idle, channelCoversTurnEnded: false, screenDetection: detection)
+    var policy = WorkflowRoleWaitPolicy()
+    #expect(policy.observe(idle, pendingDispatchID: nil, elapsedMilliseconds: 0) == nil)
+    #expect(policy.observe(idle, pendingDispatchID: nil, elapsedMilliseconds: 2_000) == .idle)
+  }
+
+  @Test(arguments: [AgentStateDecisionReason.logOpenWork, .native(.working)])
+  func parentCompletionCannotReleaseOutstandingChildWork(reason: AgentStateDecisionReason) {
+    let busy = AgentStateDecision(
+      state: .working, reason: reason, logSessionID: "root", hasOutstandingWork: true)
+    let initial = snapshot(.working, decision: busy)
+    let ended = snapshot(.working, signal: signal(.turnEnded, at: 1), revision: 2, decision: busy)
+    let baseline = AgentConditionEvidence.Baseline(snapshot: initial)
+    #expect(AgentConditionEvidence.idleVerdict(for: ended, baseline: baseline) == .busy("working"))
+    var policy = WorkflowRoleWaitPolicy()
+    #expect(policy.observe(initial, pendingDispatchID: nil, elapsedMilliseconds: 0) == nil)
+    #expect(policy.observe(ended, pendingDispatchID: nil, elapsedMilliseconds: 10_000) == nil)
   }
 
   @Test func aFreshExactTurnEndedEndsTheWaitEvenWhileTheScreenStillShowsWorking() {

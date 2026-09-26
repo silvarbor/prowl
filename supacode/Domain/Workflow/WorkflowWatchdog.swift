@@ -5,12 +5,13 @@
 // state at every expiry so a later event alone never decides anything.
 
 import Foundation
+import ProwlCLIShared
 
 // MARK: - Settings and vocabulary
 
 nonisolated struct WorkflowWatchdogSettings: Equatable, Sendable {
-  /// Below this the detector cannot have settled (2 s stabilization + 3 s working hold) and
-  /// OpenCode can fire `session.idle` twice.
+  /// Leaves room for the detector's 2 s heuristic stabilization plus poll/event skew;
+  /// OpenCode can also fire `session.idle` twice.
   static let turnGraceFloor: Duration = .seconds(5)
 
   let turnGrace: Duration

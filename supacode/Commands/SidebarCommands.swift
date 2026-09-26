@@ -28,6 +28,17 @@ struct SidebarCommands: Commands {
         KeyboardShortcutModifier(shortcut: keyboardShortcut(for: AppShortcuts.CommandID.toggleActiveAgentsPanel))
       )
       .help(helpText(title: "Active Agents", commandID: AppShortcuts.CommandID.toggleActiveAgentsPanel))
+      Button("Agent Island") {
+        store.send(.repositories(.activeAgents(.islandToggleRoster)))
+      }
+      .modifier(KeyboardShortcutModifier(shortcut: keyboardShortcut(for: AppShortcuts.CommandID.toggleAgentIsland)))
+      .help(helpText(title: "Agent Island", commandID: AppShortcuts.CommandID.toggleAgentIsland))
+      .disabled(
+        !AgentIslandVisibilityPolicy.isVisible(
+          isEnabled: store.settings.agentIslandEnabled,
+          onlyShowWithAgents: store.settings.agentIslandOnlyShowWithAgents,
+          hasEntries: !store.repositories.activeAgents.entries.isEmpty
+        ))
       Button("Select Next Agent") {
         store.send(.repositories(.activeAgents(.selectNextEntry)))
       }
@@ -90,7 +101,7 @@ struct SidebarCommands: Commands {
   @ViewBuilder
   private var shelfBookMenuButtons: some View {
     ForEach(Array(AppShortcuts.shelfBookSelectionCommandIDs.enumerated()), id: \.element) { index, commandID in
-      let title = "Select Book \(index + 1)"
+      let title: LocalizedStringResource = "Select Book \(index + 1)"
       Button(title) {
         store.send(.repositories(.selectShelfBook(index + 1)))
       }
@@ -103,11 +114,12 @@ struct SidebarCommands: Commands {
     store.resolvedKeybindings.keyboardShortcut(for: commandID)
   }
 
-  private func helpText(title: String, commandID: String) -> String {
+  private func helpText(title: LocalizedStringResource, commandID: String) -> String {
+    let localizedTitle = String(localized: title)
     if let shortcut = store.resolvedKeybindings.display(for: commandID) {
-      return "\(title) (\(shortcut))"
+      return "\(localizedTitle) (\(shortcut))"
     }
-    return title
+    return localizedTitle
   }
 }
 

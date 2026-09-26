@@ -1,4 +1,5 @@
 import Foundation
+import ProwlCLIShared
 
 extension WorktreeTerminalState {
   /// How recently the user must have typed for us to consider the exit user-initiated.
@@ -98,13 +99,15 @@ extension WorktreeTerminalState {
       return
     }
 
-    let title = (exitCode == nil || exitCode == 0) ? "Command finished" : "Command failed"
+    let title =
+      (exitCode == nil || exitCode == 0)
+      ? String(localized: "Command finished") : String(localized: "Command failed")
     let formattedDuration = Self.formatDuration(durationSeconds)
     let body: String
     if let code = exitCode, code != 0 {
-      body = "Failed (exit code \(code)) after \(formattedDuration)"
+      body = String(localized: "Failed (exit code \(code)) after \(formattedDuration)")
     } else {
-      body = "Completed in \(formattedDuration)"
+      body = String(localized: "Completed in \(formattedDuration)")
     }
     appendNotification(title: title, body: body, surfaceId: surfaceId)
   }
@@ -113,7 +116,8 @@ extension WorktreeTerminalState {
     title: String,
     body: String,
     surfaceId: UUID,
-    treatAsViewedWhenWorktreeIsVisible: Bool = false
+    treatAsViewedWhenWorktreeIsVisible: Bool = false,
+    workflowRunID: UUID? = nil
   ) {
     let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
     let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -132,7 +136,7 @@ extension WorktreeTerminalState {
           title: trimmedTitle,
           body: trimmedBody,
           createdAt: Date(),
-          isRead: isRead
+          isRead: isRead, workflowRunID: workflowRunID
         ),
         at: 0
       )

@@ -1,5 +1,92 @@
 # Changelog
 
+## [2026.9.25](https://github.com/onevcat/Prowl/releases/tag/v2026.9.25)
+
+### Improved
+
+- Agent Island takes up less menu bar space on notched displays, leaving more room for status items. Its expanded agent list now matches the compact bar’s width.
+- When space is tight, Agent Island hides the Idle count. Idle agents remain in the expanded list, and VoiceOver still reads all counts.
+
+### Fixed
+
+- Fixed sidebar repository and worktree reordering becoming unresponsive after an earlier drag. Insertion indicators and drops now remain active until the interaction ends, including when retrying after cancellation.
+
+## [2026.9.23](https://github.com/onevcat/Prowl/releases/tag/v2026.9.23)
+
+### New
+
+- Added Simplified Chinese localization. Choose Follow System, English, or Simplified Chinese in Settings → General → Language, then restart Prowl to apply the change.
+- Search the command palette using Chinese command names or English keywords when using the Chinese interface.
+
+### Fixed
+
+- Prowl now finds another working Git installation when Apple’s Git tooling is unavailable, keeping worktrees and Shelf accessible.
+- Repository load failures now preserve running terminal sessions and show guidance for Git or access problems. Use Retry after resolving the issue.
+- Worktrees moved externally with `git worktree move` now refresh automatically. Detection also remains reliable after Git’s worktree registry is replaced or recreated.
+- Shelf now opens for plain folders even when Git is unavailable.
+
+## [2026.9.18](https://github.com/onevcat/Prowl/releases/tag/v2026.9.18)
+
+### Improved
+
+- `prowl create tab --background` now works for plain Shell tabs as well as Agent Profile launches, so scripts and agents can open a tab without changing your selection or taking focus. Background split panes still require a Profile.
+
+### Fixed
+
+- Fixed workflows waiting indefinitely to deliver their first task to a fresh Codex session that shows an animated starfield background.
+
+## [2026.9.17](https://github.com/onevcat/Prowl/releases/tag/v2026.9.17)
+
+### New
+
+- Undo closed panes and tabs with ⌘Z or ⌘⇧T within five seconds by default, restoring running programs, scrollback, and split positions—even after closing a worktree’s last tab. Press ⌘⇧Z to close them again; the restore window follows Ghostty’s `undo-timeout` setting.
+- Start the built-in Review Loop workflow to open a selectable reviewer beside your current session. It defaults to 2–4 rounds, checks previous findings and searches for new issues each round, and saves results in workflow history with unresolved work clearly marked.
+
+### Fixed
+
+- Claude’s status no longer incorrectly switches from Working to Idle when you browse transcript history. Activity detection also better accounts for ongoing child tasks and background shell jobs.
+- On macOS 27, clicking inside an active Canvas terminal or Command-clicking a link no longer unexpectedly changes card selection.
+
+## [2026.9.12](https://github.com/onevcat/Prowl/releases/tag/v2026.9.12)
+
+Agent Workflows are here: turn repeatable tasks into reusable flows that coordinate your agents, run scripts, and keep every step and result in one place.
+
+### New
+
+- **Build your own agent workflows.** Combine prompts, agent launches, script actions, conditions, and loops in a reusable workflow. Assign Agent Profiles to roles so different agents can take care of different steps. Open **Manage Workflows** from the Agents menu, start with a single-agent or multi-agent template, or use **Create with Agent** to help write one for your task.
+- **Start and follow a run from Prowl.** Launch workflows from the Agents menu, Command Palette, or Settings. The start sheet shows the participating agents, options, and steps before you run; toolbar controls let you follow progress and resolve steps that need attention. Local script actions require review and approval before execution.
+- **Hand off a task without losing context.** The built-in **Handoff** workflow asks the current agent to write a briefing, saves it with repository and session context, and can launch a receiving agent in a new tab to continue. Choose save-only to keep the packet for later. Handoff now uses the workflow interface; existing `prowl handoff` commands show migration instructions.
+- **Inspect every step in Workflow History.** Open the history button beside the toolbar bell to revisit prompts, agent deliveries, script outputs, errors, and repeated steps. Filter by pane or worktree, open result files, and export a finished run as a ZIP. Local history is kept for three days; export runs you want to retain.
+
+### Improved
+
+- Codex status tracking now uses available session lifecycle evidence to keep panes **Working** through quiet periods while turns or child tasks remain active. Approval and question prompts still take precedence as **Blocked**.
+- Smaller release downloads, with the same signed and notarized app.
+
+### Fixed
+
+- Completion reminders remain unread until you view the pane in the active, visible window, including Canvas panes that have been panned offscreen.
+- Fixed active Claude Code sessions appearing Idle when the composer has a session title, and active Codex sessions appearing Idle with animated backgrounds.
+
+## [2026.9.6](https://github.com/onevcat/Prowl/releases/tag/v2026.9.6)
+
+Meet **Agent Island**: all your agents' status at your Mac's notch, with a new way to navigate built for speed and muscle memory. See who is working, waiting for you, finished, or idle at a glance, then jump straight to any agent—even from another app.
+
+### New
+
+- **All-agent status at the notch.** Agent Island brings together status counts for every agent, with visible reminders for agents waiting for input or with unread results. It fits around the notch on your chosen display, or appears as a draggable floating bar on displays without one.
+- **Agent navigation that becomes muscle memory.** Assign **Toggle Agent Island** in Display or Shortcuts settings, then use the same quick sequence from any app: open the roster, select with arrow keys, and press Return to jump to the pane. Number keys 1–9 jump directly to an agent on the current page; agents waiting for input and unread completions get priority when the roster opens. You can also expand the island and click any agent.
+- **Off by default, easy to enable.** Turn on **Show Agent Island** in **Settings → Agents → Display**, or use the island toggle in the **Active Agents** panel.
+- Active Agents and Agent Island preferences now live together in Settings → Agents → Display, including placement, opacity, and whether to hide the island when empty.
+- Settings → Agents → CLI & Skills now shows whether the CLI connection is listening, with a reason when it is unavailable.
+
+### Fixed
+
+- Closing a pane or tab now asks for confirmation if an affected terminal received editing input within the last 10 seconds or still has active input-method composition.
+- Agent status now follows explicit runtime indicators more reliably, including Pi and OMP working indicators, Codex background-terminal waits, and Copilot streaming output. Claude Code and Copilot workspace-trust prompts correctly appear as Blocked.
+- Adding a Custom Command now scrolls to and focuses its name editor, so typing renames the command instead of the repository.
+- Fixed completion-hook setup for Codex configurations without an existing notifier.
+
 ## [2026.8.31](https://github.com/onevcat/Prowl/releases/tag/v2026.8.31)
 
 This release lays the groundwork for Agent Workflows — multi-step, multi-agent orchestrations that Prowl runs and supervises for you. The engine and CLI are ready to try today; the complete experience, including starting and managing runs from the UI, arrives together with the workflow interface in an upcoming release.

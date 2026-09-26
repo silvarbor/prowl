@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import ProwlCLIShared
 import SwiftUI
 
 /// Settings → Agents → Profiles: the profile list, with a native drill-in editor page per
@@ -49,8 +50,10 @@ struct AgentProfilesSettingsView: View {
       VStack(alignment: .leading, spacing: 4) {
         Text("Agent Profiles")
         Text(
-          "Named launch presets for verified agents, available from the toolbar Agents menu "
-            + "and the Command Palette. The first enabled profile is the recommendation fallback."
+          """
+          Named launch presets for verified agents, available from the toolbar Agents menu \
+          and the Command Palette. The first enabled profile is the recommendation fallback.
+          """
         )
         .foregroundStyle(.secondary)
       }

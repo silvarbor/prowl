@@ -1,3 +1,4 @@
+import ProwlCLIShared
 import Testing
 
 @testable import supacode
@@ -31,6 +32,32 @@ struct ScreenHeuristicsTests {
     #expect(DetectedAgent.pi.detectState(in: "⣾ Working...") == .working)
     #expect(DetectedAgent.pi.detectState(in: "Interrupting…") == .working)
     #expect(DetectedAgent.pi.detectState(in: "Done") == .idle)
+  }
+
+  @Test func piDetectsFramedWorkingFooter() {
+    let screen = """
+      Planning state delegation for run targets
+
+      ── ⠧ Working ────────────────────────────────────────────────────────────────
+
+      ──────────────────────────────────────────────────────────────────────────────
+      ~/Sync/github/Prowl (fix/workflow-settings-ui)
+      ↑270k ↓28k R4.9M CH99.9% $4.347 (sub) 75.6%/272k (auto) · gpt-5.6-sol · xhigh
+      """
+
+    #expect(DetectedAgent.pi.detectState(in: screen) == .working)
+    #expect(
+      DetectedAgent.pi.detectState(
+        in: """
+          ── ⠧ Working ────────────────────────────────────────────────────────────────
+          retained transcript line 1
+          retained transcript line 2
+          retained transcript line 3
+          retained transcript line 4
+          retained transcript line 5
+          """
+      ) == .idle
+    )
   }
 
   @Test func piDetectsRunningAsyncSubagentCardAfterParentTurnSettles() {
@@ -306,6 +333,34 @@ struct ScreenHeuristicsTests {
             ◯ general-purpose  Answer a simple question  0s
           """
       ) == .working
+    )
+  }
+
+  @Test func claudeDetectsUnnumberedWorkspaceTrustChoices() {
+    // Newer Claude releases render this initial trust prompt without the
+    // numbered menu used by earlier releases. Its selected "No, exit" row is still a
+    // live user decision, not the ordinary composer that means idle.
+    #expect(
+      claudeProfileState(
+        // swiftlint:disable line_length
+        in: """
+          Accessing workspace:
+
+          /Users/user
+
+          Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your team). If not, take a moment to review what's in this folder first.
+
+          Claude Code'll be able to read, edit, and execute files here.
+
+          Security guide
+
+          ❯ No, exit
+            Yes, I trust this folder
+
+          Enter to confirm · Esc to cancel
+          """
+        // swiftlint:enable line_length
+      ) == .blocked
     )
   }
 
@@ -643,6 +698,26 @@ struct ScreenHeuristicsTests {
     #expect(codexProfileState(in: "Ready for input") == .idle)
   }
 
+  @Test func codexDetectsBackgroundTerminalWaitFooter() {
+    let footers = [
+      "• Waiting for background terminal (2m 34s • esc to interrupt)"
+        + " · 1 background terminal running · /ps to view · /stop to close",
+      "• Waiting for background terminals (2m 34s • esc to interrupt)"
+        + " · 2 background terminals running · /ps to view · /stop to close",
+    ]
+
+    for footer in footers {
+      let detection = DetectedAgent.codex.detectScreen(
+        in: """
+          \(footer)
+            └ xcodebuild test
+          """
+      )
+      #expect(detection.state == .working)
+      #expect(detection.reason == .matched(CodexScreenProfile.RuleID.backgroundTerminalFooter))
+    }
+  }
+
   @Test func codexCurrentPreSessionBlockersAreBlocked() {
     #expect(
       codexProfileState(
@@ -857,6 +932,18 @@ struct ScreenHeuristicsTests {
       codexProfileState(
         in: """
           • Working (4s • esc to interrupt)
+          • Completed line 1
+            Completed line 2
+            Completed line 3
+          › Improve documentation in @filename
+          gpt-5.6-terra xhigh · Context 5% used
+          """
+      ) == .idle
+    )
+    #expect(
+      codexProfileState(
+        in: """
+          • Waiting for background terminal (2m 34s • esc to interrupt) · 1 background terminal running
           • Completed line 1
             Completed line 2
             Completed line 3

@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import Foundation
+import ProwlCLIShared
 import SwiftUI
 
 @Reducer
@@ -7,6 +8,17 @@ struct SettingsFeature {
   @ObservableState
   struct State: Equatable {
     var appearanceMode: AppearanceMode
+    /// The language choice. It mirrors the per-app `AppleLanguages` default, which
+    /// System Settings can also change, so `refreshAppLanguage` reads it again.
+    var appLanguage: AppLanguage
+    /// Immutable snapshot of the language this launch runs in, captured before any
+    /// localized UI is built. The pending-change hint compares the next launch with it.
+    var effectiveLanguageAtLaunch: ResolvedAppLanguage
+    /// The system languages without the per-app override. Used only to predict the
+    /// language of the next launch when the choice is "Follow System".
+    var systemPreferredLanguages: [String] = []
+    /// Localizations the app ships, in fallback order.
+    var supportedAppLanguages: [String] = ResolvedAppLanguage.allCases.map(\.rawValue)
     var defaultEditorID: String
     var confirmBeforeQuit: Bool
     var updatesAutomaticallyCheckForUpdates: Bool
@@ -39,6 +51,11 @@ struct SettingsFeature {
     var autoShowActiveAgentsPanel: Bool
     var showActiveAgentTabTitles: Bool
     var showActiveAgentStatusInShelf: Bool
+    var agentIslandOnlyShowWithAgents: Bool
+    var agentIslandEnabled: Bool
+    var agentIslandDisplayPreference: AgentIslandDisplayPreference
+    var agentIslandFloatingPositions: AgentIslandFloatingPositions
+    var agentIslandSilentOpacity: Double
     var windowTintMode: WindowTintMode
     var shelfSpineTintFallback: ShelfSpineTintFallback
     var shelfSpineTintFollowsRepositoryColor: Bool
@@ -55,20 +72,34 @@ struct SettingsFeature {
     var detectRepositoryIconsAutomatically: Bool
     var cliInstallStatus: CLIInstallStatus = .notInstalled
     var cliInstallShowAlert: Bool = true
+    /// Whether this app instance is listening for `prowl` (docs-ai 063 D1); refreshed with the
+    /// install status when the CLI & Skills page appears.
+    var cliServiceStatus: CLIServiceStatus = .stopped
     /// Whether macOS will render the Dock notification badge (notification
     /// permission + the per-app "Badge app icon" switch). Refreshed when the
     /// Notifications settings pane appears.
     var dockBadgeAuthorization: SystemNotificationClient.DockBadgeAuthorization = .available
     var selection: SettingsSection? = .general
+    var shortcutNavigationTargetCommandID: String?
     var repositorySettings: RepositorySettingsFeature.State?
     var globalCustomCommands: GlobalCustomCommandsFeature.State?
     var agentProfiles: AgentProfilesFeature.State?
     var agentSkills: AgentSkillsFeature.State?
+    var workflows: WorkflowsSettingsFeature.State?
     @Presents var alert: AlertState<Alert>?
 
-    init(settings: GlobalSettings = .default) {
+    init(
+      settings: GlobalSettings = .default,
+      appLanguage: AppLanguage = .system,
+      effectiveLanguageAtLaunch: ResolvedAppLanguage = .english,
+      systemPreferredLanguages: [String] = []
+    ) {
       let normalizedDefaultEditorID = OpenWorktreeAction.normalizedDefaultEditorID(settings.defaultEditorID)
       appearanceMode = settings.appearanceMode
+      self.appLanguage = appLanguage
+      self.effectiveLanguageAtLaunch = effectiveLanguageAtLaunch
+      self.systemPreferredLanguages = systemPreferredLanguages
+
       defaultEditorID = normalizedDefaultEditorID
       confirmBeforeQuit = settings.confirmBeforeQuit
       updatesAutomaticallyCheckForUpdates = settings.updatesAutomaticallyCheckForUpdates
@@ -102,6 +133,11 @@ struct SettingsFeature {
       autoShowActiveAgentsPanel = settings.autoShowActiveAgentsPanel
       showActiveAgentTabTitles = settings.showActiveAgentTabTitles
       showActiveAgentStatusInShelf = settings.showActiveAgentStatusInShelf
+      agentIslandOnlyShowWithAgents = settings.agentIslandOnlyShowWithAgents
+      agentIslandEnabled = settings.agentIslandEnabled
+      agentIslandDisplayPreference = settings.agentIslandDisplayPreference
+      agentIslandFloatingPositions = settings.agentIslandFloatingPositions
+      agentIslandSilentOpacity = settings.agentIslandSilentOpacity
       windowTintMode = settings.windowTintMode
       shelfSpineTintFallback = settings.shelfSpineTintFallback
       shelfSpineTintFollowsRepositoryColor = settings.shelfSpineTintFollowsRepositoryColor
@@ -113,6 +149,18 @@ struct SettingsFeature {
       externalDiffToolID = settings.externalDiffToolID
       externalDiffCustomCommand = settings.externalDiffCustomCommand
       detectRepositoryIconsAutomatically = settings.detectRepositoryIconsAutomatically
+    }
+
+    /// True only when the language the *next normal launch* (no command-line
+    /// override) would resolve to differs from this launch's snapshot — so
+    /// system → the same explicit language the system already resolved to
+    /// never produces a false "takes effect after restart" hint.
+    var languageChangePending: Bool {
+      AppLanguageResolver.resolve(
+        preference: appLanguage,
+        platformLanguages: systemPreferredLanguages,
+        supportedLanguages: supportedAppLanguages
+      ) != effectiveLanguageAtLaunch
     }
 
     var globalSettings: GlobalSettings {
@@ -152,6 +200,11 @@ struct SettingsFeature {
         autoShowActiveAgentsPanel: autoShowActiveAgentsPanel,
         showActiveAgentTabTitles: showActiveAgentTabTitles,
         showActiveAgentStatusInShelf: showActiveAgentStatusInShelf,
+        agentIslandOnlyShowWithAgents: agentIslandOnlyShowWithAgents,
+        agentIslandEnabled: agentIslandEnabled,
+        agentIslandDisplayPreference: agentIslandDisplayPreference,
+        agentIslandFloatingPositions: agentIslandFloatingPositions,
+        agentIslandSilentOpacity: agentIslandSilentOpacity,
         windowTintMode: windowTintMode,
         windowTintCustomColor: TintColor(windowTintCustomColor),
         showRunButtonInToolbar: showRunButtonInToolbar,
@@ -171,16 +224,27 @@ struct SettingsFeature {
   enum Action: BindableAction {
     case task
     case settingsLoaded(GlobalSettings)
+    case setAppLanguage(AppLanguage)
+    case refreshAppLanguage
+
     case setSelection(SettingsSection?)
     case setSystemNotificationsEnabled(Bool)
     case setCommandFinishedNotificationThreshold(String)
     case setTerminalFontSize(Float32?)
+    case setAgentIslandEnabled(Bool)
+    case setAgentIslandFloatingPosition(displayID: String, normalizedPosition: Double)
+    case setAgentIslandSilentOpacity(Double)
+    case setAgentIslandDisplayPreference(AgentIslandDisplayPreference)
+    case resetIslandFloatingPositionsTapped
+    case showShortcutButtonTapped(commandID: String)
+    case shortcutNavigationTargetConsumed
     case clearShortcutButtonTapped(commandID: String)
     case clearTerminalLayoutSnapshotButtonTapped
     case installCLIButtonTapped(showAlert: Bool = true)
     case uninstallCLIButtonTapped
     case cliInstallCompleted(Result<String, CLIInstallError>)
     case refreshCLIInstallStatus
+    case refreshCLIServiceStatus
     case refreshDockBadgeAuthorization
     case dockBadgeAuthorizationResponse(SystemNotificationClient.DockBadgeAuthorization)
     case showNotificationPermissionAlert(errorMessage: String?)
@@ -188,6 +252,7 @@ struct SettingsFeature {
     case globalCustomCommands(GlobalCustomCommandsFeature.Action)
     case agentProfiles(AgentProfilesFeature.Action)
     case agentSkills(AgentSkillsFeature.Action)
+    case workflows(WorkflowsSettingsFeature.Action)
     case alert(PresentationAction<Alert>)
     case delegate(Delegate)
     case binding(BindingAction<State>)
@@ -210,17 +275,21 @@ struct SettingsFeature {
     case terminalFontSizeChanged(Float32?)
     case terminalLayoutSnapshotCleared(success: Bool)
     case cliInstallCompleted(CLIInstallResultMessage)
+    case editWorkspace(Repository.ID)
   }
 
+  @Dependency(FeatureFlags.self) private var featureFlags
   @Dependency(AnalyticsClient.self) private var analyticsClient
   @Dependency(SystemNotificationClient.self) private var systemNotificationClient
   @Dependency(NotificationSoundClient.self) private var notificationSoundClient
   @Dependency(TerminalLayoutPersistenceClient.self) private var terminalLayoutPersistence
   @Dependency(CLIInstallClient.self) private var cliInstallClient
+  @Dependency(CLIServiceStatusClient.self) private var cliServiceStatusClient
+  @Dependency(AppLanguageClient.self) private var appLanguageClient
 
   var body: some Reducer<State, Action> {
     BindingReducer()
-    Reduce { state, action in
+    Reduce<State, Action> { state, action in
       switch action {
       case .task:
         @Shared(.settingsFile) var settingsFile
@@ -275,6 +344,11 @@ struct SettingsFeature {
         state.autoShowActiveAgentsPanel = normalizedSettings.autoShowActiveAgentsPanel
         state.showActiveAgentTabTitles = normalizedSettings.showActiveAgentTabTitles
         state.showActiveAgentStatusInShelf = normalizedSettings.showActiveAgentStatusInShelf
+        state.agentIslandOnlyShowWithAgents = normalizedSettings.agentIslandOnlyShowWithAgents
+        state.agentIslandEnabled = normalizedSettings.agentIslandEnabled
+        state.agentIslandDisplayPreference = normalizedSettings.agentIslandDisplayPreference
+        state.agentIslandFloatingPositions = normalizedSettings.agentIslandFloatingPositions
+        state.agentIslandSilentOpacity = normalizedSettings.agentIslandSilentOpacity
         state.windowTintMode = normalizedSettings.windowTintMode
         state.shelfSpineTintFallback = normalizedSettings.shelfSpineTintFallback
         state.shelfSpineTintFollowsRepositoryColor = normalizedSettings.shelfSpineTintFollowsRepositoryColor
@@ -289,6 +363,22 @@ struct SettingsFeature {
         state.detectRepositoryIconsAutomatically = normalizedSettings.detectRepositoryIconsAutomatically
         state.syncGlobalDefaults(from: normalizedSettings)
         return .send(.delegate(.settingsChanged(normalizedSettings)))
+
+      case .setAppLanguage(let language):
+        guard language != state.appLanguage else { return .none }
+        state.appLanguage = language
+        let analyticsEnabled = state.analyticsEnabled
+        return .run { [analyticsClient, appLanguageClient] _ in
+          appLanguageClient.set(language)
+          if analyticsEnabled {
+            analyticsClient.capture("settings_changed", nil)
+          }
+        }
+
+      case .refreshAppLanguage:
+        state.appLanguage = appLanguageClient.current()
+        state.systemPreferredLanguages = appLanguageClient.systemLanguages()
+        return .none
 
       case .binding(\.notificationSound):
         let sound = state.notificationSound
@@ -327,6 +417,46 @@ struct SettingsFeature {
           persist(state, captureAnalytics: false, emitSettingsChanged: false),
           .send(.delegate(.terminalFontSizeChanged(fontSize)))
         )
+
+      case .setAgentIslandEnabled(let enabled):
+        state.agentIslandEnabled = enabled
+        state.syncGlobalDefaults(from: state.globalSettings)
+        return persist(state)
+
+      case .setAgentIslandFloatingPosition(let displayID, let normalizedPosition):
+        state.agentIslandFloatingPositions.setNormalizedPosition(
+          normalizedPosition,
+          for: displayID
+        )
+        return persist(state)
+
+      case .setAgentIslandSilentOpacity(let opacity):
+        state.agentIslandSilentOpacity = AgentIslandOpacityPolicy.normalizedSilentOpacity(opacity)
+        return persist(state, captureAnalytics: false)
+
+      case .setAgentIslandDisplayPreference(let preference):
+        state.agentIslandDisplayPreference = preference
+        return persist(state)
+
+      case .resetIslandFloatingPositionsTapped:
+        guard !state.agentIslandFloatingPositions.isEmpty else { return .none }
+        state.agentIslandFloatingPositions = .init()
+        return persist(state)
+
+      case .showShortcutButtonTapped(let commandID):
+        guard
+          KeybindingSchemaDocument.appDefaultsV1.commands.contains(where: {
+            $0.id == commandID && $0.allowUserOverride
+          })
+        else {
+          return .none
+        }
+        state.shortcutNavigationTargetCommandID = commandID
+        return .send(.setSelection(.shortcuts))
+
+      case .shortcutNavigationTargetConsumed:
+        state.shortcutNavigationTargetCommandID = nil
+        return .none
 
       case .clearShortcutButtonTapped(let commandID):
         guard
@@ -388,19 +518,19 @@ struct SettingsFeature {
         if state.cliInstallShowAlert {
           if path.isEmpty {
             state.alert = AlertState {
-              TextState("Command Line Tool Uninstalled")
+              TextState(String(localized: "Command Line Tool Uninstalled"))
             } actions: {
-              ButtonState(action: .dismiss) { TextState("OK") }
+              ButtonState(action: .dismiss) { TextState(String(localized: "OK")) }
             } message: {
-              TextState("The prowl command line tool has been removed.")
+              TextState(String(localized: "The prowl command line tool has been removed."))
             }
           } else {
             state.alert = AlertState {
-              TextState("Command Line Tool Installed")
+              TextState(String(localized: "Command Line Tool Installed"))
             } actions: {
-              ButtonState(action: .dismiss) { TextState("OK") }
+              ButtonState(action: .dismiss) { TextState(String(localized: "OK")) }
             } message: {
-              TextState("The prowl command is now available at \(path).")
+              TextState(String(localized: "The prowl command is now available at \(path)."))
             }
           }
         }
@@ -411,9 +541,9 @@ struct SettingsFeature {
       case .cliInstallCompleted(.failure(let error)):
         if state.cliInstallShowAlert {
           state.alert = AlertState {
-            TextState("Command Line Tool Error")
+            TextState(String(localized: "Command Line Tool Error"))
           } actions: {
-            ButtonState(action: .dismiss) { TextState("OK") }
+            ButtonState(action: .dismiss) { TextState(String(localized: "OK")) }
           } message: {
             TextState(error.message)
           }
@@ -423,6 +553,10 @@ struct SettingsFeature {
 
       case .refreshCLIInstallStatus:
         state.cliInstallStatus = cliInstallClient.installationStatus(cliDefaultInstallPath)
+        return .none
+
+      case .refreshCLIServiceStatus:
+        state.cliServiceStatus = cliServiceStatusClient.current()
         return .none
 
       case .refreshDockBadgeAuthorization:
@@ -436,32 +570,42 @@ struct SettingsFeature {
 
       case .showNotificationPermissionAlert:
         state.alert = AlertState {
-          TextState("Prowl cannot send system notifications")
+          TextState(String(localized: "Prowl cannot send system notifications"))
         } actions: {
           ButtonState(action: .openSystemNotificationSettings) {
-            TextState("Open System Settings")
+            TextState(String(localized: "Open System Settings"))
           }
           ButtonState(role: .cancel, action: .dismiss) {
-            TextState("Cancel")
+            TextState(String(localized: "Cancel"))
           }
         } message: {
           TextState(
-            "Notification permission is turned off. Open System Settings to allow Prowl to send notifications."
+            String(
+              localized:
+                "Notification permission is turned off. Open System Settings to allow Prowl to send notifications.")
           )
         }
         return .none
 
       case .setSelection(let selection):
-        let resolvedSelection = selection ?? .general
+        let resolvedSelection = selection == .workflows && !featureFlags.workflowUI ? .profiles : selection ?? .general
         state.selection = resolvedSelection
         // Owned here rather than in AppFeature so `ifLet` observes the removal and cancels an
-        // in-flight link effect instead of letting its completion land on nil child state.
+        // in-flight link effect (or the Workflows page's directory watcher) instead of letting
+        // its completion land on nil child state.
         if resolvedSelection == .commandLineTool {
           if state.agentSkills == nil {
             state.agentSkills = .init()
           }
         } else {
           state.agentSkills = nil
+        }
+        if resolvedSelection == .workflows {
+          if state.workflows == nil {
+            state.workflows = .init()
+          }
+        } else {
+          state.workflows = nil
         }
         return .none
 
@@ -473,6 +617,9 @@ struct SettingsFeature {
       case .alert:
         return .none
 
+      case .repositorySettings(.delegate(.editWorkspace(let repositoryID))):
+        return .send(.delegate(.editWorkspace(repositoryID)))
+
       case .repositorySettings:
         return .none
 
@@ -483,6 +630,9 @@ struct SettingsFeature {
         return .none
 
       case .agentSkills:
+        return .none
+
+      case .workflows:
         return .none
 
       case .delegate:
@@ -500,6 +650,9 @@ struct SettingsFeature {
     }
     .ifLet(\.agentSkills, action: \.agentSkills) {
       AgentSkillsFeature()
+    }
+    .ifLet(\.workflows, action: \.workflows) {
+      WorkflowsSettingsFeature()
     }
     // Without this, alert state is only cleared by the view's dismiss
     // writeback: state set while the Settings window is closed (or closed

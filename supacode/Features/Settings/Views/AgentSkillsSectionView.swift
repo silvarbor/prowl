@@ -1,11 +1,17 @@
 import ComposableArchitecture
+import ProwlCLIShared
 import SwiftUI
 
 /// Settings → Agents → CLI & Skills → Agent Skills: one row per bundled `user`
 /// skill, with one full-width line per detected target (status, link folder, action).
 /// Link behavior stays in `AgentSkillsFeature`; this view only presents it.
 struct AgentSkillsSectionView: View {
+  @Dependency(FeatureFlags.self) private var featureFlags
   @Bindable var store: StoreOf<AgentSkillsFeature>
+
+  private var visibleSkills: [AgentSkillsFeature.SkillRow] {
+    store.skills.filter { featureFlags.showsSkill($0.id) }
+  }
 
   var body: some View {
     Section {
@@ -19,8 +25,10 @@ struct AgentSkillsSectionView: View {
       VStack(alignment: .leading, spacing: 4) {
         Text("Agent Skills")
         Text(
-          "Link the skills bundled in this app into your agents' skill folders, so every agent "
-            + "reads the version that matches the installed app. Same status as prowl skills list."
+          """
+          Link the skills bundled in this app into your agents' skill folders, so every agent \
+          reads the version that matches the installed app. Same status as prowl skills list.
+          """
         )
         .foregroundStyle(.secondary)
       }
@@ -41,23 +49,25 @@ struct AgentSkillsSectionView: View {
         }
       }
       .font(.callout)
-    } else if store.skills.isEmpty {
+    } else if visibleSkills.isEmpty {
       Text("This app bundles no installable skills.")
         .foregroundStyle(.secondary)
         .font(.callout)
     } else {
       if store.noTargetsDetected {
         Text(
-          "No agent skill folder was found in your home directory. Run Claude Code, Codex, or another "
-            + "agent once so it creates its folder, or create one from a terminal with "
-            + "prowl skills install --target claude|codex|agents."
+          """
+          No agent skill folder was found in your home directory. Run Claude Code, Codex, or another \
+          agent once so it creates its folder, or create one from a terminal with \
+          prowl skills install --target claude|codex|agents.
+          """
         )
         .foregroundStyle(.secondary)
         .font(.callout)
       }
-      ForEach(store.skills) { row in
+      ForEach(visibleSkills) { row in
         skillRow(row)
-        if row.id != store.skills.last?.id {
+        if row.id != visibleSkills.last?.id {
           Divider()
         }
       }
@@ -192,11 +202,15 @@ struct AgentSkillsSectionView: View {
 
   private func statusText(_ status: SymlinkInstallStatus) -> String {
     switch status {
-    case .installed: "Installed"
-    case .notInstalled: "Not installed"
+    case .installed: String(localized: "Installed")
+    case .notInstalled: String(localized: "Not installed")
     case .installedDifferentSource(_, let destination):
-      destination == nil ? "Real file or directory" : "Linked elsewhere"
-    case .broken: "Broken link"
+      if destination == nil {
+        String(localized: "Real file or directory")
+      } else {
+        String(localized: "Linked elsewhere")
+      }
+    case .broken: String(localized: "Broken link")
     }
   }
 
@@ -208,7 +222,7 @@ struct AgentSkillsSectionView: View {
       nil
     case .installedDifferentSource(_, let destination):
       destination.map { ("→ \(abbreviated($0))", true) }
-        ?? ("Not a symlink — Prowl never deletes it. Remove it manually to link here.", false)
+        ?? (String(localized: "Not a symlink — Prowl never deletes it. Remove it manually to link here."), false)
     case .broken(_, let destination):
       ("→ \(abbreviated(destination))", true)
     }

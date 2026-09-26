@@ -1,11 +1,13 @@
 # Active Agents Panel
 
+> Workflow UI is enabled by default. Start Prowl with `PROWL_WORKFLOW_UI=0` to hide its UI and skill row; CLI workflow and skill commands remain available. The switch is read at process startup.
+
 > A live list of every running agent across all worktrees, with status and
 > one-click jump-to-agent. Your mission-control roster.
 
 **Keywords:** active agents, agents panel, running agents, status list, working, blocked, done, idle, jump to agent, roster
 
-**Related:** [agent-detection](agent-detection.md) · [cli](cli.md) · [notifications](notifications.md) · [command-palette](command-palette.md) · [canvas](canvas.md)
+**Related:** [agent-island](agent-island.md) · [agent-detection](agent-detection.md) · [cli](cli.md) · [notifications](notifications.md) · [command-palette](command-palette.md) · [canvas](canvas.md)
 
 ## What it is
 
@@ -47,16 +49,20 @@ Command Palette → "Toggle Active Agents Panel".
 
 Rows appear in the order agents are first detected. (See
 [agent-detection](agent-detection.md) for how these states are determined.)
+A row whose pane is bound to an active workflow run replaces its subtitle with
+`in <workflow> · <role>` for the life of the run.
 
 ## Interactions
 
 - **Click a row** → focuses that worktree + tab + pane and brings Prowl forward. A
-  **Done** row downgrades to **Idle** once focused.
+  **Done** row downgrades to **Idle** once viewed in the active, visible Prowl window.
+  Internal focus changes while the window is inactive do not clear the completion.
 - **Right-click a row** for the context menu:
-  - **Hand Off…** — opens the Hand Off HUD for that agent's pane
-    (selecting and focusing it first), regardless of which pane currently has
-    focus. Same flow as the toolbar Agents capsule; see
-    [handoff](handoff.md).
+  - **Run Workflow ▸** — one entry per runnable workflow visible to the
+    agent's worktree; starts it with this pane fixed as the `current` role's
+    source (opening the start sheet when something needs a decision). Shown
+    only when at least one runnable workflow exists. See
+    [workflows](workflows.md).
   - **Mark as Read** — clears the pane's unread notifications without
     switching to it.
   - **Copy Path** / **Reveal in Finder** — the agent's working directory (or
@@ -76,7 +82,14 @@ Rows appear in the order agents are first detected. (See
 
 When nothing is running: "New agents will appear here".
 
+The top-right button toggles **Show Agent Island**, using the same persisted setting as
+Settings → Agents → Display. The top-inset icon uses the primary theme color when enabled and neutral gray when disabled.
+Its tooltip names the next action. Holding Command replaces the button with the existing agent
+navigation shortcut hint; customized bindings keep the existing hint-suppression behavior.
+
 ## Settings
+
+Settings → Agents → Display:
 
 - `autoShowActiveAgentsPanel` — pop the panel open when an agent appears.
 - `showActiveAgentTabTitles` — show each agent's pane title (surface title,
@@ -84,6 +97,8 @@ When nothing is running: "New agents will appear here".
 - `showActiveAgentStatusInShelf` — show detected agent status markers on Shelf
   tab icons.
 - Panel height and hidden/shown state are persisted automatically.
+- [Agent Island](agent-island.md) projects this same roster at the top of a selected display;
+  its state counts and Blocked/Done callouts do not introduce separate state or read logic.
 
 ## Relationship to other features
 

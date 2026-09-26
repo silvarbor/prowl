@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import ProwlCLIShared
 import Sharing
 import SwiftUI
 
@@ -13,6 +14,15 @@ final class WorktreeTerminalManager {
   private let layoutPersistence: TerminalLayoutPersistenceClient
   private let skipsSurfaceCreationForTesting: Bool
   private let targetHandleRegistry = TerminalTargetHandleRegistry()
+  /// App-wide undo history for pane and tab closes (docs-ai 069). One stack
+  /// for every worktree: ⌘Z undoes the most recent close wherever it happened.
+  @ObservationIgnored let closeUndoStack: TerminalCloseUndoStack
+  @ObservationIgnored private var isRedoingClose = false
+  /// Codex forwarding records of retained (undoable) closes. The hook is
+  /// revoked at close time like any other, but the record's file stays off
+  /// the retirement list while the process may come back: retirement cleanup
+  /// (2 s) would otherwise delete it inside the undo window.
+  @ObservationIgnored private var deferredForwardingRecords: [UUID: CodexForwardingRecord] = [:]
   @ObservationIgnored private let agentObservationStore: AgentObservationStore
   @ObservationIgnored private let agentDispatchStore: AgentDispatchStore
   @ObservationIgnored private let codexConfigReadProcess: CodexConfigReadProcess
@@ -47,9 +57,10 @@ final class WorktreeTerminalManager {
     agentObservationBufferCapacity: Int = 64,
     agentDispatchStore: AgentDispatchStore = AgentDispatchStore(),
     codexConfigReadProcess: CodexConfigReadProcess = CodexConfigReadProcess(),
-    codexShellEnvironmentResolver: @escaping @Sendable (URL, String?) async -> CodexShellLaunchEnvironment? = {
-      await CodexShellLaunchEnvironmentProbe.resolve(cwd: $0, pathOverride: $1)
-    },
+    codexShellEnvironmentResolver:
+      @escaping @Sendable (URL, String?) async -> CodexShellLaunchEnvironment? = {
+        await CodexShellLaunchEnvironmentProbe.resolve(cwd: $0, pathOverride: $1)
+      },
     hookResourcesProvider: @escaping @MainActor () -> AgentHookResources? = {
       guard let url = SupacodePaths.bundledCLIURL else { return nil }
       return AgentHookResources(
@@ -62,19 +73,33 @@ final class WorktreeTerminalManager {
       )
     },
     forwardingRecordBaseDirectory: URL = SupacodePaths.agentHookForwardingDirectory,
+    undoCloseClock: any Clock<Duration> = ContinuousClock(),
     skipsSurfaceCreationForTesting: Bool = false
   ) {
     self.runtime = runtime
     self.layoutPersistence = layoutPersistence
     self.skipsSurfaceCreationForTesting = skipsSurfaceCreationForTesting
     self.preferredFontSize = preferredFontSize
-    self.agentObservationStore = AgentObservationStore(bufferCapacity: agentObservationBufferCapacity)
+    self.closeUndoStack = TerminalCloseUndoStack(timeout: runtime.undoTimeout(), clock: undoCloseClock)
+    self.agentObservationStore = AgentObservationStore(
+      bufferCapacity: agentObservationBufferCapacity)
     self.agentDispatchStore = agentDispatchStore
     self.codexConfigReadProcess = codexConfigReadProcess
     self.codexShellEnvironmentResolver = codexShellEnvironmentResolver
     self.hookResourcesProvider = hookResourcesProvider
     self.forwardingRecordBaseDirectory = forwardingRecordBaseDirectory
     baselineFontSize = runtime.defaultFontSize()
+    closeUndoStack.onExpire = { [weak self] surfaces in
+      self?.free(surfaces)
+    }
+    runtime.onAppUndo = { [weak self] in self?.undoClose() ?? false }
+    runtime.onAppRedo = { [weak self] in self?.redoClose() ?? false }
+  }
+
+  /// The undo/redo key with no terminal surface focused (docs-ai 069.002):
+  /// Ghostty resolves the binding, `onAppUndo` / `onAppRedo` do the work.
+  func performAppUndoRedoKey(_ event: NSEvent) -> Bool {
+    runtime?.performAppUndoRedoBinding(for: event) ?? false
   }
 
   func handleCommand(_ command: TerminalClient.Command) {
@@ -276,7 +301,9 @@ final class WorktreeTerminalManager {
   }
 
   func discardPreparedAgentProfileLaunch(_ preparation: PreparedAgentProfileLaunch) {
-    guard let record = preparation.context.request.plan.hookRegistration?.forwardingRecord else { return }
+    guard let record = preparation.context.request.plan.hookRegistration?.forwardingRecord else {
+      return
+    }
     codexForwardingRecordStore?.discardUnexposed(record)
   }
 
@@ -361,7 +388,8 @@ final class WorktreeTerminalManager {
     case .createTab(let worktree, let runSetupScriptIfNew):
       Task { createTabAsync(in: worktree, runSetupScriptIfNew: runSetupScriptIfNew) }
     case .createTabWithInput(
-      let worktree, let input, let workingDirectory, let runSetupScriptIfNew, let autoCloseOnSuccess,
+      let worktree, let input, let workingDirectory, let runSetupScriptIfNew,
+      let autoCloseOnSuccess,
       let customCommandName, let customCommandIcon):
       Task {
         createTabAsync(
@@ -375,7 +403,8 @@ final class WorktreeTerminalManager {
         )
       }
     case .createSplitWithInput(
-      let worktree, let direction, let input, let autoCloseOnSuccess, let customCommandName, let customCommandIcon):
+      let worktree, let direction, let input, let autoCloseOnSuccess, let customCommandName,
+      let customCommandIcon):
       Task {
         createSplitAsync(
           in: worktree,
@@ -458,13 +487,16 @@ final class WorktreeTerminalManager {
     switch command {
     case .prune(let ids):
       prune(keeping: ids)
+    case .prunePreservingRepositories(let ids, let repositoryIDs):
+      prune(keeping: ids, preservingRepositoryIDs: repositoryIDs)
     case .setNotificationsEnabled(let enabled):
       setNotificationsEnabled(enabled)
     case .setCommandFinishedNotification(let enabled, let threshold):
       setCommandFinishedNotification(enabled: enabled, threshold: threshold)
     case .setCanvasMode(let enabled):
       if enabled {
-        terminalLogger.info("[CanvasExit] enteringCanvas previousSelectedWorktree=\(selectedWorktreeID ?? "nil")")
+        terminalLogger.info(
+          "[CanvasExit] enteringCanvas previousSelectedWorktree=\(selectedWorktreeID ?? "nil")")
         selectedWorktreeID = nil
       }
     case .setSelectedWorktreeID(let id):
@@ -490,7 +522,8 @@ final class WorktreeTerminalManager {
       terminalLogger.info("[LayoutRestore] received saveLayoutSnapshot command")
       Task { await persistLayoutSnapshot() }
     case .restoreLayoutSnapshot(let worktrees):
-      terminalLogger.info("[LayoutRestore] received restoreLayoutSnapshot command, worktrees=\(worktrees.count)")
+      terminalLogger.info(
+        "[LayoutRestore] received restoreLayoutSnapshot command, worktrees=\(worktrees.count)")
       Task { await restoreLayoutSnapshot(from: worktrees) }
     case .presentTabIconPicker(let worktree):
       state(for: worktree).presentIconPickerForFocusedTab()
@@ -577,7 +610,9 @@ final class WorktreeTerminalManager {
     surfaceID: UUID
   ) {
     for signal in update.activatedSignals {
-      guard let epoch = agentObservationStore.currentEvidenceEpoch(surfaceID: surfaceID) else { continue }
+      guard let epoch = agentObservationStore.currentEvidenceEpoch(surfaceID: surfaceID) else {
+        continue
+      }
       noteDispatchEvidence(signal, surfaceID: surfaceID, evidenceEpoch: epoch)
     }
     for record in update.revokedForwardingRecords {
@@ -650,6 +685,10 @@ final class WorktreeTerminalManager {
   func currentAgentSignalEvidence(surfaceID: UUID) -> AgentCurrentSignalEvidence {
     _ = agentSignalsPayload(surfaceID: surfaceID)
     return agentObservationStore.currentSignalEvidence(surfaceID: surfaceID)
+  }
+
+  func currentAgentSignalEvidenceSnapshot(surfaceID: UUID) -> AgentCurrentSignalEvidence {
+    agentObservationStore.currentSignalEvidence(surfaceID: surfaceID)
   }
 
   func currentEligibleAgentSignal(surfaceID: UUID) -> AgentSignal? {
@@ -734,7 +773,8 @@ final class WorktreeTerminalManager {
       throw AgentDispatchStoreError.bindingMissing
     }
     refreshEvidenceEpoch(surfaceID: surfaceID)
-    guard let evidenceEpoch = agentObservationStore.currentEvidenceEpoch(surfaceID: surfaceID) else {
+    guard let evidenceEpoch = agentObservationStore.currentEvidenceEpoch(surfaceID: surfaceID)
+    else {
       throw AgentDispatchStoreError.bindingMissing
     }
     guard agentDispatchStore.pendingSnapshot(surfaceID: surfaceID) == nil else {
@@ -759,6 +799,11 @@ final class WorktreeTerminalManager {
 
   func cancelAgentDispatchIssuance(dispatchID: String) {
     agentDispatchStore.cancelIssuance(dispatchID: dispatchID)
+  }
+
+  func agentScreenDetection(surfaceID: UUID) -> AgentScreenDetection? {
+    activeWorktreeStates.lazy.compactMap { $0.lastAgentScreenScanBySurface[surfaceID]?.detection }
+      .first
   }
 
   func agentDispatchSnapshot(dispatchID: String) -> AgentDispatchSnapshot? {
@@ -792,7 +837,9 @@ final class WorktreeTerminalManager {
     try agentDispatchStore.complete(surfaceID: surfaceID, outcome: outcome, summary: summary)
   }
 
-  func abandonAgentDispatch(dispatchID: String, reason: String) throws -> AgentDispatchMutationResult {
+  func abandonAgentDispatch(dispatchID: String, reason: String) throws
+    -> AgentDispatchMutationResult
+  {
     try agentDispatchStore.abandon(dispatchID: dispatchID, reason: reason)
   }
 
@@ -854,6 +901,31 @@ final class WorktreeTerminalManager {
       enabled: commandFinishedNotificationEnabled,
       threshold: commandFinishedNotificationThreshold
     )
+    state.undoCloseTimeout = closeUndoStack.timeout
+    state.onCloseRecorded = { [weak self] record in
+      guard let self else { return }
+      closeUndoStack.recordClose(record, clearingRedo: !isRedoingClose)
+    }
+    state.onRetainedSurfaceExited = { [weak self] surfaceID in
+      self?.closeUndoStack.discardSurface(id: surfaceID)
+    }
+    state.onManagedHookReadopted = { [weak self] surfaceID, registration in
+      guard let self else { return }
+      // The close revoked the hook; the process kept its token and forwarding
+      // record, so register the same token again under a fresh evidence epoch
+      // and keep the record out of retirement for good.
+      deferredForwardingRecords.removeValue(forKey: surfaceID)
+      _ = agentObservationStore.registerManagedHook(registration, surfaceID: surfaceID)
+    }
+    state.onSurfacesReset = { [weak self] in
+      self?.closeUndoStack.discard { $0 == worktree.id }
+    }
+    state.onUndoRequested = { [weak self] in
+      self?.undoClose() ?? false
+    }
+    state.onRedoRequested = { [weak self] in
+      self?.redoClose() ?? false
+    }
     state.isSelected = { [weak self] in
       self?.selectedWorktreeID == worktree.id
     }
@@ -899,7 +971,8 @@ final class WorktreeTerminalManager {
       self?.syncPreferredFontSize(from: worktree.id)
     }
     state.onCustomCommandSucceeded = { [weak self] name, durationMs in
-      self?.emit(.customCommandSucceeded(worktreeID: worktree.id, name: name, durationMs: durationMs))
+      self?.emit(
+        .customCommandSucceeded(worktreeID: worktree.id, name: name, durationMs: durationMs))
     }
     states[worktree.id] = state
     terminalLogger.info("Created terminal state for worktree \(worktree.id)")
@@ -918,19 +991,15 @@ final class WorktreeTerminalManager {
       }
       emit(.agentEntryChanged(entry))
     }
-    state.onAgentEntryRemoved = { [weak self] surfaceID in
+    state.onAgentEntryRemoved = { [weak self, weak state] surfaceID in
       guard let self else { return }
-      if let record = agentObservationStore.revokeManagedHook(surfaceID: surfaceID) {
-        retireForwardingRecord(record)
-      }
+      revokeManagedHook(surfaceID: surfaceID, state: state)
       agentObservationStore.publishAgentRemoved(surfaceID: surfaceID)
       emit(.agentEntryRemoved(surfaceID))
     }
-    state.onSurfaceClosed = { [weak self] surfaceID in
+    state.onSurfaceClosed = { [weak self, weak state] surfaceID in
       guard let self else { return }
-      if let record = agentObservationStore.revokeManagedHook(surfaceID: surfaceID) {
-        retireForwardingRecord(record)
-      }
+      revokeManagedHook(surfaceID: surfaceID, state: state)
       agentObservationStore.publishSurfaceClosed(surfaceID: surfaceID)
       agentDispatchStore.surfaceClosed(surfaceID: surfaceID)
     }
@@ -1022,13 +1091,102 @@ final class WorktreeTerminalManager {
     return state.closeFocusedSurface()
   }
 
-  func prune(keeping worktreeIDs: Set<Worktree.ID>) {
+  /// Restores the most recent close that is still restorable. Entries whose
+  /// worktree is gone or whose tab changed shape since the close are freed and
+  /// skipped. Returns `false` when nothing was restored, so the key falls
+  /// through to the terminal program.
+  @discardableResult
+  func undoClose() -> Bool {
+    while let record = closeUndoStack.popUndo() {
+      guard let state = states[record.worktreeID] else {
+        free(record.retainedSurfaces)
+        continue
+      }
+      switch record {
+      case .pane(let worktreeID, let pane):
+        guard state.restore(pane: pane) else {
+          free([pane.view])
+          continue
+        }
+        closeUndoStack.recordReopen(.pane(worktreeID: worktreeID, surfaceID: pane.view.id))
+        emit(.tabRestored(worktreeID: worktreeID, tabID: pane.tabID))
+        return true
+      case .tabs(let worktreeID, let tabs):
+        // Each record's index was taken from the array as it shrank, so the
+        // batch replays in reverse to land every tab back where it was.
+        var restored: [TerminalTabID] = []
+        for tab in tabs.reversed() {
+          if state.restore(tab: tab, select: tabs.count == 1 || tab.wasSelected) {
+            restored.append(tab.tabID)
+          } else {
+            free(tab.tree.leaves())
+          }
+        }
+        guard !restored.isEmpty else { continue }
+        closeUndoStack.recordReopen(.tabs(worktreeID: worktreeID, restored.reversed()))
+        let revealed = tabs.first { $0.wasSelected && restored.contains($0.tabID) }?.tabID ?? restored.last
+        if let revealed {
+          emit(.tabRestored(worktreeID: worktreeID, tabID: revealed))
+        }
+        return true
+      }
+    }
+    return false
+  }
+
+  /// Closes again what the last undo restored, without a confirmation prompt.
+  @discardableResult
+  func redoClose() -> Bool {
+    guard let record = closeUndoStack.popRedo(), let state = states[record.worktreeID] else {
+      return false
+    }
+    isRedoingClose = true
+    defer { isRedoingClose = false }
+    switch record {
+    case .pane(_, let surfaceID):
+      return state.closeSurface(id: surfaceID, confirmation: .skip)
+    case .tabs(_, let tabIDs):
+      let present = tabIDs.filter { id in state.tabManager.tabs.contains { $0.id == id } }
+      guard !present.isEmpty else { return false }
+      state.closeTabs(present)
+      return true
+    }
+  }
+
+  /// Final disposal of retained surfaces: whatever the close deferred for a
+  /// possible restore is released now.
+  private func free(_ surfaces: [GhosttySurfaceView]) {
+    for surface in surfaces {
+      if let record = deferredForwardingRecords.removeValue(forKey: surface.id) {
+        retireForwardingRecord(record)
+      }
+      surface.closeSurface()
+    }
+  }
+
+  private func revokeManagedHook(surfaceID: UUID, state: WorktreeTerminalState?) {
+    guard let record = agentObservationStore.revokeManagedHook(surfaceID: surfaceID) else { return }
+    if state?.isRetainedForUndo(surfaceID) == true {
+      deferredForwardingRecords[surfaceID] = record
+    } else {
+      retireForwardingRecord(record)
+    }
+  }
+
+  func prune(keeping worktreeIDs: Set<Worktree.ID>, preservingRepositoryIDs: Set<Repository.ID> = []) {
+    let failedRoots = Set(preservingRepositoryIDs.map { URL(fileURLWithPath: $0).standardizedFileURL })
+    // A failed load is not evidence that its terminal sessions were removed.
+    let preservedIDs = states.compactMap { id, state in
+      failedRoots.contains(state.repositoryRootURL.standardizedFileURL) ? id : nil
+    }
+    let worktreeIDs = worktreeIDs.union(preservedIDs)
     var removed: [WorktreeTerminalState] = []
     var removedIDs: Set<Worktree.ID> = []
     for (id, state) in states where !worktreeIDs.contains(id) {
       removed.append(state)
       removedIDs.insert(id)
     }
+    closeUndoStack.discard { removedIDs.contains($0) }
     for state in removed {
       state.closeAllSurfaces()
     }
@@ -1062,6 +1220,14 @@ final class WorktreeTerminalManager {
 
   func stateContaining(tabId: TerminalTabID) -> WorktreeTerminalState? {
     activeWorktreeStates.first { $0.surfaceView(for: tabId) != nil }
+  }
+
+  func hasManagedHookForTesting(surfaceID: UUID) -> Bool {
+    agentObservationStore.hasManagedHook(surfaceID: surfaceID)
+  }
+
+  func forwardingRecordStoreForTesting() -> CodexForwardingRecordStore? {
+    forwardingRecordStore()
   }
 
   private func containsSurface(_ surfaceID: UUID) -> Bool {
@@ -1246,10 +1412,12 @@ final class WorktreeTerminalManager {
   func persistLayoutSnapshotSync() {
     guard let payload = makeLayoutSnapshotPayload() else {
       terminalLogger.info("[LayoutRestore] persistSync: no active states, clearing snapshot")
-      discardTerminalLayoutSnapshot(at: SupacodePaths.terminalLayoutSnapshotURL, fileManager: .default)
+      discardTerminalLayoutSnapshot(
+        at: SupacodePaths.terminalLayoutSnapshotURL, fileManager: .default)
       return
     }
-    terminalLogger.info("[LayoutRestore] persistSync: saving \(payload.worktrees.count) worktree(s)")
+    terminalLogger.info(
+      "[LayoutRestore] persistSync: saving \(payload.worktrees.count) worktree(s)")
     let saved = saveTerminalLayoutSnapshot(
       payload,
       at: SupacodePaths.terminalLayoutSnapshotURL,
@@ -1277,7 +1445,8 @@ final class WorktreeTerminalManager {
       )
     }
     for (index, worktree) in worktrees.enumerated() {
-      terminalLogger.info("[LayoutRestore] restore: available[\(index)] id=\(worktree.id) name=\(worktree.name)")
+      terminalLogger.info(
+        "[LayoutRestore] restore: available[\(index)] id=\(worktree.id) name=\(worktree.name)")
     }
     let didRestore = applyLayoutSnapshotPayload(payload, availableWorktrees: worktrees)
     terminalLogger.info("[LayoutRestore] restore: applyResult=\(didRestore)")
@@ -1287,7 +1456,8 @@ final class WorktreeTerminalManager {
       )
       emit(.layoutRestored(selectedWorktreeID: payload.selectedWorktreeID))
     } else {
-      terminalLogger.warning("[LayoutRestore] restore: clearing invalid snapshot and emitting failure toast")
+      terminalLogger.warning(
+        "[LayoutRestore] restore: clearing invalid snapshot and emitting failure toast")
       _ = await layoutPersistence.clearSnapshot()
       emit(.layoutRestoreFailed(message: layoutRestoreFailureMessage))
     }
@@ -1344,7 +1514,8 @@ final class WorktreeTerminalManager {
       terminalLogger.info("[LayoutRestore] apply: restoring worktree \(worktree.id)")
       let state = state(for: worktree)
       guard state.applyLayoutSnapshot(snapshot) else {
-        terminalLogger.warning("[LayoutRestore] apply: applyLayoutSnapshot failed for \(worktree.id)")
+        terminalLogger.warning(
+          "[LayoutRestore] apply: applyLayoutSnapshot failed for \(worktree.id)")
         state.closeAllSurfaces()
         for restored in restoredStates {
           restored.closeAllSurfaces()
@@ -1354,7 +1525,8 @@ final class WorktreeTerminalManager {
       restoredStates.append(state)
     }
 
-    terminalLogger.info("[LayoutRestore] apply: successfully restored \(restoredStates.count) worktree(s)")
+    terminalLogger.info(
+      "[LayoutRestore] apply: successfully restored \(restoredStates.count) worktree(s)")
     return true
   }
 
@@ -1377,6 +1549,7 @@ final class WorktreeTerminalManager {
       self.hookResourcesProvider = { nil }
       self.forwardingRecordBaseDirectory = SupacodePaths.agentHookForwardingDirectory
       self.baselineFontSize = 13
+      self.closeUndoStack = TerminalCloseUndoStack(timeout: .zero)
     }
   #endif
 }

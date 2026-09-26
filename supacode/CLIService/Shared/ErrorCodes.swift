@@ -86,16 +86,11 @@ nonisolated public enum CLIErrorCode {
   // Pane
   public static let paneFailed = "PANE_FAILED"
 
-  // Handoff
-  public static let handoffFailed = "HANDOFF_FAILED"
-  /// Self-handoff invoked without `--brief`/`--no-brief`.
-  public static let briefRequired = "BRIEF_REQUIRED"
-  /// Inline briefing text failed validation; nothing was written.
-  public static let invalidBrief = "INVALID_BRIEF"
-  /// No selector was given and the caller is not inside a Prowl pane.
+  // Retired commands
+  public static let handoffRetired = "HANDOFF_RETIRED"
+
+  // Source resolution
   public static let sourceRequired = "SOURCE_REQUIRED"
-  /// A HUD-injected request was already superseded by its fallback.
-  public static let handoffRequestSuperseded = "HANDOFF_REQUEST_SUPERSEDED"
 
   // Workflow
   public static let workflowFailed = "WORKFLOW_FAILED"
@@ -104,7 +99,7 @@ nonisolated public enum CLIErrorCode {
   public static let workflowInvalid = "WORKFLOW_INVALID"
   /// `workflow run` named a definition the user switched off.
   public static let workflowDisabled = "WORKFLOW_DISABLED"
-  // Run-time codes of the workflow runner (dsl-spec §9); emitted by `workflow run/done` from B3 on.
+  // Run-time codes of the workflow runner (dsl-spec §9); emitted by `workflow run/deliver` from B3 on.
   public static let runNotFound = "RUN_NOT_FOUND"
   public static let paneBusy = "PANE_BUSY"
   public static let roleMismatch = "ROLE_MISMATCH"

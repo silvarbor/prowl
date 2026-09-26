@@ -4,9 +4,9 @@
 > an agent) can list panes, read their screens, run commands and capture output,
 > send keystrokes, focus, and open/close tabs and panes programmatically.
 
-**Keywords:** prowl cli, command line, prowl list, prowl agents, prowl agents read, prowl agents signal, prowl agents dispatch, prowl agents wait, prowl profiles list, prowl skills, skills install, agent skills, prowl workflow, workflow status center, workflow run panel, workflow attention, prowl read, prowl send, prowl key, prowl focus, prowl create, prowl close, prowl open, prowl handoff, pane id, agent, profile, automation, json, capture, socket
+**Keywords:** prowl cli, command line, prowl list, prowl agents, prowl agents read, prowl agents signal, prowl agents dispatch, prowl agents wait, prowl profiles list, prowl skills, skills install, agent skills, prowl workflow, workflow status center, workflow run panel, workflow attention, prowl read, prowl send, prowl key, prowl focus, prowl create, prowl close, prowl open, pane id, agent, profile, automation, json, capture, socket
 
-**Related:** [terminal](terminal.md) · [concepts](../concepts.md) · [active-agents](active-agents.md) · [agent-detection](agent-detection.md) · the bundled **`prowl-cli` skill** (`skills/prowl-cli/SKILL.md`)
+**Related:** [terminal](terminal.md) · [concepts](../concepts.md) · [active-agents](active-agents.md) · [agent-detection](agent-detection.md) · the bundled **`prowl-cli`** (`skills/prowl-cli/SKILL.md`) and **`prowl-workflow`** (`skills/prowl-workflow/SKILL.md`) skills
 
 > This is the reference for the `prowl` binary. For an opinionated, safety-first
 > *workflow* guide (recipes, pitfalls, quoting), the repository also ships the
@@ -26,8 +26,10 @@ From the app: **Settings → Agents → CLI & Skills → Install**, or Command
 Palette → "Install Command Line Tool". This symlinks `prowl` into
 `/usr/local/bin` (prompting for admin if needed). The Settings page also shows
 the local Unix socket path `prowl` uses to reach the app (`PROWL_CLI_SOCKET`
-overrides it for both processes). Once `prowl` is installed, `prowl skills install` links
-the bundled `prowl-cli` skill into your agents' skill folders (see
+overrides it for both processes) and a **Status** row saying whether this app is
+listening there — with the reason when it is not (typically another Prowl
+instance owns the socket). Once `prowl` is installed, `prowl skills install` links
+the bundled `prowl-cli` and `prowl-workflow` skills into your agents' skill folders (see
 [`prowl skills`](#prowl-skills)).
 
 ## Global options
@@ -109,7 +111,7 @@ step that depends on knowing yourself inside the success branch. When it is unse
 matches nothing, stop rather than guess: `pane.cwd` only narrows the candidates — several panes
 usually share one cwd — and may stand in for you only when the match is unique; never
 assume the *focused* pane is you. Prowl itself never trusts the variable for
-attribution; commands that need the calling pane (`handoff`, `agents signal`) resolve it
+attribution; commands that need the calling pane (`agents signal`) resolve it
 from the caller's process ancestry.
 
 ## Commands
@@ -130,7 +132,7 @@ Each item contains:
 (`claude`, `codex`, `gemini`, `cursor-agent`, …) or `null` when none is detected.
 It comes from the same agent detection described in
 [agent-detection](agent-detection.md) and is useful for coordinating who is who
-(e.g. before a [handoff](#prowl-handoff)).
+(for example before an agent workflow run).
 
 These are JSON fields, so `tab.id` and `pane.id` remain UUIDs. Plain `prowl list`
 instead shows `tN` for each tab and `pN` for each pane; pass either handle back
@@ -169,10 +171,13 @@ Each agent contains:
   `pi`; Oh My Pi uses `omp`, with `oh-my-pi` preserved as a display alias.
 - `status`, `raw_state`: detected agent state. `status` is one of `blocked`,
   `working`, `done`, `idle`; `raw_state` is the lower-level detector state.
-- `detection_reason`: optional stable screen-classifier explanation. A profile rule
-  emits its rule ID, an ordinary profile miss emits `fallback.noRuleMatched`, and an
-  unmigrated classifier emits `legacy.detector`. The field is omitted when no current
-  screen result is available and never includes screen text.
+- `detection_reason`: optional explanation of the final state decision, shared with
+  `agents read`. Log evidence reports `log.openWork` or `log.turnEnded`; Claude native
+  evidence reports `native.working`, `native.blocked`, or `native.idle`; fallback
+  decisions report `screen.*`. Screen-only decisions report the profile rule ID,
+  `fallback.noRuleMatched`, or `legacy.detector`.
+- `screen_reason`: optional rule ID for the current screen classification, including
+  when log or native evidence controls the final state. Both reason fields omit screen text.
 - `last_changed_at`: ISO-8601 timestamp for the most recent state change.
 - `project`: display-oriented `name`, `branch`, `path` resolved from the
   agent's working directory.
@@ -203,7 +208,7 @@ Immediate, read-only semantic snapshot for a currently active **Codex** or
 it never guesses from focus, accepts no worktree/tab selector, and has no wait or
 timeout mode.
 
-Default text output always reports current `Status`, classifier `Reason`, last
+Default text output always reports current `Status`, decision `Reason`, last
 state-change time, and a result state. A blocked snapshot includes the raw current
 interaction under `## Blocker`, preserving the question, numbered choices, selected
 row, and Enter/Esc hints. It is the right command for deciding what another agent is
@@ -329,6 +334,10 @@ dispatch per pane: while a record is pending, a second `dispatch` fails with
 first. Because a receipt can precede Codex's own `turn-ended` by a second or two, wait for
 `--until idle` between rounds before dispatching again.
 
+For Codex, observed open main or child work in the selected log keeps this
+precondition busy even if a parent `turn-ended` signal has arrived. Claude native
+Working/Waiting applies the same veto, including assigned children and background shell work.
+
 The coordinator waits by exact id:
 
 ```bash
@@ -361,9 +370,12 @@ prowl agents wait "$pane" --until idle --include-screen 40 --json
 ```
 
 Conditions are `idle`, `blocked`, `changed`, and `exit`. Results include their evidence
-`source` and `confidence`; `observation.status` and `raw_state` always describe what the
-screen detector saw at that moment, so a `turn-ended` signal can satisfy `idle` while `status`
-still reads `working`. Condition waits observe state, not edges: a signal that already existed
+`source` and `confidence`; `observation.status` describes the combined detected state,
+while `raw_state` retains the screen observation. A `turn-ended` signal can satisfy
+`idle` while a stale screen still reads `working`, but cannot override observed open
+main or child work in the selected Codex log, or Claude native outstanding work.
+Both providers remain heuristic and do not create completion receipts.
+Condition waits observe state, not edges: a signal that already existed
 when the wait was armed satisfies `idle` or `blocked` only if the detector agrees (idle/done,
 or blocked), while a signal arriving after arming counts on its own. To wait for the *next*
 turn edge rather than the current state, use `--until changed`, which needs a post-baseline
@@ -467,22 +479,27 @@ from the GUI (Install / Remove / Repair / Replace per skill × detected target) 
 the same status as `prowl skills list` — see [settings](settings.md#agent-skills).
 
 ### `prowl workflow`
-Discover, validate, and **run** Agent Workflow definitions — YAML files
+Discover, validate, and **run** Agent Workflow definitions — `.pwlworkflow` bundles
 (`schema: prowl.workflow/v1`) that declare a multi-agent flow Prowl runs (roles, `message` /
-`launch` steps with expected outputs, `repeat … until`, native actions). Definitions come from
+`launch` steps with expected outputs, typed state, nested conditions/loops, and built-in/local actions). Definitions come from
 three sources, later ones winning for the same id: the app bundle
 (`Prowl.app/Contents/Resources/workflows/`, ids `prowl.*` are reserved for it) <
-`~/.prowl/workflows/*.yaml` < `<repo>/.prowl/workflows/*.yaml`. `validate` and `schema` run
-**locally** and work with Prowl closed; every other subcommand needs the app.
+`~/.prowl/workflows/*.pwlworkflow` < `<repo>/.prowl/workflows/*.pwlworkflow`. `validate` and `schema` run
+**locally** and work with Prowl closed; every other subcommand needs the app. The bundled
+`prowl-workflow` skill (`skills/prowl-workflow/SKILL.md`, linked by `prowl skills install`)
+teaches an agent to author, validate, run, and take part in workflows. The feature as a
+whole — entry points, the start sheet, the run panel, Settings → Agents → Workflows — is in
+[workflows](workflows.md).
 
 ```bash
 prowl workflow list [target] [--json]                   # every definition visible to a worktree, with status
 prowl workflow run <id|name> [source] [--role r=<binding>]... [--input k=v]... [--skip <step>]... [--json]
+prowl workflow test-action <workflow> <action> [source] --input-json '<JSON object>' [--json]
 prowl workflow status [run-id] [--json]                 # no args: the calling pane's run, role, awaited step
-prowl workflow done [-|--file <path>] [--verdict <v>] [--token <t>] [--run <id> --step <id>] [--force] [--json]
+prowl workflow deliver [-|--file <path>] [--verdict <v>] [--token <t>] [--run <id> --step <id>] [--force] [--json]
 prowl workflow cancel <run-id> [--json]
-prowl workflow validate <file> [--scope bundle|user|repo] [--json]   # parse + validate one file; exit 1 on errors
-prowl workflow schema [--json]                          # JSON Schema (Draft 2020-12) of a workflow file
+prowl workflow validate <bundle.pwlworkflow> [--scope bundle|user|repo] [--json]   # validate a bundle; exit 1 on errors
+prowl workflow schema [--action] [--json]                          # workflow or action manifest JSON Schema (Draft 2020-12)
 ```
 
 - `list` searches the repo source of one worktree: the caller's own pane's worktree, else the
@@ -509,14 +526,26 @@ prowl workflow schema [--json]                          # JSON Schema (Draft 202
   response is the run (`.data.id`, `.data.status`, `.data.step`, frozen
   `.data.bindings`, `.data.run_directory`); when the run was started from the pane that is
   its `current` role and the first step messages that role, `.data.self_initiated` carries the
-  line the runner would have typed (instruction path and completion command included) and
+  line the runner would have typed (scoped read and completion commands included) and
   nothing is typed into the caller — read it and follow it yourself. The run directory is
-  `<worktree>/.prowl/workflow-runs/<run id>/` (`run.json`, `log.md`, `instructions/`,
-  `outputs/`, `skills/`), self-ignored by Git.
-- `done` delivers the output of the step this pane is working on: the body comes from piped
+  `~/.prowl/logs/workflow-runs/<root-name>-<root-hash>/YYYY-MM/<run-id>/`, including
+  its frozen bundle and all runtime artifacts. The UUID remains searchable after the
+  execution root is closed, moved, or deleted. See [history retention](workflows.md).
+- `read [resource-id] --run <run-uuid> --invocation <number>` retrieves the assigned
+  instruction (default) or a resource ID returned with it. Prowl checks the caller pane,
+  run, and invocation against the current task assignment. Reads need no token.
+  Normal completion keeps the last task readable until reassignment, history cleanup,
+  or app exit; cancellation, Skip, and activation revocation revoke access. `--json` returns `body`, `encoding`
+  (`utf-8` or `base64`), `resources`, `invocation`, `offset`, `next_offset`, and `total_bytes`.
+  Reads return at most 256 KiB. Continue with `--offset <next_offset>` until `next_offset` is absent;
+  decode each chunk according to its encoding and concatenate its bytes. Resources
+  include only assigned skills and explicitly passed workflow inputs/artifacts. A granted
+  artifact directory returns a JSON list of its contained file IDs; read each ID separately.
+  Reading content never delivers an output or completes a step.
+- `deliver` delivers the output of the step this pane is working on: the body comes from piped
   stdin (`-`) or `--file`; `--verdict` supplies the declared verdict when the step requires
   one. Prowl attributes the delivery by the **caller pane** (its pending workflow activation) and
-  checks the token the step handed out (`PROWL_WORKFLOW_TOKEN=… prowl workflow done -` for a
+  checks the token the step handed out (`PROWL_WORKFLOW_TOKEN=… prowl workflow deliver -` for a
   typed step, the child environment of a launched role, or `--token`): a stale or wrong token
   is `TOKEN_INVALID`, a missing one `TOKEN_REQUIRED`, a pane whose step moved on
   `STEP_NOT_EXPECTING`. `--run <id> --step <step>` is the manual path from outside the role's
@@ -528,7 +557,7 @@ prowl workflow schema [--json]                          # JSON Schema (Draft 202
   for a decision in Prowl (accept, ask again, skip). Empty bodies are `OUTPUT_INVALID`, bodies
   above the step's cap `OUTPUT_TOO_LARGE`, and `strict: true` steps reject issues outright.
   `agents dispatch-complete` from a pane that owes a workflow delivery is refused with
-  `WORKFLOW_DELIVERY_REQUIRED` and the exact `done` command to run instead.
+  `WORKFLOW_DELIVERY_REQUIRED` and the exact `deliver` command to run instead.
 - `status` without an argument answers "who am I": the calling pane's active run, its role,
   the step in progress, and — for the role that owes it — the awaited output with its
   requirements and completion commands (`.data.activation`). With a run UUID it reports that
@@ -562,25 +591,64 @@ prowl workflow schema [--json]                          # JSON Schema (Draft 202
   `skill_unchecked` warnings instead of errors.
 - `schema` prints the machine-readable definition schema for editors and authoring agents
   (`--json` wraps it as `.data.schema`). Structural rules live in the schema; cross-reference
-  rules (undefined roles, premature `{{ outputs.* }}`, `until` verdicts, …) are enforced by
+  rules (undefined roles, premature `{{ deliveries.* }}`, loop verdicts, …) are enforced by
   `validate` only.
 
 ```bash
-prowl workflow validate .prowl/workflows/review.yaml
+prowl workflow validate .prowl/workflows/review.pwlworkflow
 prowl workflow list --json | jq '.data.workflows[] | select(.valid) | .id'
 run="$(prowl workflow run review --role reviewer=Codex --input max_rounds=3 --json)"
 printf '%s\n' "$run" | jq -r '.data.self_initiated.line'      # what to do now, when this pane is the current role
 prowl workflow status --json | jq '.data.activation'           # what this pane owes, and how to deliver it
-PROWL_WORKFLOW_TOKEN=… prowl workflow done - <<'EOF'
+PROWL_WORKFLOW_TOKEN=… prowl workflow deliver - <<'EOF'
 ## Scope
 …
 EOF
 prowl workflow cancel "$(printf '%s\n' "$run" | jq -r '.data.id')"
 ```
 
-JSON is `prowl.cli.workflow.v1` with `data.action` = `list` | `run` | `status` | `done` |
-`cancel` | `validate` | `schema`; `run`, `status`, and `cancel` share the run shape, `done`
-nests it under `.data.run` beside `.data.delivery`.
+JSON is `prowl.cli.workflow.v1` with `data.action` = `list` | `run` | `status` | `deliver` |
+`cancel` | `read` | `validate` | `schema`; `run`, `status`, and `cancel` share the run shape, `deliver`
+nests it under `.data.run` beside `.data.delivery`. The activation names its expected
+delivery with `activation.delivery`; the receipt stores the resulting record in
+`delivery.record`.
+
+`prowl workflow test-action <workflow> <action> [source] --input-json '<JSON object>' [--json]`
+starts a real single-action run from a discovered bundle. Use `builtin:collect-worktree-context` or
+`local:<id>`. Script bundles require prior native approval in Settings > Agents > Workflows;
+`WORKFLOW_APPROVAL_REQUIRED` tells you to review the bundle. This command cannot grant approval.
+It uses the same worktree, fixed bundle copy, process limits, cancellation, and action records
+as a workflow run. Poll the returned run ID with `workflow status` and inspect its run directory.
+
+`validate` accepts the bundle directory, not its `workflow.yaml`. Loose YAML files are not workflow bundles. See [Workflows](workflows.md#script-actions-and-bundles) for approval and results.
+
+### Built-in Review Loop workflow
+
+```bash
+prowl workflow run prowl.review-loop --role reviewer="Pi Reviewer" --input min_rounds=2 --input max_rounds=4 --json
+```
+
+Start from the implementing agent and follow `data.self_initiated.line` to submit
+the brief. The selected reviewer opens in a right split and stays for all rounds.
+`focus` is optional. Minimum and maximum each accept 1–30; minimum must not exceed
+maximum. Defaults are 2 and 4. The final summary distinguishes clean from a round
+limit reached with remaining work; `completed` alone does not mean clean.
+See [Built-in Review Loop](workflows.md#built-in-review-loop).
+
+### Built-in handoff workflow
+
+`prowl workflow run prowl.handoff --role receiver=Codex --json` asks the calling agent for
+a briefing, saves a durable packet, and launches the selected Profile in a new tab with focus.
+Use `--input next=save` to save only; no receiver binding or installed receiver Profile is
+required. Launch roles proven unused by start inputs or skipped steps are not bound. Roles
+in runtime-dependent branches remain required.
+
+For self-initiated runs, follow `data.self_initiated.line` and its exact delivery command.
+The workflow expression `actions.save.output.path` names the saved packet. For CLI inspection,
+read `actions/save/<execution UUID>/result.json` under the reported `run_directory`; its
+`path` field is the packet path.
+Workflow completion confirms saving and optional launch, not completion of the receiver's
+continued task. See [Built-in Handoff](workflows.md#built-in-handoff).
 
 ### `prowl read [target]`
 Read a pane's content.
@@ -675,9 +743,9 @@ either positionally or with `--worktree`; `--path` must remain inside it.
 pane="$(prowl create tab "$wt" --json | jq -r '.data.target.pane.id')"
 ```
 
-Without `--profile`, the new tab always takes focus (`--background` is Profile-only), so
-keystrokes a person is typing at that moment land in the new shell; while someone is working
-in the app, prefer a Profile launch with `--background`.
+Without `--background`, the new tab takes focus, so keystrokes a person is typing
+at that moment land in the new shell. Use `--background` to preserve the current
+selection and focus for both Shell and Agent Profile tabs.
 
 Add `--profile <name|uuid>` to launch an enabled Agent Profile instead of a shell. An
 optional kickoff prompt uses the sole stdin spelling `--prompt -`:
@@ -699,8 +767,8 @@ shell retains the reserved carrier. NUL bytes remain invalid, and UTF-8 prompt i
 256 KiB is rejected before creating a surface. For larger requirement sets, keep the content
 in a repository file and use the kickoff prompt to tell the Profile which file to read.
 
-`--background` is Profile-only and creates the tab without changing the selected
-worktree, tab, or pane.
+`--background` creates the tab without changing the selected worktree, tab, or
+pane. Background split-pane creation still requires a Profile.
 
 Claude Code, Codex, GitHub Copilot, Droid, Qoder, Pi, Oh My Pi, and OpenCode Profile launches
 complete managed-signal preflight before a dispatch slot or surface is created. Safe preparation
@@ -739,7 +807,10 @@ Close one explicit tab or pane. The positional form uses a UUID, `pN`, or `tN`; 
 long forms are `--pane <uuid|pN|N>` and `--tab <uuid|tN|N>`. `close` rejects
 worktree targeting and has no focus fallback. Protected agent work or a long-running
 command may trigger GUI confirmation; `--force` skips it only after positive
-identification.
+identification. The close is undoable in the GUI for Ghostty's `undo-timeout`
+(5 s by default): the pane's process keeps running until then, but the CLI treats
+the close as final — the old handle is dead, and a restored pane appears with a
+new handle.
 
 ```bash
 prowl close "$pane" --json
@@ -762,83 +833,17 @@ Supports `~` and `file://`. Reports `resolution` (no-argument / exact-root /
 inside-root / new-root), `app_launched`, `brought_to_front`, `created_tab`, and a
 `target`.
 
-### `prowl handoff`
-Hand a task off between agents: archive the outgoing state under the target's
-`.prowl/handoff/`, install a fresh agent-authored briefing, and launch the
-receiver in a background tab. Centred on [workspaces](workspaces.md), but works
-for any runnable target. Two subcommands:
+### `prowl handoff` (retired)
+
+For one release, `prowl handoff …` accepts legacy arguments only to return `HANDOFF_RETIRED`.
+It never contacts Prowl or writes artifacts. Use one of these replacements instead:
 
 ```bash
-prowl handoff to <agent> [target] [--brief -|--no-brief] [--note "…"] [--no-launch]
-prowl handoff save       [target] [--brief -|--no-brief] [--note "…"]
+prowl workflow run prowl.handoff --role receiver=<Profile>
+prowl workflow run prowl.handoff --input next=save
 ```
 
-**Source resolution.** An explicit selector (`--pane p3`, `--tab t2`,
-`--worktree <name>`, or the positional target) wins; otherwise the source is
-**the calling pane** — Prowl maps the `prowl` process's ancestry to the pane
-whose shell spawned it, so an agent running the command hands off *itself*
-regardless of UI focus. Outside any Prowl pane — or when the ancestry does not
-reach the pane's shell, as under tmux/screen or a detached wrapper — a call with no
-selector errors with `SOURCE_REQUIRED`; in those same setups `$PROWL_PANE_ID` is not a
-trustworthy stand-in (it names the pane the server started in), so determine the pane
-by other means and pass it with `--pane` explicitly. The focused pane is never guessed.
-
-**Briefing.** `--brief -` reads an inline agent-authored briefing from stdin
-(heredoc). Every handoff must provide it or use `--no-brief` as the explicit
-context-only escape; otherwise the command errors (`BRIEF_REQUIRED`) with a
-copy-pasteable example and zero side effects. A briefing must
-contain at least `## Objective`, `## Current State`, and `## Next Steps`; an
-invalid inline brief errors (`INVALID_BRIEF`) with **zero side effects**. Prowl
-never resumes the source session or starts a hidden model turn, including when
-the caller targets another pane.
-
-- **`to <agent>`** — archives the current artifact to
-  `.prowl/handoff/archive/<ts>-<from>-to-<to>.md` **first**, installs the
-  fresh briefing as `current.md` (or removes a stale one when the transition
-  is context-only), regenerates `context.md` from live git state, and launches
-  the receiver in a **background tab** — no worktree switch, no focus steal; a
-  notification announces the completed handoff unless you are already watching
-  that worktree. The kickoff prompt adapts to whether a briefing exists. An
-  observed unrestricted source execution policy carries over between the
-  verified Claude Code and Codex adapters for the destination launch only;
-  model identifiers remain with their original agent family. Interactive
-  launch is verified for `claude` and `codex`; `--no-launch` still archives +
-  saves and accepts the full detected-agent list: `pi`, `omp`, `claude`, `codex`,
-  `gemini`, `cursor-agent`, `cline`, `opencode`, `copilot`, `kimi`, `droid`,
-  `amp`, `qodercli`, `qwen`, `grok`.
-- **`save`** — a deferred-handoff checkpoint: installs a fresh briefing
-  (archiving the replaced one) and regenerates `context.md`, with no
-  destination and no launch. A context-only `save --no-brief` refreshes
-  generated state without touching the last valid briefing.
-
-```bash
-prowl handoff to codex --brief - <<'EOF'      # self-handoff with inline briefing
-# Handoff
-## Objective
-…
-## Current State
-…
-## Next Steps
-…
-EOF
-prowl handoff save --brief - --note "eod checkpoint" <<'EOF' … EOF
-prowl handoff to claude --pane p7 --no-brief --json  # third pane, generated context only
-```
-
-The outgoing agent is whatever Prowl detects in the source pane (see
-`pane.agent` in [`list`](#prowl-list)). Response payload
-(`prowl.cli.handoff.v2`) includes `action`, `artifact_path`, `outgoing_agent`,
-`to_agent`, `repos`, `changed_file_count`, `archived_path`, `session_context`,
-`briefing` (`inline` / `none`), `has_briefing`, and
-`launched_pane`. `session_context` includes the generated excerpt path plus
-native `session_id` / `transcript_path` only when the source pane has
-unambiguous native-session evidence (the same identity exposed by
-`prowl agents`); ambiguous sessions are never forked. `current.md` exists iff
-a validated briefing produced it — there is no template and nothing to
-maintain between handoffs. Full feature guide: [handoff](handoff.md).
-
-The generated `.prowl/handoff/` directory contains its own `.gitignore`, so its
-artifacts and terminal excerpts do not appear in `git status`.
+Follow the returned self-initiated delivery instruction to submit the briefing.
 
 ## Transport & app launch
 
@@ -875,7 +880,7 @@ artifacts and terminal excerpts do not appear in `git status`.
 | `DISPATCH_TARGET_BUSY` | `agents dispatch` refused: the pane's agent is working or blocked (`.error.details.observation`, `.signals`). Wait for `--until idle`, then retry. |
 | `DISPATCH_ALREADY_TERMINAL` | `dispatch-abandon` targeted a record that already completed, was abandoned, or is gone. |
 | `DISPATCH_FAILED` / `DISPATCH_ABANDONED` / `DISPATCH_NEEDS_INPUT` / `DISPATCH_INCOMPLETE` | `agents wait --dispatch` structured outcomes; `.error.details` retains the record, target, and evidence (see **Dispatch completion and waiting**). |
-| `SOURCE_REQUIRED` | A caller-owned command such as `agents signal`, selector-free `handoff`, `workflow run` of a workflow with a `current` role, `workflow status` without a run id, or `workflow done` without `--run --step` could not map the socket peer ancestry to a Prowl pane. Run it inside the source pane without tmux/detached wrappers, or use an explicit selector where that command permits one. |
+| `SOURCE_REQUIRED` | A caller-owned command such as `agents signal`, `workflow run` of a workflow with a `current` role, `workflow status` without a run id, or `workflow deliver` without `--run --step` could not map the socket peer ancestry to a Prowl pane. Run it inside the source pane without tmux/detached wrappers, or use an explicit selector where that command permits one. |
 | `AGENT_GONE` | The meaning is mode-specific: a signal caller disappeared, a dispatch worker became terminal, or a generic condition target closed. Inspect `.error.details.mode`; dispatch details retain a record, while condition details retain the requested condition and exact surface observation. |
 | `BLOCKER_UNREADABLE` | A blocked screen was detected but Prowl could not safely extract its current interaction text. Re-run `agents read` or inspect with `read`. |
 | `SESSION_UNRESOLVED` / `RESULT_NOT_FOUND` / `RESULT_INCOMPLETE` / `RESULT_TOO_LARGE` | `agents read --result-only` could not provide one trustworthy complete result. Drop `--result-only` to retain the live snapshot and inspect `.data.result`. |
@@ -886,13 +891,13 @@ artifacts and terminal excerpts do not appear in `git status`.
 | `INVALID_SKILL_FRONTMATTER` | A bundled (or `PROWL_SKILLS_DIR`) skill's `SKILL.md` frontmatter is malformed — fix the override skill, or reinstall Prowl if the bundle itself is damaged. |
 | `WORKFLOW_INVALID` | `workflow validate` found errors, or `workflow run` named a definition with errors; the full diagnostics are in `.error.details` (JSON) or on stdout (text). Fix the file and re-run. |
 | `WORKFLOW_NOT_FOUND` / `WORKFLOW_DISABLED` | No workflow definition with that id or unique name is visible to the worktree, or it is switched off — re-run `workflow list`. |
-| `RUN_NOT_FOUND` | No live run with that UUID (`cancel`, manual `done`), no record of it in any known worktree (`status`), or the calling pane is not part of an active run (`status` without arguments). |
+| `RUN_NOT_FOUND` | No live run with that UUID (`cancel`, manual `deliver`), no record of it in any known worktree (`status`), or the calling pane is not part of an active run (`status` without arguments). |
 | `PANE_BUSY` / `DISPATCH_PENDING` (`workflow run`) | The source pane or a `--role` pane already belongs to another active run, or still holds a pending dispatch record that must be completed or abandoned first. |
 | `PROFILE_NOT_FOUND` / `PROFILE_NOT_UNIQUE` (`workflow run`) | No enabled Profile satisfies a `launch` role (pass `--role <role>=<profile>`), or the given name matches several. |
-| `STEP_NOT_EXPECTING` / `TOKEN_REQUIRED` / `TOKEN_INVALID` | `workflow done`: the calling pane holds no waiting activation (the step moved on, was skipped, or the run ended before the output was saved), the completion command was run without its token, or the token belongs to an earlier step. Re-run the latest completion command Prowl typed. |
-| `ROLE_MISMATCH` | `workflow done --run --step` named a step other than the one the calling pane is waiting for; pass `--force` to deliver there anyway. |
-| `OUTPUT_INVALID` / `OUTPUT_TOO_LARGE` / `VERDICT_REQUIRED` | `workflow done`: empty body (or, for a `strict` step, missing sections / bad format / bad verdict), body above the step's size cap, or a strict step that declares verdicts got none. Non-strict issues are accepted as `delivery.state = provisional` instead. |
-| `WORKFLOW_DELIVERY_REQUIRED` | `agents dispatch-complete` ran in a pane whose pending dispatch is a workflow activation; the message carries the exact `prowl workflow done` command to run instead. |
+| `STEP_NOT_EXPECTING` / `TOKEN_REQUIRED` / `TOKEN_INVALID` | `workflow deliver`: the calling pane holds no waiting activation (the step moved on, was skipped, or the run ended before the output was saved), the completion command was run without its token, or the token belongs to an earlier step. Re-run the latest completion command Prowl typed. |
+| `ROLE_MISMATCH` | `workflow deliver --run --step` named a step other than the one the calling pane is waiting for; pass `--force` to deliver there anyway. |
+| `OUTPUT_INVALID` / `OUTPUT_TOO_LARGE` / `VERDICT_REQUIRED` | `workflow deliver`: empty body (or, for a `strict` step, missing sections / bad format / bad verdict), body above the step's size cap, or a strict step that declares verdicts got none. Non-strict issues are accepted as `delivery.state = provisional` instead. |
+| `WORKFLOW_DELIVERY_REQUIRED` | `agents dispatch-complete` ran in a pane whose pending dispatch is a workflow activation; the message carries the exact `prowl workflow deliver` command to run instead. |
 | `REQUEST_CANCELLED` | The CLI disconnected before an in-app workflow request completed; the run itself was not affected. |
 | `NO_ACTIVE_PANE` | No pane for focused-target; pass an explicit `--pane`. |
 | `EMPTY_INPUT` | `send` got neither argv nor stdin (or both). |
@@ -903,7 +908,7 @@ artifacts and terminal excerpts do not appear in `git status`.
 | `PATH_NOT_FOUND` / `PATH_NOT_DIRECTORY` / `PATH_NOT_ALLOWED` | Fix the `open`/`create tab` path, or the `skills --scope project` start point (`--path` and the current directory must lie inside a Git repository). |
 | `LAUNCH_FAILED` | App launch or socket wait failed; the message includes the last socket diagnostic when available. |
 | `TRANSPORT_FAILED` | Socket transport failed for a reason other than app availability or permission, such as `ENOTSOCK` or an invalid `PROWL_CLI_SOCKET` path. |
-| `*_FAILED` (`LIST_FAILED`, `AGENTS_FAILED`, `PROFILES_FAILED`, `SKILLS_FAILED`, `FOCUS_FAILED`, `SEND_FAILED`, `READ_FAILED`, `CREATE_FAILED`, `CLOSE_FAILED`, `TAB_FAILED`, `PANE_FAILED`, `OPEN_FAILED`, `HANDOFF_FAILED`, `WORKFLOW_FAILED`) | The action itself failed. |
+| `*_FAILED` (`LIST_FAILED`, `AGENTS_FAILED`, `PROFILES_FAILED`, `SKILLS_FAILED`, `FOCUS_FAILED`, `SEND_FAILED`, `READ_FAILED`, `CREATE_FAILED`, `CLOSE_FAILED`, `TAB_FAILED`, `PANE_FAILED`, `OPEN_FAILED`, `WORKFLOW_FAILED`) | The action itself failed. |
 
 ## Safety & self-targeting
 

@@ -1,4 +1,5 @@
 import Foundation
+import ProwlCLIShared
 
 private let observationLogger = SupaLogger("AgentObservation")
 
@@ -56,6 +57,7 @@ struct AgentEvidenceEpochUpdate: Equatable, Sendable {
 struct AgentCurrentSignalEvidence: Sendable {
   let activeTerminal: AgentSignal?
   let latest: AgentSignal?
+  var latestManagedHook: AgentSignal?
 }
 
 /// Terminal-owned publication state for one multicast observer per surface.
@@ -68,6 +70,7 @@ final class AgentObservationStore {
     var latestSignal: AgentSignal?
     var latestSignalBinding: AgentSignalBinding?
     var latestCurrentSignal: AgentSignal?
+    var latestManagedHookSignal: AgentSignal?
     var activeTerminalSignal: AgentSignal?
     var processGeneration: AgentProcessGeneration?
     var sessionID: String?
@@ -79,6 +82,12 @@ final class AgentObservationStore {
     var managedHook: ManagedHookRegistrationRecord?
     var revision: UInt64 = 0
     var subscribers: [UUID: AgentObservationStream.Continuation] = [:]
+
+    mutating func clearCurrentSignals() {
+      latestCurrentSignal = nil
+      latestManagedHookSignal = nil
+      activeTerminalSignal = nil
+    }
 
     var snapshot: AgentObservationSnapshot {
       AgentObservationSnapshot(
@@ -243,7 +252,8 @@ final class AgentObservationStore {
     }
     return AgentCurrentSignalEvidence(
       activeTerminal: record.activeTerminalSignal,
-      latest: record.latestCurrentSignal
+      latest: record.latestCurrentSignal,
+      latestManagedHook: record.latestManagedHookSignal
     )
   }
 
@@ -274,8 +284,7 @@ final class AgentObservationStore {
     record.awaitingFirstProcessGeneration = false
     record.firstProcessGenerationStartedBefore = nil
     record.channels.removeAll()
-    record.latestCurrentSignal = nil
-    record.activeTerminalSignal = nil
+    record.clearCurrentSignals()
     if record.latestSignal != nil { record.latestSignalBinding = .stale }
     records[surfaceID] = record
     return managed.launch.forwardingRecord
@@ -359,8 +368,7 @@ final class AgentObservationStore {
       managed.retiredSessionIDs.insert(currentSession)
       record.evidenceEpoch = UUID()
       record.channels.removeAll()
-      record.latestCurrentSignal = nil
-      record.activeTerminalSignal = nil
+      record.clearCurrentSignals()
       if record.latestSignal != nil { record.latestSignalBinding = .stale }
       managed.evidenceEpoch = record.evidenceEpoch
       managed.verified = false
@@ -395,6 +403,7 @@ final class AgentObservationStore {
       sessionID: signal.sessionID
     )
     record.managedHook = managed
+    record.latestManagedHookSignal = signal
     records[surfaceID] = record
     publishSignal(signal, binding: .current, surfaceID: surfaceID)
     return .accepted(signal: signal, evidenceEpoch: managed.evidenceEpoch)
@@ -411,8 +420,7 @@ final class AgentObservationStore {
       dispatchGenerationWindow
     )
     record.channels.removeAll()
-    record.latestCurrentSignal = nil
-    record.activeTerminalSignal = nil
+    record.clearCurrentSignals()
     if record.latestSignal != nil { record.latestSignalBinding = .stale }
     records[surfaceID] = record
     return record.evidenceEpoch
@@ -463,8 +471,7 @@ final class AgentObservationStore {
     if processChanged || sessionChanged {
       record.evidenceEpoch = UUID()
       record.channels.removeAll()
-      record.latestCurrentSignal = nil
-      record.activeTerminalSignal = nil
+      record.clearCurrentSignals()
       if record.latestSignal != nil { record.latestSignalBinding = .stale }
       record.sessionlessSignalsAllowed = processChanged
       if processChanged { record.sessionID = nil }

@@ -7,7 +7,7 @@
 
 **Keywords:** agent profile, preset, launch agent, agents menu, dedicated home, account, recommended profile
 
-**Related:** [handoff](handoff.md) · [active-agents](active-agents.md) · [command-palette](command-palette.md) · [settings](settings.md)
+**Related:** [active-agents](active-agents.md) · [command-palette](command-palette.md) · [settings](settings.md) · [handoff](handoff.md)
 
 ## What a profile is
 
@@ -26,9 +26,14 @@ respawn.
 
 ## Launching
 
-- **Toolbar Agents capsule** — always opens a popover. With a detected agent it
-  leads with Hand Off; launch rows follow under a "New agent in this worktree"
-  section header, the current worktree's **Recommended** profile first. Each
+- **Toolbar Agents capsule** — always opens a popover. A "Run a workflow"
+  section leads when workflow UI is enabled and the worktree can
+  see workflows (each row starts the workflow, its trailing `ellipsis.circle`
+  menu offers "Run with Options…" and "Show Details in Settings…", and files that fail
+  validation are listed dimmed with their reason; see
+  [workflows](workflows.md)); launch rows follow under a
+  "New agent in this worktree" section header, the current worktree's
+  **Recommended** profile first. Each
   row shows the profile name with the runtime name trailing. Rows for runtimes
   that look unavailable are dimmed with a warning but stay clickable —
   availability signals can be wrong, so they never block a launch. "Manage

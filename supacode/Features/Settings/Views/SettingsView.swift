@@ -1,7 +1,9 @@
 import ComposableArchitecture
+import Foundation
 import SwiftUI
 
 struct SettingsView: View {
+  @Dependency(FeatureFlags.self) private var featureFlags
   @Bindable var store: StoreOf<AppFeature>
   @Bindable var settingsStore: StoreOf<SettingsFeature>
   @Environment(\.dismiss) private var dismiss
@@ -17,6 +19,7 @@ struct SettingsView: View {
     let repositories = store.repositories.repositories
     let customTitles = store.repositories.repositoryCustomTitles
     let selection = settingsStore.selection ?? .general
+    let appLocale = Locale(identifier: settingsStore.effectiveLanguageAtLaunch.rawValue)
 
     NavigationSplitView(columnVisibility: $columnVisibility) {
       List(selection: $settingsStore.selection.sending(\.setSelection)) {
@@ -38,10 +41,16 @@ struct SettingsView: View {
           .tag(SettingsSection.advanced)
 
         Section("Agents") {
+          Label("Display", systemImage: "display")
+            .tag(SettingsSection.agentDisplay)
           Label("Profiles", systemImage: "person.crop.circle")
             .tag(SettingsSection.profiles)
           Label("CLI & Skills", systemImage: "terminal")
             .tag(SettingsSection.commandLineTool)
+          if featureFlags.workflowUI {
+            Label("Workflows", systemImage: "point.3.connected.trianglepath.dotted")
+              .tag(SettingsSection.workflows)
+          }
         }
 
         Section("Repositories") {
@@ -71,8 +80,14 @@ struct SettingsView: View {
         }
       case .shortcuts:
         SettingsDetailView {
-          ShortcutsSettingsView(store: settingsStore)
-            .navigationTitle("Shortcuts")
+          ShortcutsSettingsView(
+            store: settingsStore,
+            effectiveKeybindings: store.resolvedKeybindings,
+            customCommands: store.selectedCustomCommands,
+            islandHotKeyRegistrationFailure: store.repositories.activeAgents
+              .islandHotKeyRegistrationFailure
+          )
+          .navigationTitle("Shortcuts")
         }
       case .worktree:
         SettingsDetailView {
@@ -107,6 +122,16 @@ struct SettingsView: View {
               .frame(maxWidth: .infinity, maxHeight: .infinity)
           }
         }
+      case .agentDisplay:
+        SettingsDetailView {
+          AgentDisplaySettingsView(
+            store: settingsStore,
+            effectiveKeybindings: store.resolvedKeybindings,
+            customCommands: store.selectedCustomCommands,
+            islandHotKeyRegistrationFailure: store.repositories.activeAgents.islandHotKeyRegistrationFailure
+          )
+          .navigationTitle("Display")
+        }
       case .profiles:
         SettingsDetailView {
           if let agentProfilesStore = settingsStore.scope(
@@ -117,6 +142,17 @@ struct SettingsView: View {
           } else {
             ProgressView()
               .frame(maxWidth: .infinity, maxHeight: .infinity)
+          }
+        }
+      case .workflows:
+        SettingsDetailView {
+          if featureFlags.workflowUI {
+            if let workflowsStore = settingsStore.scope(state: \.workflows, action: \.workflows) {
+              WorkflowsSettingsView(appLocale: appLocale, store: workflowsStore)
+            } else {
+              ProgressView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
           }
         }
       case .commandLineTool:
@@ -131,7 +167,7 @@ struct SettingsView: View {
               state: \.repositorySettings,
               action: \.repositorySettings
             ) {
-              RepositorySettingsView(store: repositorySettingsStore)
+              RepositorySettingsView(appLocale: appLocale, store: repositorySettingsStore)
                 .id(repository.id)
                 .navigationTitle(customTitles[repository.id] ?? repository.name)
             } else {
@@ -155,6 +191,19 @@ struct SettingsView: View {
     .navigationSplitViewStyle(.balanced)
     .alert($settingsStore.scope(state: \.alert, action: \.alert))
     .frame(minWidth: 800, minHeight: 600)
+    .disabled(store.workflowStartFromSettings)
+    .overlay {
+      if featureFlags.workflowUI, store.workflowStartFromSettings,
+        let workflowStartStore = store.scope(state: \.workflowStart, action: \.workflowStart.presented)
+      {
+        WorkflowStartOverlayView(store: workflowStartStore)
+      }
+    }
+    .onDisappear {
+      if store.workflowStartFromSettings {
+        store.send(.workflowStart(.dismiss))
+      }
+    }
     .focusedSceneAction(\.closeSettingsWindowAction, enabled: true) {
       dismiss()
     }

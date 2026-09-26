@@ -1,5 +1,7 @@
 # Command Palette
 
+> Workflow UI is enabled by default. Start Prowl with `PROWL_WORKFLOW_UI=0` to hide its UI and skill row; CLI workflow and skill commands remain available. The switch is read at process startup.
+
 > The `⌘P` searchable launcher for (almost) every action in Prowl. Type a name,
 > hit Return.
 
@@ -41,20 +43,23 @@ selected worktree has a pull request).
   Merge PR, Close PR. See [github-pull-requests](github-pull-requests.md).
 - **Terminal:** font size, find, tab/pane selection, new/close terminal (mirrors
   the Ghostty-bridged commands; search-only).
-- **App:** Check for Updates, Open Settings, Open Repository, **Install Command
-  Line Tool**, Repo Settings.
+- **App:** Check for Updates, Open Settings, Open Repository, New Workspace,
+  **Install Command Line Tool**, Repo Settings, and **Edit Workspace** while a
+  workspace (or one of its children) is selected — see
+  [workspaces](workspaces.md).
 - **Custom commands:** enabled local and Global Custom Commands appear here with their
   source. Same-titled commands can coexist; disabled commands do not appear.
-- **Handoff** (every runnable workspace, repository/worktree, or plain folder):
-  a single **Hand Off…** row opens the Hand Off HUD, where you choose the
-  receiving agent (or save progress only); Prowl then asks the live source
-  agent to write its briefing and run the hand-off itself, with fork and
-  context-only fallbacks available while you wait. Same flow as the toolbar
-  Agents capsule. See [handoff](handoff.md).
 - **Agent profiles** (when a terminal worktree is selected): a
   **Launch Agent: <name>** row per enabled profile, the current worktree's
   Recommended profile first — the same launch action as the toolbar Agents
   menu. See [agent-profiles](agent-profiles.md).
+- **Workflows** (when a terminal worktree is selected): a
+  **Run Workflow: <name>** row per runnable workflow visible to the
+  action-target worktree (refreshed when the palette opens). Activation goes
+  through the workflow start sheet — or starts immediately when the workflow's
+  bindings resolve without a decision. Validation-failing files are not listed
+  here; the toolbar Agents popover names them with their reason. See
+  [workflows](workflows.md).
 - **Debug** (Debug builds only): toast/update/dock simulations.
 
 ## Behavior notes

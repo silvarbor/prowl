@@ -43,10 +43,41 @@ final class ProwlCLIIntegrationTests: XCTestCase {
     XCTAssertTrue(help.stdout.contains("create"))
     XCTAssertTrue(help.stdout.contains("close"))
     XCTAssertTrue(help.stdout.contains("skills"))
+    XCTAssertTrue(help.stdout.contains("handoff"), "Retired handoff must remain discoverable for one release")
     XCTAssertTrue(
       help.stdout.contains("prowl skills install"),
       "Root help should tell users and agents how to link the bundled skills"
     )
+  }
+
+  func testRetiredHandoffNeverContactsTheAppAndGuidesToWorkflow() throws {
+    let result = try runProwl(
+      args: ["handoff", "to", "claude", "--no-launch", "--json"],
+      environment: [ProwlSocket.environmentKey: temporarySocketPath(suffix: "handoff-retired")]
+    )
+
+    XCTAssertNotEqual(result.exitCode, 0)
+    let payload = try jsonObject(from: result.stdout)
+    XCTAssertEqual(payload["ok"] as? Bool, false)
+    XCTAssertEqual(payload["command"] as? String, "handoff")
+    XCTAssertEqual(payload["schema_version"] as? String, "prowl.cli.handoff.v1")
+    let error = try XCTUnwrap(payload["error"] as? [String: Any])
+    XCTAssertEqual(error["code"] as? String, CLIErrorCode.handoffRetired)
+    let message = try XCTUnwrap(error["message"] as? String)
+    XCTAssertTrue(message.contains("prowl workflow run prowl.handoff --role receiver=<Profile>"))
+    XCTAssertTrue(message.contains("prowl workflow run prowl.handoff --input next=save"))
+  }
+
+  func testRetiredHandoffTextModeAndHelpReturnTheSameStub() throws {
+    let socket = temporarySocketPath(suffix: "handoff-retired-text")
+    for args in [["handoff", "save", "--brief", "-"], ["handoff", "--help"]] {
+      let result = try runProwl(args: args, environment: [ProwlSocket.environmentKey: socket])
+      XCTAssertNotEqual(result.exitCode, 0, "\(args)")
+      XCTAssertTrue(result.stderr.contains(CLIErrorCode.handoffRetired), "\(args): \(result.stderr)")
+      XCTAssertTrue(result.stderr.contains("prowl workflow run prowl.handoff"), "\(args): \(result.stderr)")
+      XCTAssertTrue(result.stdout.isEmpty, "\(args): \(result.stdout)")
+    }
+    XCTAssertFalse(FileManager.default.fileExists(atPath: socket))
   }
 
   func testNativeHookBridgeIsHiddenSilentAndFailOpenWithoutListener() throws {
@@ -1183,8 +1214,9 @@ final class ProwlCLIIntegrationTests: XCTestCase {
       .appending(path: "prowl-workflow-cli-\(UUID().uuidString)", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
-    let file = directory.appending(path: "flow.yaml")
-    try Data(yaml.utf8).write(to: file)
+    let file = directory.appending(path: "flow.pwlworkflow")
+    try FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)
+    try Data(yaml.utf8).write(to: file.appending(path: "workflow.yaml"))
     try body(file, directory.appending(path: "missing.sock").path(percentEncoded: false))
   }
 
@@ -1284,10 +1316,56 @@ final class ProwlCLIIntegrationTests: XCTestCase {
     XCTAssertTrue(text.stdout.contains("1 warning(s)"), text.stdout)
   }
 
-  func testWorkflowRunAndDoneRoundTripThroughTheSocket() throws {
-    let output = WorkflowOutputPayload(
-      name: "brief", ordinal: 1, path: "/Projects/App/.prowl/workflow-runs/R/outputs/brief.1.md",
-      latestPath: "/Projects/App/.prowl/workflow-runs/R/outputs/brief.md", verdict: nil,
+  func testWorkflowDeliverAcceptsSixteenMiBWithJSONEscaping() throws {
+    let file = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: file) }
+    let body = Data(repeating: 10, count: WorkflowSizeLimits.payload)
+    try body.write(to: file)
+    let response = CommandResponse(
+      ok: false, command: "workflow", schemaVersion: "prowl.cli.workflow.v1",
+      error: .init(code: "STEP_NOT_EXPECTING", message: "No assigned task."))
+    let (request, result) = try runWithMockServer(
+      socketPath: temporarySocketPath(suffix: "workflow-large-deliver"), response: response,
+      args: ["workflow", "deliver", "--file", file.path, "--json"])
+    XCTAssertEqual(result.exitCode, 1)
+    XCTAssertGreaterThan(request.count, 32 * 1024 * 1024)
+    let envelope = try JSONDecoder().decode(CommandEnvelope.self, from: request)
+    guard case .workflow(let input) = envelope.command else { return XCTFail("Expected workflow input") }
+    XCTAssertEqual(input.body?.utf8.count, body.count)
+  }
+
+  func testWorkflowReadRoundTripsPagedContentWithoutAToken() throws {
+    let runID = UUID().uuidString
+    let payload = WorkflowCommandPayload.read(WorkflowContentPayload(
+      run: runID, invocation: 3, role: "author", step: "brief", resource: "resource-1",
+      body: "AA==", encoding: "base64", resources: [.init(id: "resource-1", name: "deliveries/brief.md")],
+      offset: 4, nextOffset: 5, totalBytes: 8))
+    let response = try CommandResponse(
+      ok: true, command: "workflow", schemaVersion: "prowl.cli.workflow.v1", data: RawJSON(encoding: payload))
+    let (request, result) = try runWithMockServer(
+      socketPath: temporarySocketPath(suffix: "workflow-read"), response: response,
+      args: ["workflow", "read", "resource-1", "--run", runID, "--invocation", "3", "--offset", "4", "--json"])
+    XCTAssertEqual(result.exitCode, 0, result.stderr)
+    let envelope = try JSONDecoder().decode(CommandEnvelope.self, from: request)
+    guard case .workflow(let input) = envelope.command else { return XCTFail("Expected workflow input") }
+    XCTAssertEqual(input.action, .read)
+    XCTAssertEqual(input.runID, runID)
+    XCTAssertEqual(input.invocation, 3)
+    XCTAssertEqual(input.contentResource, "resource-1")
+    XCTAssertEqual(input.contentOffset, 4)
+    XCTAssertNil(input.token)
+    let output = try jsonObject(from: result.stdout)
+    let content = try XCTUnwrap(output["data"] as? [String: Any])
+    XCTAssertEqual(content["body"] as? String, "AA==")
+    XCTAssertEqual(content["encoding"] as? String, "base64")
+    XCTAssertEqual(content["next_offset"] as? Int, 5)
+    XCTAssertEqual(content["total_bytes"] as? Int, 8)
+  }
+
+  func testWorkflowRunAndDeliverRoundTripThroughTheSocket() throws {
+    let output = WorkflowDeliveryRecordPayload(
+      name: "brief", ordinal: 1, path: "/Projects/App/.prowl/workflow-runs/R/deliveries/brief.1.md",
+      latestPath: "/Projects/App/.prowl/workflow-runs/R/deliveries/brief.md", verdict: nil,
       deliveredAt: "2026-08-30T01:02:03.000Z")
     let run = WorkflowRunPayload(
       id: "0BADCAFE-0000-4000-8000-000000000042",
@@ -1308,19 +1386,19 @@ final class ProwlCLIIntegrationTests: XCTestCase {
             agent: "claude"))
       ],
       activation: WorkflowActivationPayload(
-        ordinal: 1, step: "brief", role: "author", state: "waiting", dispatchID: "d-1", output: "brief",
+        ordinal: 1, step: "brief", role: "author", state: "waiting", dispatchID: "d-1", delivery: "brief",
         expect: WorkflowExpectationPayload(
-          format: .markdown, sections: ["## Scope"], verdict: nil, strict: false,
-          completion: ["PROWL_WORKFLOW_TOKEN=T prowl workflow done -"]),
+          format: .markdown, sections: ["## Scope"], verdicts: nil, strict: false,
+          completion: ["PROWL_WORKFLOW_TOKEN=T prowl workflow deliver -"]),
         deadline: nil),
-      outputs: [:],
+      deliveries: [:],
       startedAt: "2026-08-30T01:00:00.000Z",
       updatedAt: "2026-08-30T01:00:00.000Z",
       finishedAt: nil,
       selfInitiated: WorkflowSelfInitiatedPayload(
-        line: "[Prowl] Read /Projects/App/.prowl/workflow-runs/R/instructions/brief.1.md and follow it — finish with: PROWL_WORKFLOW_TOKEN=T prowl workflow done -",
-        instructionPath: "/Projects/App/.prowl/workflow-runs/R/instructions/brief.1.md",
-        completion: ["PROWL_WORKFLOW_TOKEN=T prowl workflow done -"]))
+        line: "[Prowl] Read /Projects/App/.prowl/workflow-runs/R/prompts/brief.1.md and follow it — finish with: PROWL_WORKFLOW_TOKEN=T prowl workflow deliver -",
+        promptPath: "/Projects/App/.prowl/workflow-runs/R/prompts/brief.1.md",
+        completion: ["PROWL_WORKFLOW_TOKEN=T prowl workflow deliver -"]))
     let runResponse = try CommandResponse(
       ok: true, command: "workflow", schemaVersion: "prowl.cli.workflow.v1",
       data: RawJSON(encoding: WorkflowCommandPayload.run(run)))
@@ -1336,9 +1414,18 @@ final class ProwlCLIIntegrationTests: XCTestCase {
     XCTAssertEqual(runInput.roleBindings, ["reviewer=Codex"])
     XCTAssertEqual(runInput.inputValues, ["rounds=2"])
     XCTAssertEqual(runInput.skippedSteps, ["x"])
+    let (actionRequest, actionResult) = try runWithMockServer(
+      socketPath: temporarySocketPath(suffix: "workflow-test-action"), response: runResponse,
+      args: ["workflow", "test-action", "review", "local:count", "p3", "--input-json", "{\"count\":3}", "--json"])
+    XCTAssertEqual(actionResult.exitCode, 0, actionResult.stderr)
+    let actionEnvelope = try JSONDecoder().decode(CommandEnvelope.self, from: actionRequest)
+    guard case .workflow(let actionInput) = actionEnvelope.command else { return XCTFail("Expected workflow input") }
+    XCTAssertEqual(actionInput.testAction, "local:count")
+    XCTAssertEqual(actionInput.actionInputs, ["count": .integer(3)])
+    XCTAssertEqual(actionInput.target, .auto("p3"))
     let runOutput = try jsonObject(from: runResult.stdout)
-    XCTAssertEqual(((runOutput["data"] as? [String: Any])?["self_initiated"] as? [String: Any])?["instruction_path"] as? String,
-      "/Projects/App/.prowl/workflow-runs/R/instructions/brief.1.md")
+    XCTAssertEqual(((runOutput["data"] as? [String: Any])?["self_initiated"] as? [String: Any])?["prompt_path"] as? String,
+      "/Projects/App/.prowl/workflow-runs/R/prompts/brief.1.md")
     let runText = try runWithMockServer(
       socketPath: temporarySocketPath(suffix: "workflow-run-text"), response: runResponse,
       args: ["workflow", "run", "review", "--no-color"]).1
@@ -1346,38 +1433,38 @@ final class ProwlCLIIntegrationTests: XCTestCase {
     XCTAssertTrue(runText.stdout.contains("Run: 0BADCAFE-0000-4000-8000-000000000042"), runText.stdout)
     XCTAssertTrue(runText.stdout.contains("Follow this line yourself"), runText.stdout)
 
-    let doneResponse = try CommandResponse(
+    let deliverResponse = try CommandResponse(
       ok: true, command: "workflow", schemaVersion: "prowl.cli.workflow.v1",
       data: RawJSON(
-        encoding: WorkflowCommandPayload.done(
-          WorkflowDonePayload(
+        encoding: WorkflowCommandPayload.deliver(
+          WorkflowDeliverPayload(
             run: run,
             delivery: WorkflowDeliveryPayload(
-              state: .provisional, ordinal: 1, step: "brief", role: "author", output: output,
+              state: .provisional, ordinal: 1, step: "brief", role: "author", record: output,
               warnings: [WorkflowDeliveryWarningPayload(code: "missing_sections", message: "missing section(s) ## Claims")])
           ))))
-    let (doneRequest, doneResult) = try runWithMockServer(
-      socketPath: temporarySocketPath(suffix: "workflow-done"), response: doneResponse,
-      args: ["workflow", "done", "-", "--verdict", "clean", "--json"],
+    let (deliverRequest, deliverResult) = try runWithMockServer(
+      socketPath: temporarySocketPath(suffix: "workflow-deliver"), response: deliverResponse,
+      args: ["workflow", "deliver", "-", "--verdict", "clean", "--json"],
       stdinData: Data("## Scope\nOnly the scope.\n".utf8),
       environment: [WorkflowSchema.tokenEnvironmentKey: "T"])
-    XCTAssertEqual(doneResult.exitCode, 0, doneResult.stderr)
-    let doneEnvelope = try JSONDecoder().decode(CommandEnvelope.self, from: doneRequest)
-    guard case .workflow(let doneInput) = doneEnvelope.command else { return XCTFail("Expected a workflow envelope") }
-    XCTAssertEqual(doneInput.action, .done)
-    XCTAssertEqual(doneInput.body, "## Scope\nOnly the scope.\n")
-    XCTAssertEqual(doneInput.verdict, "clean")
-    XCTAssertEqual(doneInput.token, "T", "the token comes from the environment the step handed out")
-    XCTAssertNil(doneInput.runID)
-    XCTAssertFalse(doneInput.force)
-    let doneText = try runWithMockServer(
-      socketPath: temporarySocketPath(suffix: "workflow-done-text"), response: doneResponse,
-      args: ["workflow", "done", "-", "--no-color"], stdinData: Data("x".utf8)).1
-    XCTAssertEqual(doneText.exitCode, 0, doneText.stderr)
-    XCTAssertTrue(doneText.stdout.contains("Provisional"), doneText.stdout)
-    XCTAssertTrue(doneText.stdout.contains("missing_sections"), doneText.stdout)
+    XCTAssertEqual(deliverResult.exitCode, 0, deliverResult.stderr)
+    let deliverEnvelope = try JSONDecoder().decode(CommandEnvelope.self, from: deliverRequest)
+    guard case .workflow(let deliverInput) = deliverEnvelope.command else { return XCTFail("Expected a workflow envelope") }
+    XCTAssertEqual(deliverInput.action, .deliver)
+    XCTAssertEqual(deliverInput.body, "## Scope\nOnly the scope.\n")
+    XCTAssertEqual(deliverInput.verdict, "clean")
+    XCTAssertEqual(deliverInput.token, "T", "the token comes from the environment the step handed out")
+    XCTAssertNil(deliverInput.runID)
+    XCTAssertFalse(deliverInput.force)
+    let deliverText = try runWithMockServer(
+      socketPath: temporarySocketPath(suffix: "workflow-deliver-text"), response: deliverResponse,
+      args: ["workflow", "deliver", "-", "--no-color"], stdinData: Data("x".utf8)).1
+    XCTAssertEqual(deliverText.exitCode, 0, deliverText.stderr)
+    XCTAssertTrue(deliverText.stdout.contains("Provisional"), deliverText.stdout)
+    XCTAssertTrue(deliverText.stdout.contains("missing_sections"), deliverText.stdout)
 
-    let noStdin = try runProwl(args: ["workflow", "done", "-"], environment: [ProwlSocket.environmentKey: "/nonexistent.sock"])
+    let noStdin = try runProwl(args: ["workflow", "deliver", "-"], environment: [ProwlSocket.environmentKey: "/nonexistent.sock"])
     XCTAssertNotEqual(noStdin.exitCode, 0)
   }
 
@@ -3167,276 +3254,8 @@ final class ProwlCLIIntegrationTests: XCTestCase {
     XCTAssertEqual(error["code"] as? String, CLIErrorCode.invalidArgument)
   }
 
-  // MARK: - Handoff command tests
-
-  func testHandoffSaveRoundTripsOverSocket() throws {
-    let socketPath = temporarySocketPath(suffix: "handoff-save")
-    let response = try CommandResponse(
-      ok: true,
-      command: "handoff",
-      schemaVersion: "prowl.cli.handoff.v2",
-      data: RawJSON(encoding: makeHandoffPayload(action: .save))
-    )
-
-    let (requestData, result) = try runWithMockServer(
-      socketPath: socketPath,
-      response: response,
-      args: ["handoff", "save", "--worktree", "App", "--note", "wip", "--json"]
-    )
-
-    XCTAssertEqual(result.exitCode, 0)
-    let envelope = try JSONDecoder().decode(CommandEnvelope.self, from: requestData)
-    if case .handoff(let input) = envelope.command {
-      XCTAssertEqual(input.action, .save)
-      XCTAssertEqual(input.selector, .worktree("App"))
-      XCTAssertEqual(input.note, "wip")
-      XCTAssertTrue(input.launch)
-      XCTAssertNil(input.brief)
-      XCTAssertFalse(input.contextOnly)
-    } else {
-      XCTFail("Expected handoff command envelope")
-    }
-
-    let payload = try jsonObject(from: result.stdout)
-    XCTAssertEqual(payload["ok"] as? Bool, true)
-    XCTAssertEqual(payload["command"] as? String, "handoff")
-  }
-
-  func testHandoffToSendsInlineBriefAndContextOnly() throws {
-    let socketPath = temporarySocketPath(suffix: "handoff-brief")
-    let response = try CommandResponse(
-      ok: true,
-      command: "handoff",
-      schemaVersion: "prowl.cli.handoff.v2",
-      data: RawJSON(encoding: makeHandoffPayload(action: .toAgent))
-    )
-
-    let brief = "# Handoff\n\n## Objective\nShip.\n\n## Current State\nGreen.\n\n## Next Steps\n1. Go."
-    let (requestData, result) = try runWithMockServer(
-      socketPath: socketPath,
-      response: response,
-      args: ["handoff", "to", "claude", "--brief", brief, "--json"]
-    )
-
-    XCTAssertEqual(result.exitCode, 0)
-    let envelope = try JSONDecoder().decode(CommandEnvelope.self, from: requestData)
-    if case .handoff(let input) = envelope.command {
-      XCTAssertEqual(input.brief, brief)
-      XCTAssertFalse(input.contextOnly)
-    } else {
-      XCTFail("Expected handoff command envelope")
-    }
-
-    let contextOnlySocket = temporarySocketPath(suffix: "handoff-no-brief")
-    let (contextOnlyRequest, contextOnlyResult) = try runWithMockServer(
-      socketPath: contextOnlySocket,
-      response: response,
-      args: ["handoff", "to", "claude", "--no-brief", "--json"]
-    )
-    XCTAssertEqual(contextOnlyResult.exitCode, 0)
-    let contextOnlyEnvelope = try JSONDecoder().decode(CommandEnvelope.self, from: contextOnlyRequest)
-    if case .handoff(let input) = contextOnlyEnvelope.command {
-      XCTAssertNil(input.brief)
-      XCTAssertTrue(input.contextOnly)
-    } else {
-      XCTFail("Expected handoff command envelope")
-    }
-  }
-
-  func testHandoffBriefConflictFailsBeforeTransport() throws {
-    let result = try runProwl(args: ["handoff", "to", "claude", "--brief", "x", "--no-brief", "--json"])
-
-    XCTAssertNotEqual(result.exitCode, 0)
-    let payload = try jsonObject(from: result.stdout)
-    XCTAssertEqual(payload["ok"] as? Bool, false)
-    let error = try XCTUnwrap(payload["error"] as? [String: Any])
-    XCTAssertEqual(error["code"] as? String, CLIErrorCode.invalidArgument)
-  }
-
-  func testHandoffToRoundTripsOverSocket() throws {
-    let socketPath = temporarySocketPath(suffix: "handoff-to")
-    let response = try CommandResponse(
-      ok: true,
-      command: "handoff",
-      schemaVersion: "prowl.cli.handoff.v2",
-      data: RawJSON(encoding: makeHandoffPayload(action: .toAgent))
-    )
-
-    let (requestData, result) = try runWithMockServer(
-      socketPath: socketPath,
-      response: response,
-      args: ["handoff", "to", "claude", "--pane", "p1", "--json"]
-    )
-
-    XCTAssertEqual(result.exitCode, 0)
-    let envelope = try JSONDecoder().decode(CommandEnvelope.self, from: requestData)
-    if case .handoff(let input) = envelope.command {
-      XCTAssertEqual(input.action, .toAgent)
-      XCTAssertEqual(input.toAgent, "claude")
-      XCTAssertEqual(input.selector, .pane("p1"))
-      XCTAssertTrue(input.launch)
-    } else {
-      XCTFail("Expected handoff command envelope")
-    }
-  }
-
-  func testHandoffToNormalizesAgentCaseAndNoLaunch() throws {
-    let socketPath = temporarySocketPath(suffix: "handoff-to-no-launch")
-    let response = try CommandResponse(
-      ok: true,
-      command: "handoff",
-      schemaVersion: "prowl.cli.handoff.v2",
-      data: RawJSON(encoding: makeHandoffPayload(action: .toAgent))
-    )
-
-    let (requestData, result) = try runWithMockServer(
-      socketPath: socketPath,
-      response: response,
-      args: ["handoff", "to", "CODEX", "--no-launch", "--json"]
-    )
-
-    XCTAssertEqual(result.exitCode, 0)
-    let envelope = try JSONDecoder().decode(CommandEnvelope.self, from: requestData)
-    if case .handoff(let input) = envelope.command {
-      XCTAssertEqual(input.toAgent, "codex")
-      XCTAssertFalse(input.launch)
-    } else {
-      XCTFail("Expected handoff command envelope")
-    }
-  }
-
-  func testHandoffToAcceptsDetectedAgentToken() throws {
-    let socketPath = temporarySocketPath(suffix: "handoff-to-gemini")
-    let response = try CommandResponse(
-      ok: true,
-      command: "handoff",
-      schemaVersion: "prowl.cli.handoff.v2",
-      data: RawJSON(encoding: makeHandoffPayload(action: .toAgent))
-    )
-
-    let (requestData, result) = try runWithMockServer(
-      socketPath: socketPath,
-      response: response,
-      args: ["handoff", "to", "gemini", "--no-launch", "--json"]
-    )
-
-    XCTAssertEqual(result.exitCode, 0)
-    let envelope = try JSONDecoder().decode(CommandEnvelope.self, from: requestData)
-    if case .handoff(let input) = envelope.command {
-      XCTAssertEqual(input.toAgent, "gemini")
-      XCTAssertFalse(input.launch)
-    } else {
-      XCTFail("Expected handoff command envelope")
-    }
-  }
-
-  func testHandoffToRejectsUnknownAgentBeforeTransport() throws {
-    let result = try runProwl(args: ["handoff", "to", "unknown-agent", "--json"])
-
-    XCTAssertNotEqual(result.exitCode, 0)
-    let payload = try jsonObject(from: result.stdout)
-    XCTAssertEqual(payload["ok"] as? Bool, false)
-    XCTAssertEqual(payload["command"] as? String, "handoff")
-    let error = try XCTUnwrap(payload["error"] as? [String: Any])
-    XCTAssertEqual(error["code"] as? String, CLIErrorCode.invalidArgument)
-  }
-
-  func testHandoffToTextRenderingFromSocket() throws {
-    let socketPath = temporarySocketPath(suffix: "handoff-to-text")
-    let response = try CommandResponse(
-      ok: true,
-      command: "handoff",
-      schemaVersion: "prowl.cli.handoff.v2",
-      data: RawJSON(
-        encoding: HandoffCommandPayload(
-          action: .toAgent,
-          artifactPath: "/Projects/App/.prowl/handoff/current.md",
-          outgoingAgent: "codex",
-          toAgent: "claude",
-          repos: [
-            HandoffRepoPayload(
-              name: "App", branch: "feature", isGit: true, changedFileCount: 3, insertions: 120, deletions: 14)
-          ],
-          changedFileCount: 3,
-          archivedPath: "handoff/archive/2026-06-12T1430-codex-to-claude.md",
-          sessionContext: HandoffSessionPayload(
-            agent: "codex",
-            sessionID: "codex-session",
-            paneID: "pane-0",
-            paneTitle: "codex",
-            source: "terminal-scrollback",
-            confidence: "fallback",
-            excerptPath: "handoff/sessions/2026-06-12T1430-pane-0.md",
-            transcriptPath: "/tmp/codex.jsonl"
-          ),
-          briefing: "inline",
-          hasBriefing: true,
-          launchedPane: HandoffPanePayload(
-            worktreeID: "App:/Projects/App",
-            worktreeName: "App",
-            tabID: "tab-1",
-            paneID: "pane-9",
-            paneTitle: "claude"
-          )
-        ))
-    )
-
-    let (_, result) = try runWithMockServer(
-      socketPath: socketPath,
-      response: response,
-      args: ["handoff", "to", "claude"]
-    )
-
-    XCTAssertEqual(result.exitCode, 0)
-    XCTAssertTrue(result.stdout.contains("codex → claude"), "Missing transition header: \(result.stdout)")
-    XCTAssertTrue(result.stdout.contains("artifact:"), "Missing artifact line: \(result.stdout)")
-    XCTAssertTrue(result.stdout.contains("briefing:"), "Missing briefing line: \(result.stdout)")
-    XCTAssertTrue(result.stdout.contains("session:"), "Missing session line: \(result.stdout)")
-    XCTAssertTrue(result.stdout.contains("launched:"), "Missing launched line: \(result.stdout)")
-    XCTAssertTrue(result.stdout.contains("pane-9"), "Missing launched pane id: \(result.stdout)")
-  }
-
-  func testHandoffToWithoutLaunchTextExplainsExistingFlag() throws {
-    let socketPath = temporarySocketPath(suffix: "handoff-to-no-launch-text")
-    let response = try CommandResponse(
-      ok: true,
-      command: "handoff",
-      schemaVersion: "prowl.cli.handoff.v2",
-      data: RawJSON(
-        encoding: HandoffCommandPayload(
-          action: .toAgent,
-          artifactPath: "/Projects/App/.prowl/handoff/current.md",
-          outgoingAgent: "codex",
-          toAgent: "claude",
-          archivedPath: "handoff/archive/2026-06-12T1430-codex-to-claude.md"
-        ))
-    )
-
-    let (_, result) = try runWithMockServer(
-      socketPath: socketPath,
-      response: response,
-      args: ["handoff", "to", "claude", "--no-launch"]
-    )
-
-    XCTAssertEqual(result.exitCode, 0)
-    XCTAssertTrue(result.stdout.contains("no (--no-launch); take over manually"), result.stdout)
-    XCTAssertFalse(result.stdout.contains("use --no-launch handoff"), result.stdout)
-  }
-
   // MARK: - Helpers
 
-  private func makeHandoffPayload(action: HandoffAction) -> HandoffCommandPayload {
-    HandoffCommandPayload(
-      action: action,
-      artifactPath: "/Projects/App/.prowl/handoff/current.md",
-      outgoingAgent: "codex",
-      toAgent: action == .toAgent ? "claude" : nil,
-      repos: [
-        HandoffRepoPayload(name: "App", branch: "main", isGit: true, changedFileCount: 1, insertions: 8, deletions: 2)
-      ],
-      changedFileCount: 1
-    )
-  }
 
   private func runWithMockServer(
     socketPath: String,

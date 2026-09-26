@@ -8,13 +8,18 @@ prowl agents [--json]
 
 The command is global discovery and accepts no target selector. It returns
 `count` and an `agents` array. Each entry has its canonical pane `id`, detected
-agent `type`/`name`, `status`, `raw_state`, optional `detection_reason`,
+agent `type`/`name`, `status`, `raw_state`, optional `detection_reason` and `screen_reason`,
 `last_changed_at`, project/worktree/tab/pane metadata, and optional session
 attribution. Each detected row also contains `signals`, whose `channels` describe current
 process/session-epoch evidence by normalized source, confidence, observed event kinds, and
 last-seen time. Optional `last` and `last_binding` preserve the latest eligible diagnostic;
 stale or unbound evidence never becomes current coverage. Evidence-only shell panes do not
 create roster rows. Text output additionally shows a current-process `pN` handle.
+
+`detection_reason` can report `native.working`, `native.blocked`, or `native.idle`
+for process-scoped native evidence. `raw_state` and `screen_reason` still describe
+the screen. Provider selection does not change public session attribution or signal
+confidence; see [agent detection](../../../docs/components/agent-detection.md).
 
 Use `prowl agents read <pN|pane-uuid>` for a semantic agent snapshot. A process inside
 a Prowl pane can report cooperative runtime events with `prowl agents signal`; these

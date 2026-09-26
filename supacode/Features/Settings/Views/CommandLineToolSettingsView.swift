@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import ProwlCLIShared
 import SwiftUI
 
 /// Settings → Agents → CLI & Skills: install/status for the bundled `prowl`
@@ -74,12 +75,13 @@ struct CommandLineToolSettingsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear {
           store.send(.refreshCLIInstallStatus)
+          store.send(.refreshCLIServiceStatus)
         }
       }
 
       Section("Connection") {
         LabeledContent("Socket") {
-          Text(ProwlSocket.defaultPath)
+          Text(socketPath)
             .font(.callout.monospaced())
             .foregroundStyle(.secondary)
             .textSelection(.enabled)
@@ -87,9 +89,26 @@ struct CommandLineToolSettingsView: View {
             .truncationMode(.middle)
         }
 
+        LabeledContent("Status") {
+          HStack(spacing: 6) {
+            connectionStatusIcon
+            Text(connectionStatusText)
+          }
+          .font(.callout)
+        }
+
+        if let failure = store.cliServiceStatus.failureDescription {
+          Text(failure)
+            .foregroundStyle(.secondary)
+            .font(.callout)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+
         Text(
-          "prowl reaches the running app through this local Unix socket. "
-            + "Set PROWL_CLI_SOCKET for both Prowl and prowl to use a different path."
+          """
+          prowl reaches the running app through this local Unix socket. \
+          Set PROWL_CLI_SOCKET for both Prowl and prowl to use a different path.
+          """
         )
         .foregroundStyle(.secondary)
         .font(.callout)
@@ -101,5 +120,40 @@ struct CommandLineToolSettingsView: View {
     }
     .formStyle(.grouped)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+  }
+
+  /// The path the server actually bound (or failed to bind), falling back to the default
+  /// before the first status arrives.
+  private var socketPath: String {
+    switch store.cliServiceStatus {
+    case .listening(let path), .failed(_, let path): path
+    case .stopped: ProwlSocket.defaultPath
+    }
+  }
+
+  @ViewBuilder
+  private var connectionStatusIcon: some View {
+    switch store.cliServiceStatus {
+    case .listening:
+      Image(systemName: "checkmark.circle.fill")
+        .foregroundStyle(.green)
+        .accessibilityLabel("Listening")
+    case .failed:
+      Image(systemName: "exclamationmark.triangle.fill")
+        .foregroundStyle(.yellow)
+        .accessibilityLabel("Not listening")
+    case .stopped:
+      Image(systemName: "xmark.circle")
+        .foregroundStyle(.secondary)
+        .accessibilityLabel("Not running")
+    }
+  }
+
+  private var connectionStatusText: String {
+    switch store.cliServiceStatus {
+    case .listening: String(localized: "Listening")
+    case .failed: String(localized: "Not listening")
+    case .stopped: String(localized: "Not running")
+    }
   }
 }

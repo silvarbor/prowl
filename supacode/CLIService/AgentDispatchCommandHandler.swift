@@ -1,4 +1,5 @@
 import Foundation
+import ProwlCLIShared
 
 private let dispatchLogger = SupaLogger("AgentDispatchCommandHandler")
 
@@ -14,13 +15,14 @@ final class AgentDispatchCommandHandler: CommandHandler {
   typealias PendingDispatch = @MainActor (TabResolvedTarget) -> AgentDispatchSnapshot?
   typealias ConditionSnapshotProvider = @MainActor (TabResolvedTarget) -> AgentConditionSnapshot
   typealias IssueDispatch = @MainActor (TabResolvedTarget) -> Result<AgentDispatchSnapshot, AgentDispatchStoreError>
-  typealias DeliverPrompt = @MainActor (TabResolvedTarget, String) -> Bool
+  typealias DeliverPrompt = @MainActor (TabResolvedTarget, String) async -> Bool
+  typealias InputProtection = @MainActor (TabResolvedTarget) -> String?
   typealias CancelDispatch = @MainActor (String) -> Void
 
   /// How long the precondition lets the evidence settle before refusing: a runtime
-  /// `turn-ended` the detector has not corroborated yet (its three-second working hold after a
-  /// turn), or a detector-only idle view that still needs its two seconds of stability. A pane
-  /// the evidence already calls working or blocked is refused at once.
+  /// `turn-ended` the detector has not corroborated yet, or a detector-only idle view that still
+  /// needs its two seconds of stability. A pane the evidence already calls working or blocked is
+  /// refused at once.
   nonisolated static let idleGraceMilliseconds = 5_000
 
   private enum IdleVerdict {
@@ -30,6 +32,7 @@ final class AgentDispatchCommandHandler: CommandHandler {
     case settling(String)
   }
 
+  private let inputProtection: InputProtection
   private let resolveTarget: ResolveTarget
   private let pendingDispatch: PendingDispatch
   private let conditionSnapshot: ConditionSnapshotProvider
@@ -42,6 +45,7 @@ final class AgentDispatchCommandHandler: CommandHandler {
 
   init(
     resolveTarget: @escaping ResolveTarget,
+    inputProtection: @escaping InputProtection = { _ in nil },
     pendingDispatch: @escaping PendingDispatch = { _ in nil },
     conditionSnapshot: @escaping ConditionSnapshotProvider = { _ in
       AgentConditionSnapshot(agent: nil, signal: nil, revision: 0, isLive: false, signals: .empty)
@@ -52,6 +56,7 @@ final class AgentDispatchCommandHandler: CommandHandler {
     clock: any Clock<Duration> = ContinuousClock(),
     now: @escaping @MainActor () -> Date = Date.init
   ) {
+    self.inputProtection = inputProtection
     self.resolveTarget = resolveTarget
     self.pendingDispatch = pendingDispatch
     self.conditionSnapshot = conditionSnapshot
@@ -82,7 +87,7 @@ final class AgentDispatchCommandHandler: CommandHandler {
     if let pending = pendingDispatch(target) {
       return pendingFailure(pending, target: target)
     }
-    if let refusal = await awaitIdleAgent(target: target) {
+    if let refusal = await prepareDelivery(target: target) {
       return refusal
     }
 
@@ -107,9 +112,12 @@ final class AgentDispatchCommandHandler: CommandHandler {
         message: "The dispatch could not be bound to the pane's current agent."
       )
     }
-    guard deliverPrompt(target, AgentDispatchPrompt.renderInjected(userPrompt: input.prompt)) else {
+    guard await deliverPrompt(target, AgentDispatchPrompt.renderInjected(userPrompt: input.prompt)) else {
       cancelDispatch(issued.record.id)
-      return failure(code: CLIErrorCode.dispatchFailed, message: "The prompt could not be delivered to the pane.")
+      return failure(
+        code: CLIErrorCode.dispatchFailed,
+        message: "The prompt could not be submitted. Text may remain in the target pane. Check it before retrying."
+      )
     }
     guard case .pending(let record) = issued.payload(using: formatter) else {
       return failure(code: CLIErrorCode.dispatchFailed, message: "The dispatch record is not pending.")
@@ -124,6 +132,18 @@ final class AgentDispatchCommandHandler: CommandHandler {
     } catch {
       return failure(code: CLIErrorCode.dispatchFailed, message: "Failed to encode the dispatch record.")
     }
+  }
+
+  private func prepareDelivery(target: TabResolvedTarget) async -> CommandResponse? {
+    // Code security: do not clear local IME input or append into an actively edited composer.
+    if let reason = inputProtection(target) {
+      return failure(code: CLIErrorCode.dispatchTargetBusy, message: reason)
+    }
+    if let refusal = await awaitIdleAgent(target: target) { return refusal }
+    if let reason = inputProtection(target) {
+      return failure(code: CLIErrorCode.dispatchTargetBusy, message: reason)
+    }
+    return nil
   }
 
   /// Nil when the pane hosts an idle agent; otherwise the structured refusal.
