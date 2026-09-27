@@ -26,8 +26,56 @@ private struct Counter: Reducer {
   }
 }
 
+private struct Inventory: Reducer {
+  struct State: Equatable {
+    var items: [String] = []
+  }
+
+  enum Action: Equatable {
+    case fill(Int)
+  }
+
+  func reduce(into state: inout State, action: Action) -> Effect<Action> {
+    switch action {
+    case .fill(let count):
+      state.items = (0..<count).map { "item \($0) with enough text to lengthen the diff" }
+      return .none
+    }
+  }
+}
+
 @MainActor
 struct LogActionsReducerTests {
+  /// With logging on, the reducer sends the action label first, then the state
+  /// diff as numbered chunks in order, each short enough for the unified log.
+  @Test func logsTheActionAndThenTheStateDiffInNumberedChunks() async {
+    let messages = LockIsolated<[String]>([])
+    let store = TestStore(initialState: Inventory.State()) {
+      LogActionsReducer(
+        base: Inventory(),
+        isLoggingEnabled: true,
+        noticeSink: { message in messages.withValue { $0.append(message) } }
+      )
+    }
+    let expectedItems = (0..<100).map { "item \($0) with enough text to lengthen the diff" }
+    let expectedDiff = CustomDump.diff(Inventory.State(), Inventory.State(items: expectedItems))
+
+    await store.send(.fill(100)) { $0.items = expectedItems }
+
+    let logged = messages.value
+    let diffMessages = logged.dropFirst()
+    #expect(logged.first == "Action: \(debugCaseOutput(Inventory.Action.fill(100)))")
+    #expect(diffMessages.count > 1)
+    var bodies = ""
+    for (index, message) in diffMessages.enumerated() {
+      let label = "State diff \(index + 1)/\(diffMessages.count):\n"
+      #expect(message.hasPrefix(label))
+      #expect(message.utf8.count <= 1_015)
+      bodies += message.dropFirst(label.count)
+    }
+    #expect(bodies == expectedDiff)
+  }
+
   /// With action logging off (the default), the wrapper must reduce exactly like
   /// its base — same state mutation, no diverging behavior from the gated path.
   @Test func passesActionsThroughToBaseWhenLoggingDisabled() async {
