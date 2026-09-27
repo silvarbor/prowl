@@ -65,7 +65,9 @@ let stateDiffChunkByteBudget = 900
 
 /// Splits `diff` into chunks of at most `byteBudget` UTF-8 bytes, breaking at
 /// line ends where it can. A line longer than the budget is split between
-/// characters. Concatenating the chunks in order reproduces `diff` exactly.
+/// characters, and a single character longer than the budget (a base letter
+/// carrying hundreds of combining marks) between its Unicode scalars.
+/// Concatenating the chunks in order reproduces `diff` exactly.
 func stateDiffLogChunks(_ diff: String, byteBudget: Int = stateDiffChunkByteBudget) -> [String] {
   var chunks: [String] = []
   var current = ""
@@ -80,6 +82,22 @@ func stateDiffLogChunks(_ diff: String, byteBudget: Int = stateDiffChunkByteBudg
     current += piece
     currentBytes += bytes
   }
+  // A scalar is at most 4 bytes, so each run stays within any budget of 4 or more.
+  func appendScalars(of character: Character) {
+    var run = ""
+    var runBytes = 0
+    for scalar in character.unicodeScalars {
+      let scalarBytes = String(scalar).utf8.count
+      if runBytes + scalarBytes > byteBudget, !run.isEmpty {
+        append(run[...])
+        run = ""
+        runBytes = 0
+      }
+      run.unicodeScalars.append(scalar)
+      runBytes += scalarBytes
+    }
+    append(run[...])
+  }
   var lineStart = diff.startIndex
   while lineStart < diff.endIndex {
     let lineEnd = diff[lineStart...].firstIndex(of: "\n").map { diff.index(after: $0) } ?? diff.endIndex
@@ -91,6 +109,15 @@ func stateDiffLogChunks(_ diff: String, byteBudget: Int = stateDiffChunkByteBudg
       var pieceBytes = 0
       for index in line.indices {
         let characterBytes = line[index].utf8.count
+        if characterBytes > byteBudget {
+          if pieceStart < index {
+            append(line[pieceStart..<index])
+          }
+          appendScalars(of: line[index])
+          pieceStart = line.index(after: index)
+          pieceBytes = 0
+          continue
+        }
         if pieceBytes + characterBytes > byteBudget, pieceStart < index {
           append(line[pieceStart..<index])
           pieceStart = index
@@ -98,7 +125,9 @@ func stateDiffLogChunks(_ diff: String, byteBudget: Int = stateDiffChunkByteBudg
         }
         pieceBytes += characterBytes
       }
-      append(line[pieceStart...])
+      if pieceStart < line.endIndex {
+        append(line[pieceStart...])
+      }
     }
     lineStart = lineEnd
   }

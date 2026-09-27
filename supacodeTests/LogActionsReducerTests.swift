@@ -97,6 +97,22 @@ struct StateDiffLogChunksTests {
     #expect(chunks.allSatisfy { chunk in chunk.allSatisfy { $0 == "é" || $0 == "👨‍👩‍👧‍👦" } })
   }
 
+  @Test func splitsACharacterLongerThanTheBudgetBetweenScalars() {
+    // One base letter with 500 combining acute accents (2 bytes each) is a
+    // single Character of 1001 bytes, more than the production budget.
+    let oversized = "a" + String(repeating: "\u{0301}", count: 500)
+    let diff = "- before\n+ \(oversized)\n  after\n"
+
+    let chunks = stateDiffLogChunks(diff)
+
+    #expect(oversized.count == 1)
+    #expect(oversized.utf8.count > stateDiffChunkByteBudget)
+    #expect(chunks.count > 1)
+    #expect(chunks.allSatisfy { $0.utf8.count <= stateDiffChunkByteBudget })
+    #expect(chunks.joined() == diff)
+    #expect(Array(chunks.joined().unicodeScalars) == Array(diff.unicodeScalars))
+  }
+
   @Test func leavesRoomForTheLabelUnderTheLogLimit() {
     // The unified log keeps the first 1015 bytes of a message.
     let label = "State diff 999/999:\n"
