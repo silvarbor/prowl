@@ -11,7 +11,7 @@ extension Reducer where State: Equatable {
 }
 
 /// When set, `LogActionsReducer` labels every action and logs it to the unified
-/// log, plus prints a `CustomDump` state diff. Off by default: the label
+/// log, followed by a `CustomDump` state diff. Off by default: the label
 /// reflection (`debugCaseOutput`) together with a full app-state snapshot and a
 /// deep `==` compare run on *every* action, which stack sampling measured as a
 /// steady main-thread cost under heavy action throughput. Enable per launch with
@@ -25,22 +25,39 @@ extension Reducer where State: Equatable {
 struct LogActionsReducer<Base: Reducer>: Reducer where Base.State: Equatable {
   let base: Base
 
+  #if DEBUG
+    /// Test seams. Production leaves both at their defaults: the launch flag,
+    /// and `logger.notice` as the destination of every message.
+    var isLoggingEnabled = tcaActionLoggingEnabled
+    var noticeSink: (@Sendable (String) -> Void)?
+  #endif
+
   private let logger = SupaLogger("TCA")
 
   func reduce(into state: inout Base.State, action: Base.Action) -> Effect<Base.Action> {
     #if DEBUG
-      guard tcaActionLoggingEnabled else {
+      guard isLoggingEnabled else {
         return base._reduce(into: &state, action: action)
       }
-      let actionLabel = debugCaseOutput(action)
       // `notice`, not `debug`: in DEBUG `SupaLogger.debug` prints to a stdout
       // that a Finder/launchd-launched app discards, so `make log-stream` would
       // never see it. `notice` routes to the unified log in all configs.
-      logger.notice("Action: \(actionLabel)")
+      func notice(_ message: String) {
+        if let noticeSink {
+          noticeSink(message)
+        } else {
+          logger.notice(message)
+        }
+      }
+      let actionLabel = debugCaseOutput(action)
+      notice("Action: \(actionLabel)")
       let previousState = state
       let effects = base._reduce(into: &state, action: action)
       if previousState != state, let diff = CustomDump.diff(previousState, state) {
-        print(diff)
+        let chunks = stateDiffLogChunks(diff)
+        for (index, chunk) in chunks.enumerated() {
+          notice("State diff \(index + 1)/\(chunks.count):\n\(chunk)")
+        }
       }
       return effects
     #else
@@ -53,6 +70,85 @@ struct LogActionsReducer<Base: Reducer>: Reducer where Base.State: Equatable {
       return base._reduce(into: &state, action: action)
     #endif
   }
+}
+
+/// The unified log keeps the first 1015 bytes of a message and replaces the
+/// rest with "<…>". A full app-state diff is far longer, so it is
+/// logged in chunks. The budget leaves room for the "State diff n/m:" label.
+let stateDiffChunkByteBudget = 900
+
+/// Splits `diff` into chunks of at most `byteBudget` UTF-8 bytes, breaking at
+/// line ends where it can. A line longer than the budget is split between
+/// characters, and a single character longer than the budget (a base letter
+/// carrying hundreds of combining marks) between its Unicode scalars.
+/// Concatenating the chunks in order reproduces `diff` exactly.
+func stateDiffLogChunks(_ diff: String, byteBudget: Int = stateDiffChunkByteBudget) -> [String] {
+  var chunks: [String] = []
+  var current = ""
+  var currentBytes = 0
+  func append(_ piece: Substring) {
+    let bytes = piece.utf8.count
+    if currentBytes + bytes > byteBudget, !current.isEmpty {
+      chunks.append(current)
+      current = ""
+      currentBytes = 0
+    }
+    current += piece
+    currentBytes += bytes
+  }
+  // A scalar is at most 4 bytes, so each run stays within any budget of 4 or more.
+  func appendScalars(of character: Character) {
+    var run = ""
+    var runBytes = 0
+    for scalar in character.unicodeScalars {
+      let scalarBytes = String(scalar).utf8.count
+      if runBytes + scalarBytes > byteBudget, !run.isEmpty {
+        append(run[...])
+        run = ""
+        runBytes = 0
+      }
+      run.unicodeScalars.append(scalar)
+      runBytes += scalarBytes
+    }
+    append(run[...])
+  }
+  var lineStart = diff.startIndex
+  while lineStart < diff.endIndex {
+    let lineEnd = diff[lineStart...].firstIndex(of: "\n").map { diff.index(after: $0) } ?? diff.endIndex
+    let line = diff[lineStart..<lineEnd]
+    if line.utf8.count <= byteBudget {
+      append(line)
+    } else {
+      var pieceStart = line.startIndex
+      var pieceBytes = 0
+      for index in line.indices {
+        let characterBytes = line[index].utf8.count
+        if characterBytes > byteBudget {
+          if pieceStart < index {
+            append(line[pieceStart..<index])
+          }
+          appendScalars(of: line[index])
+          pieceStart = line.index(after: index)
+          pieceBytes = 0
+          continue
+        }
+        if pieceBytes + characterBytes > byteBudget, pieceStart < index {
+          append(line[pieceStart..<index])
+          pieceStart = index
+          pieceBytes = 0
+        }
+        pieceBytes += characterBytes
+      }
+      if pieceStart < line.endIndex {
+        append(line[pieceStart...])
+      }
+    }
+    lineStart = lineEnd
+  }
+  if !current.isEmpty {
+    chunks.append(current)
+  }
+  return chunks
 }
 
 func debugCaseOutput(
