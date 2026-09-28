@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import Testing
 
 @testable import supacode
@@ -84,10 +85,10 @@ struct BaguaIndicatorLayerTests {
     // The second mount lands 3.37 s later: mid-frame, and not a whole number
     // of cycles, so an animation phased from its own mount time would drift.
     var now: CFTimeInterval = 5_000.05
-    let first = BaguaIndicatorNSView(color: .orange, mediaTime: { now })
+    let first = BaguaIndicatorNSView(style: .init(color: .orange), mediaTime: { now })
     window.contentView?.addSubview(first)
     now += 3.37
-    let second = BaguaIndicatorNSView(color: .orange, mediaTime: { now })
+    let second = BaguaIndicatorNSView(style: .init(color: .orange), mediaTime: { now })
     window.contentView?.addSubview(second)
 
     let animations = try [first, second].map { view in
@@ -119,6 +120,60 @@ struct BaguaIndicatorLayerTests {
         #expect(shownGlyph(of: animation, at: sample) == expected)
       }
     }
+  }
+
+  @Test func glyphFollowsDynamicTypeAndMatchesTheTextSpinnerByDefault() throws {
+    let standard = try renderedIndicator(dynamicTypeSize: .large)
+    #expect(standard.style.pointSize == 17)
+    #expect(standard.style.size == CGSize(width: 20, height: 18))
+
+    let larger = try renderedIndicator(dynamicTypeSize: .accessibility3)
+    #expect(larger.style.pointSize > standard.style.pointSize)
+    #expect(larger.style.size.width > standard.style.size.width)
+    #expect(larger.style.size.height > standard.style.size.height)
+
+    // The keyframe images are rendered at the scaled size, not just laid out
+    // in a larger frame.
+    let standardFrame = try firstKeyframeImage(of: standard)
+    let largerFrame = try firstKeyframeImage(of: larger)
+    #expect(largerFrame.width > standardFrame.width)
+    #expect(largerFrame.height > standardFrame.height)
+  }
+
+  /// Hosts the SwiftUI indicator at `dynamicTypeSize` and returns the layer
+  /// view SwiftUI created for it.
+  private func renderedIndicator(dynamicTypeSize: DynamicTypeSize) throws -> BaguaIndicatorNSView {
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 200, height: 200),
+      styleMask: [.borderless], backing: .buffered, defer: false
+    )
+    window.isReleasedWhenClosed = false
+    defer { window.close() }
+    let host = NSHostingView(
+      rootView: BaguaWorkingIndicator(color: .orange).environment(\.dynamicTypeSize, dynamicTypeSize)
+    )
+    host.frame = window.contentLayoutRect
+    window.contentView = host
+    host.layoutSubtreeIfNeeded()
+    return try #require(indicatorView(in: host))
+  }
+
+  private func indicatorView(in view: NSView) -> BaguaIndicatorNSView? {
+    if let indicator = view as? BaguaIndicatorNSView {
+      return indicator
+    }
+    return view.subviews.lazy.compactMap { indicatorView(in: $0) }.first
+  }
+
+  private func firstKeyframeImage(of view: BaguaIndicatorNSView) throws -> CGImage {
+    let animation = try #require(
+      view.glyphLayer.animation(forKey: BaguaIndicatorNSView.animationKey) as? CAKeyframeAnimation
+    )
+    // Core Animation hands `contents` values back as untyped objects, so
+    // check the Core Foundation type before treating one as an image.
+    let first = try #require(animation.values?.first) as AnyObject
+    try #require(CFGetTypeID(first) == CGImage.typeID)
+    return unsafeDowncast(first, to: CGImage.self)
   }
 
   /// The glyph a discrete keyframe animation shows at `mediaTime`, read from

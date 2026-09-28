@@ -101,15 +101,31 @@ struct ActiveAgentRow: View {
 struct BaguaWorkingIndicator: View {
   static let frames = ["☰", "☱", "☲", "☳", "☴", "☵", "☶", "☷"]
   static let frameDuration = 0.12
-  static let size = CGSize(width: 20, height: 18)
-  static let pointSize: CGFloat = 17
+  /// The glyph's point size and frame at the default text size, the same as
+  /// the `Text`-based spinner this replaced. Both scale with Dynamic Type,
+  /// relative to the caption style of the status label the glyph stands in for.
+  static let defaultPointSize: CGFloat = 17
+  static let defaultSize = CGSize(width: 20, height: 18)
 
-  var color: Color = .orange
+  var color: Color
+  @ScaledMetric(relativeTo: .caption2) private var pointSize = BaguaWorkingIndicator.defaultPointSize
+  @ScaledMetric(relativeTo: .caption2) private var width = BaguaWorkingIndicator.defaultSize.width
+  @ScaledMetric(relativeTo: .caption2) private var height = BaguaWorkingIndicator.defaultSize.height
+
+  init(color: Color = .orange) {
+    self.color = color
+  }
 
   var body: some View {
-    BaguaIndicatorLayerView(color: color)
-      .frame(width: Self.size.width, height: Self.size.height)
-      .accessibilityHidden(true)
+    BaguaIndicatorLayerView(
+      style: BaguaIndicatorNSView.Style(
+        color: NSColor(color),
+        pointSize: pointSize,
+        size: CGSize(width: width, height: height)
+      )
+    )
+    .frame(width: width, height: height)
+    .accessibilityHidden(true)
   }
 
   /// Ticks in one full ping-pong cycle: up through the eight glyphs, then back
@@ -160,23 +176,31 @@ struct BaguaWorkingIndicator: View {
 }
 
 private struct BaguaIndicatorLayerView: NSViewRepresentable {
-  let color: Color
+  let style: BaguaIndicatorNSView.Style
 
   func makeNSView(context _: Context) -> BaguaIndicatorNSView {
-    BaguaIndicatorNSView(color: NSColor(color))
+    BaguaIndicatorNSView(style: style)
   }
 
   func updateNSView(_ nsView: BaguaIndicatorNSView, context _: Context) {
-    nsView.color = NSColor(color)
+    nsView.style = style
   }
 }
 
 final class BaguaIndicatorNSView: NSView {
   static let animationKey = "bagua.frames"
 
-  var color: NSColor {
+  /// Everything the pre-rendered glyphs depend on. A change re-renders them,
+  /// as a backing-scale or appearance change does.
+  struct Style: Equatable {
+    var color: NSColor
+    var pointSize: CGFloat = BaguaWorkingIndicator.defaultPointSize
+    var size: CGSize = BaguaWorkingIndicator.defaultSize
+  }
+
+  var style: Style {
     didSet {
-      guard color != oldValue else {
+      guard style != oldValue else {
         return
       }
       restartAnimation()
@@ -188,8 +212,8 @@ final class BaguaIndicatorNSView: NSView {
   /// chosen moments.
   private let mediaTime: () -> CFTimeInterval
 
-  init(color: NSColor, mediaTime: @escaping () -> CFTimeInterval = CACurrentMediaTime) {
-    self.color = color
+  init(style: Style, mediaTime: @escaping () -> CFTimeInterval = CACurrentMediaTime) {
+    self.style = style
     self.mediaTime = mediaTime
     super.init(frame: .zero)
     wantsLayer = true
@@ -257,7 +281,7 @@ final class BaguaIndicatorNSView: NSView {
   }
 
   private func glyphImage(_ glyph: String, scale: CGFloat) -> CGImage? {
-    let size = BaguaWorkingIndicator.size
+    let size = style.size
     let pixelWidth = Int((size.width * scale).rounded())
     let pixelHeight = Int((size.height * scale).rounded())
     guard
@@ -277,8 +301,8 @@ final class BaguaIndicatorNSView: NSView {
     }
     context.scaleBy(x: scale, y: scale)
     let attributes: [NSAttributedString.Key: Any] = [
-      .font: NSFont.monospacedSystemFont(ofSize: BaguaWorkingIndicator.pointSize, weight: .bold),
-      .foregroundColor: color,
+      .font: NSFont.monospacedSystemFont(ofSize: style.pointSize, weight: .bold),
+      .foregroundColor: style.color,
     ]
     let string = NSAttributedString(string: glyph, attributes: attributes)
     let textSize = string.size()
