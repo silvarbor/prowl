@@ -122,40 +122,45 @@ struct BaguaIndicatorLayerTests {
     }
   }
 
-  @Test func glyphFollowsDynamicTypeAndMatchesTheTextSpinnerByDefault() throws {
-    let standard = try renderedIndicator(dynamicTypeSize: .large)
-    #expect(standard.style.pointSize == 17)
-    #expect(standard.style.size == CGSize(width: 20, height: 18))
+  @Test func defaultTextSizeMatchesTheTextSpinner() throws {
+    let window = makeWindow()
+    defer { window.close() }
+    let host = NSHostingView(rootView: BaguaWorkingIndicator(color: .orange))
+    host.frame = window.contentLayoutRect
+    window.contentView = host
+    host.layoutSubtreeIfNeeded()
+    let indicator = try #require(indicatorView(in: host))
 
-    let larger = try renderedIndicator(dynamicTypeSize: .accessibility3)
-    #expect(larger.style.pointSize > standard.style.pointSize)
-    #expect(larger.style.size.width > standard.style.size.width)
-    #expect(larger.style.size.height > standard.style.size.height)
-
-    // The keyframe images are rendered at the scaled size, not just laid out
-    // in a larger frame.
-    let standardFrame = try firstKeyframeImage(of: standard)
-    let largerFrame = try firstKeyframeImage(of: larger)
-    #expect(largerFrame.width > standardFrame.width)
-    #expect(largerFrame.height > standardFrame.height)
+    #expect(indicator.style.pointSize == 17)
+    #expect(indicator.style.size == CGSize(width: 20, height: 18))
+    let image = try firstKeyframeImage(of: indicator)
+    let scale = window.backingScaleFactor
+    #expect(CGFloat(image.width) == (20 * scale).rounded())
+    #expect(CGFloat(image.height) == (18 * scale).rounded())
   }
 
-  /// Hosts the SwiftUI indicator at `dynamicTypeSize` and returns the layer
-  /// view SwiftUI created for it.
-  private func renderedIndicator(dynamicTypeSize: DynamicTypeSize) throws -> BaguaIndicatorNSView {
+  @Test func largerPointSizeRerendersLargerKeyframes() throws {
+    let window = makeWindow()
+    defer { window.close() }
+    let indicator = BaguaIndicatorNSView(style: .init(color: .orange))
+    window.contentView?.addSubview(indicator)
+    let standard = try firstKeyframeImage(of: indicator)
+
+    // What `@ScaledMetric` hands the view at a larger text size.
+    indicator.style = .init(color: .orange, pointSize: 34, size: CGSize(width: 40, height: 36))
+    let larger = try firstKeyframeImage(of: indicator)
+
+    #expect(larger.width > standard.width)
+    #expect(larger.height > standard.height)
+  }
+
+  private func makeWindow() -> NSWindow {
     let window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 200, height: 200),
       styleMask: [.borderless], backing: .buffered, defer: false
     )
     window.isReleasedWhenClosed = false
-    defer { window.close() }
-    let host = NSHostingView(
-      rootView: BaguaWorkingIndicator(color: .orange).environment(\.dynamicTypeSize, dynamicTypeSize)
-    )
-    host.frame = window.contentLayoutRect
-    window.contentView = host
-    host.layoutSubtreeIfNeeded()
-    return try #require(indicatorView(in: host))
+    return window
   }
 
   private func indicatorView(in view: NSView) -> BaguaIndicatorNSView? {
