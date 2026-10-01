@@ -31,6 +31,7 @@ struct CLIListCommandHandlerTests {
                     handle: 2,
                     title: "tests",
                     cwd: "/Users/onevcat/Projects/Prowl",
+                    visible: true,
                     agent: "codex"
                   ),
                   .init(
@@ -38,6 +39,7 @@ struct CLIListCommandHandlerTests {
                     handle: 3,
                     title: "build",
                     cwd: "/Users/onevcat/Projects/Prowl",
+                    visible: true,
                     agent: nil
                   ),
                 ]
@@ -64,6 +66,7 @@ struct CLIListCommandHandlerTests {
                     handle: 5,
                     title: "notes",
                     cwd: "/Users/onevcat/Projects/Notes",
+                    visible: false,
                     agent: nil
                   )
                 ]
@@ -101,6 +104,9 @@ struct CLIListCommandHandlerTests {
     #expect(payload.items[2].task.status == .idle)
     #expect(payload.items[0].pane.agent == "codex")
     #expect(payload.items[1].pane.agent == nil)
+    #expect(payload.items[0].pane.visible == true)
+    #expect(payload.items[1].pane.visible == true)
+    #expect(payload.items[2].pane.visible == false)
     #expect(payload.items.allSatisfy { $0.tab.handle == nil && $0.pane.handle == nil })
     let rawPayload = try #require(response.data?.bytes)
     let rawPayloadString = try #require(String(bytes: rawPayload, encoding: .utf8))
@@ -162,5 +168,43 @@ struct CLIListCommandHandlerTests {
     #expect(response.command == "list")
     #expect(response.schemaVersion == "prowl.cli.list.v1")
     #expect(response.error?.code == CLIErrorCode.listFailed)
+  }
+
+  @Test func reportsTheServerResolvedCallerOnlyWhenItIsListed() async throws {
+    let paneID = UUID()
+    let snapshot = ListRuntimeSnapshot(
+      worktrees: [
+        .init(
+          id: "/repo", name: "repo", path: "/repo", rootPath: "/repo", kind: .git, taskStatus: nil,
+          tabs: [
+            .init(
+              id: UUID(), handle: 1, title: "t", selected: true, focusedPaneID: paneID,
+              panes: [.init(id: paneID, handle: 2, title: "p", cwd: "/repo", agent: "codex")])
+          ])
+      ],
+      focusedWorktreeID: "/repo"
+    )
+    let envelope = CommandEnvelope(output: .json, command: .list(ListInput()))
+    let listed = ListCommandHandler(
+      resolveCaller: { context in
+        context.callerProcessID == 7 ? CallerPane(worktreeID: "/repo", surfaceID: paneID) : nil
+      },
+      snapshotProvider: { snapshot }
+    )
+    let unlisted = ListCommandHandler(
+      resolveCaller: { _ in CallerPane(worktreeID: "/repo", surfaceID: UUID()) },
+      snapshotProvider: { snapshot }
+    )
+
+    let caller = try #require(
+      try await listed.handle(envelope: envelope, context: CLICommandContext(callerProcessID: 7))
+        .data?.decode(as: ListCommandPayload.self)
+    ).caller
+    #expect(caller == ListCommandCaller(paneID: paneID.uuidString, worktreeID: "/repo"))
+    #expect(
+      try await unlisted.handle(envelope: envelope, context: CLICommandContext(callerProcessID: 7))
+        .data?.decode(as: ListCommandPayload.self).caller == nil)
+    let contextless = try #require(await listed.handle(envelope: envelope).data)
+    #expect(try contextless.decode(as: ListCommandPayload.self).caller == nil)
   }
 }
