@@ -84,6 +84,22 @@ that repository, then switches the host back to the previously active account.
 This uses `gh`'s stored authentication state; Prowl still never reads or stores
 GitHub tokens.
 
+## How often Prowl asks GitHub
+
+The `gh` account Prowl uses is usually shared with other tools and agents, so
+Prowl paces its pull request queries:
+
+- The selected worktree's repository refreshes every 30 seconds. Every other
+  repository refreshes in one background sweep, every 60 seconds or every 2
+  seconds per worktree Prowl tracks, whichever is longer — about every 100
+  seconds with 50 worktrees.
+- Adding or removing worktrees refreshes only the repositories they belong to.
+- For each GitHub host and account, one query runs at a time, and Prowl waits
+  at least 15 seconds between queries, including the queries of one large
+  refresh. Refreshes requested in the meantime join the next query, so opening
+  many worktrees at once costs one query, not one each. Repositories pinned to
+  different accounts on one host are paced separately.
+
 ## Gotchas for agents
 
 - No `gh` / not authenticated → no PR features. If a human expects PR actions and
