@@ -232,8 +232,10 @@ final class PullRequestRefreshCoordinator {
       )
       var prsByRepo = result.successByRepo
       var failedMessagesByRepo = result.failedRepos.mapValues { String(describing: $0) }
-      if !result.failedRepos.isEmpty {
-        let failedGroups = result.failedRepos.keys.compactMap { groupsByKey[$0] }
+      // A smaller query cannot fix a rate limit, so only the other failures fall back per repository.
+      let retryableFailures = result.failedRepos.filter { !$0.value.isRateLimited }
+      if !retryableFailures.isEmpty {
+        let failedGroups = retryableFailures.keys.compactMap { groupsByKey[$0] }
         let fallback = await fetchFallbackResults(key: key, groups: failedGroups)
         for (repoKey, prsByBranch) in fallback.successByRepo {
           prsByRepo[repoKey] = prsByBranch
@@ -246,6 +248,17 @@ final class PullRequestRefreshCoordinator {
         prsByRepo: prsByRepo,
         failedMessagesByRepo: failedMessagesByRepo
       )
+    } catch let error as GithubCLIError where error.isRateLimited {
+      // A smaller query cannot fix a rate limit; the gate reports the retry time on its own.
+      for request in requests {
+        resultHandler(
+          .failed(
+            repositoryID: request.repositoryID,
+            worktreeIDs: request.worktreeIDs,
+            message: error.localizedDescription
+          )
+        )
+      }
     } catch {
       let fallback = await fetchFallbackResults(key: key, groups: Array(groupsByKey.values))
       emitOutcomes(
@@ -441,6 +454,13 @@ final class PullRequestRefreshCoordinator {
   private enum RepoFetchOutcome: Sendable {
     case success(RepoKey, [String: GithubPullRequest])
     case failed(RepoKey, String)
+  }
+}
+
+extension GithubCLIError {
+  nonisolated var isRateLimited: Bool {
+    if case .rateLimited = self { return true }
+    return false
   }
 }
 
