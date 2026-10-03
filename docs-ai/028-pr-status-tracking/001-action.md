@@ -48,6 +48,7 @@ Grouped by problem wave; rows chronological within each wave.
 | --- | --- | --- |
 | 2026-10-02 | Account-wide rate-limit gate on every `gh` call that reaches GitHub: classify refusals, honor `Retry-After`, back off 60 s doubling to 1 h, one probe before resuming, no per-repository fallback on a rate limit; "GitHub rate-limited until HH:MM" in the toolbar, Settings, and refused PR actions | [005](005-rate-limit-gate.md) |
 | 2026-10-02 | Refresh only the repositories whose worktrees changed; background sweep every 60 s or 2 s per worktree, whichever is longer; one query in flight per host, at least 15 s apart, with chunked batches and a sequential fallback | [006](006-refresh-pacing.md) |
+| 2026-10-02 | Badges read per-state check counts (`checkRunCountsByState`, `statusContextCountsByState`); only the selected worktree's pull request lists each check | [007](007-check-counts.md) |
 
 ## Outcome & current state (as of 2026-07-12)
 
