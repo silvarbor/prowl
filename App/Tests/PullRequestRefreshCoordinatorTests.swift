@@ -396,6 +396,68 @@ struct PullRequestRefreshCoordinatorTests {
     #expect(whileFirstRuns.count == 1)
   }
 
+  @Test func detailBranchesReachTheBatchedQuery() async throws {
+    let clock = TestClock()
+    let probe = CoordinatorProbe()
+    let outcomes = OutcomeCollector()
+    let coordinator = makeCoordinator(
+      probe: probe, clock: clock, outcomes: outcomes,
+      batched: { _, requests in successResult(for: requests) }
+    )
+
+    coordinator.enqueue(request(repo: "alpha", branches: ["feat-1", "feat-2"]))
+    coordinator.enqueue(
+      PullRequestRefreshCoordinator.Request(
+        repositoryID: "alpha",
+        repositoryRootURL: URL(fileURLWithPath: "/tmp/alpha"),
+        host: "github.com",
+        owner: "khoi",
+        repo: "alpha",
+        accountOverride: nil,
+        branches: ["feat-2"],
+        worktreeIDs: ["alpha-wt"],
+        detailBranches: ["feat-2"]
+      )
+    )
+    await advanceCoordinatorClock(clock, by: .milliseconds(250))
+    await waitUntil { await probe.batchedCalls().count == 1 }
+
+    let call = try #require(await probe.batchedCalls().first)
+    #expect(call.requests.map(\.detailBranches) == [["feat-2"]])
+  }
+
+  @Test func fallbackKeepsDetailBranches() async throws {
+    let clock = TestClock()
+    let probe = CoordinatorProbe()
+    let outcomes = OutcomeCollector()
+    let coordinator = makeCoordinator(
+      probe: probe,
+      clock: clock,
+      outcomes: outcomes,
+      batched: { _, _ in
+        throw GithubCLIError.commandFailed("network down")
+      }
+    )
+
+    coordinator.enqueue(
+      PullRequestRefreshCoordinator.Request(
+        repositoryID: "alpha",
+        repositoryRootURL: URL(fileURLWithPath: "/tmp/alpha"),
+        host: "github.com",
+        owner: "khoi",
+        repo: "alpha",
+        accountOverride: nil,
+        branches: ["feat-1", "feat-2"],
+        worktreeIDs: ["alpha-wt"],
+        detailBranches: ["feat-2"]
+      )
+    )
+    await advanceCoordinatorClock(clock, by: .milliseconds(250))
+    await waitUntil { await probe.legacyCalls().count == 1 }
+
+    #expect(await probe.legacyCalls().map(\.detailBranches) == [["feat-2"]])
+  }
+
   @Test func inflightHostBuffersNewEnqueueAndFlushesAfterCompletion() async throws {
     let clock = TestClock()
     let probe = CoordinatorProbe()
@@ -858,8 +920,8 @@ private func makeCoordinator(
     await probe.recordBatched(host: host, requests: requests, accountOverride: accountOverride)
     return try await batched(host, requests)
   }
-  client.batchPullRequests = { host, owner, repo, branches, _ in
-    await probe.recordLegacy(host: host, owner: owner, repo: repo, branches: branches)
+  client.batchPullRequests = { host, owner, repo, branches, detailBranches, _ in
+    await probe.recordLegacy(host: host, owner: owner, repo: repo, branches: branches, detailBranches: detailBranches)
     return try await legacy(host, owner, repo, branches)
   }
   return PullRequestRefreshCoordinator(
@@ -961,6 +1023,7 @@ actor CoordinatorProbe {
     let owner: String
     let repo: String
     let branches: [String]
+    let detailBranches: Set<String>
   }
 
   private var batched: [BatchedCall] = []
@@ -974,8 +1037,8 @@ actor CoordinatorProbe {
     batched.append(BatchedCall(host: host, requests: requests, accountOverride: accountOverride))
   }
 
-  func recordLegacy(host: String, owner: String, repo: String, branches: [String]) {
-    legacy.append(LegacyCall(host: host, owner: owner, repo: repo, branches: branches))
+  func recordLegacy(host: String, owner: String, repo: String, branches: [String], detailBranches: Set<String>) {
+    legacy.append(LegacyCall(host: host, owner: owner, repo: repo, branches: branches, detailBranches: detailBranches))
   }
 
   func batchedCalls() -> [BatchedCall] {
