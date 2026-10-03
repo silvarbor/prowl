@@ -56,6 +56,29 @@ What is *not* here: reviews, audits, routine investigations, test reports, worki
 small polish PRs (git history covers them), and current user-facing behavior (`docs/` is the
 agent-facing manual for that).
 
+## Paths in entries before 074
+
+Entry [074](074-project-restructure-and-tuist/000-plan.md) (2026-10) renamed the project from
+`supacode` to `Prowl` and moved the folders. Numbered files are immutable, so entries `001`–`073`
+keep the old paths. Use this table to find a file that an old entry names:
+
+| Old path or name | Now |
+| --- | --- |
+| `supacode/…` | `App/Sources/…` |
+| `supacodeTests/…` | `App/Tests/…` |
+| `supacode/CLIService/Shared/…` | `Shared/Sources/ProwlCLIShared/…` |
+| `supacode/Features/RemoteMirror/RelayWire/…` | `Mirror/Relay/Sources/MirrorRelayProtocol/…` |
+| `supacode/Info.plist`, `supacode/*.entitlements` | `App/Config/Info.plist`, `App/Config/Prowl*.entitlements` |
+| `supacode/App/supacodeApp.swift`, `SupacodePaths`, `SupaLogger` | `App/Sources/App/ProwlApp.swift`, `ProwlPaths`, `ProwlLogger` |
+| `Resources/…`, `Frameworks/…` | `App/Resources/…`, `App/Frameworks/…` |
+| `Resources/git-wt` | `ThirdParty/git-wt` |
+| `ProwlCLI/…`, `ProwlCLIContracts/…`, `ProwlCLITests/…`, root `Package.swift` | `CLI/Sources/prowl/…`, `CLI/Sources/ProwlCLIContracts/…`, `CLI/Tests/ProwlCLITests/…`, `CLI/Package.swift` |
+| `MirrorRelay/…`, `MirrorRelayTests/…` | `Mirror/Relay/Sources/prowl-mirror-relay/…`, `Mirror/Relay/Tests/MirrorRelayTests/…` |
+| `MirrorClient/…` | `Mirror/…` |
+| `bins/…` | `scripts/bin/…` |
+| `supacode.xcodeproj`, scheme and module `supacode`, target `supacodeTests` | Generated `Prowl.xcworkspace` (`make generate`), scheme and module `Prowl`, target `ProwlTests` |
+| `~/Library/Caches/supacode-spm-cache`, `build/supacode.xcarchive` | `~/Library/Caches/prowl-spm-cache`, `build/Prowl.xcarchive` |
+
 ## Index
 
 | # | Entry | Anchor | Topic |
@@ -126,10 +149,11 @@ agent-facing manual for that).
 | 064 | [agent-completion-signals](064-agent-completion-signals/000-plan.md) | 2026-08-22 | Layered agent signal bus (cooperative / launch-scoped hooks / transcript+process+OSC / heuristic), `prowl agents signal` + `agents wait` with source/confidence, per-runtime hook research, [T1 contract-test plan](064-agent-completion-signals/016-t1-contract-test-plan.md), [planned log/screen state decision](064-agent-completion-signals/017-agent-state-decision.md), [foreground/subagent findings](064-agent-completion-signals/018-foreground-and-subagent-findings.md), [foreground identity contract](064-agent-completion-signals/019-foreground-identity-contract.md), [selection channels/fallback](064-agent-completion-signals/020-selection-channel-research.md), [provider/state-machine design](064-agent-completion-signals/021-provider-state-machine-design.md), and [implementation/acceptance](064-agent-completion-signals/022-provider-implementation.md), and [continuity hardening](064-agent-completion-signals/023-provider-continuity-hardening.md), and [capture/emission corrections](064-agent-completion-signals/024-observation-order-and-emission.md) |
 | 065 | [bundled-agent-skills](065-bundled-agent-skills/000-plan.md) | 2026-08-22 | Bundle Prowl's official agent skills into the app, `prowl skills` install/uninstall via symlinks into agent skill folders, Agent Skills section on Settings › CLI & Skills, shared registry for 063 |
 | 066 | [agent-island](066-agent-island/000-plan.md) | 2026-09-01 | Notch-aware Active Agents island, global keyboard entry, Agents Display settings, and hover-revealed floating placement |
-| 067 | [remote-mirror](067-remote-mirror/000-plan.md) | 2026-09-09 | App-owned Host and native remote terminal mirrors; [macOS UX and viewport](067-remote-mirror/006-macos-ux.md), [Mac pane creation](067-remote-mirror/008-client-pane-launch.md) |
+| 067 | [remote-mirror](067-remote-mirror/000-plan.md) | 2026-09-09 | App-owned Host and native remote terminal mirrors; [macOS UX and viewport](067-remote-mirror/006-macos-ux.md), [Mac pane creation](067-remote-mirror/008-client-pane-launch.md), [QR pairing](067-remote-mirror/010-qr-pairing.md), [explicit scrolling](067-remote-mirror/012-scroll-controls-and-report-feedback.md) |
 | 068 | [agent-state-providers](068-agent-state-providers/000-plan.md) | 2026-09-14 | Shared [architecture](068-agent-state-providers/architecture.md), released [Codex provider](068-agent-state-providers/codex.md), and [Claude native adapter](068-agent-state-providers/claude.md); [staged acceptance](068-agent-state-providers/002-native-runtime-implementation.md), [acceptance complete](068-agent-state-providers/001-action.md); fullscreen case excluded by owner |
 | 069 | [undo-close-terminal](069-undo-close-terminal/000-plan.md) | 2026-09-16 | Undo a pane or tab close with ⌘Z within Ghostty’s `undo-timeout`: closed surfaces stay alive off-tree and restore into their original tab and split position |
 | 070 | [app-localization](070-app-localization/000-plan.md) | 2026-09-18 | Simplified Chinese UI from a String Catalog; translations sync at release time through the `sync-l10n` skill (nothing blocks everyday work); compiler-based coverage audit plus a baseline for unlocalized copy; living [glossary](070-app-localization/glossary.md); language choice stored only in the per-app `AppleLanguages` default |
 | 071 | [git-environment-recovery](071-git-environment-recovery/000-plan.md) | 2026-09-20 | Working Git selection, safe repository classification, recovery guidance, and plain-folder Shelf entry |
 | 072 | [workspace-editing](072-workspace-editing/000-plan.md) | 2026-09-25 | Edit a workspace after creation: metadata, member repositories (add, remove, reorder, roles) through one editor sheet reached from the sidebar, detail view, Settings, palette, and menu |
 | 073 | [codex-daemon-caller-identity](073-codex-daemon-caller-identity/000-plan.md) | 2026-09-29 | CLI callers under Codex's shared app-server daemon: cut the ancestry at the daemon and map `CODEX_THREAD_ID` to the driving pane through the TUI session log; `prowl list` reports the caller; the same mapping restores daemon-mode Codex log detection |
+| 074 | [project-restructure-and-tuist](074-project-restructure-and-tuist/000-plan.md) | 2026-10-03 | Tuist-generated macOS and iOS mirror projects (no `.xcodeproj` in Git), `supacode` → `Prowl` for targets, module, and types, and a root folder for each product (`App`, `CLI`, `Mirror`, `Shared`); no user-visible change |

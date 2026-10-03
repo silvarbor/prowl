@@ -12,7 +12,7 @@ class AppBuildPathTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             shutil.copyfile(Path(__file__).resolve().parents[1] / "Makefile", root / "Makefile")
-            (root / "overrides.mk").write_text("ensure-ghostty:\n\t@true\n")
+            (root / "overrides.mk").write_text("ensure-ghostty ensure-project:\n\t@true\n")
             (root / "xcodebuild").write_text(
                 '#!/usr/bin/env python3\nimport json, pathlib, sys\n'
                 'pathlib.Path("arguments.json").write_text(json.dumps(sys.argv[1:]))\n'
@@ -37,15 +37,15 @@ class AppBuildPathTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             shutil.copyfile(Path(__file__).resolve().parents[1] / "Makefile", root / "Makefile")
-            (root / "overrides.mk").write_text("ensure-ghostty:\n\t@true\n")
+            (root / "overrides.mk").write_text("ensure-ghostty ensure-project:\n\t@true\n")
             (root / "scripts").mkdir()
             for name in ["assert-xcresult-tests.sh", "print-xcresult-failures.sh"]:
                 (root / "scripts" / name).write_text("exit 0\n")
             (root / "xcodebuild").write_text(
                 '#!/usr/bin/env python3\nimport json, sys\n'
                 'with open("calls.jsonl", "a") as out: out.write(json.dumps(sys.argv[1:]) + "\\n")\n'
-                f'fail = ({fail_mirror!r} and "-only-testing:supacodeTests/MirrorHostTests" in sys.argv) or '
-                f'({fail_events!r} and "-only-testing:supacodeTests/GitWorktreeRegistryMonitorTests" in sys.argv)\n'
+                f'fail = ({fail_mirror!r} and "-only-testing:ProwlTests/MirrorHostTests" in sys.argv) or '
+                f'({fail_events!r} and "-only-testing:ProwlTests/GitWorktreeRegistryMonitorTests" in sys.argv)\n'
                 'sys.exit(23 if fail else 0)\n'
             )
             (root / "mise").write_text("#!/bin/sh\ncat\n")
@@ -63,8 +63,8 @@ class AppBuildPathTests(unittest.TestCase):
         result, calls = self.run_grouped_build()
         self.assertEqual(result.returncode, 0, result.stderr)
         for suite in ["MirrorHostTests", "MirrorDevicePairingTests", "MirrorConnectionTests",
-                      "MirrorTerminalIntegrationTests"]:
-            target = f"supacodeTests/{suite}"
+                      "MirrorTerminalIntegrationTests", "MirrorReplicaInputTests"]:
+            target = f"ProwlTests/{suite}"
             self.assertIn(f"-skip-testing:{target}", calls[0])
             runs = [call for call in calls if f"-only-testing:{target}" in call]
             self.assertEqual(len(runs), 1)
@@ -73,15 +73,15 @@ class AppBuildPathTests(unittest.TestCase):
     def test_network_suite_failure_fails_the_app_test_target(self):
         result, calls = self.run_grouped_build(fail_mirror=True)
         self.assertNotEqual(result.returncode, 0)
-        self.assertTrue(any("-only-testing:supacodeTests/MirrorHostTests" in call for call in calls))
+        self.assertTrue(any("-only-testing:ProwlTests/MirrorHostTests" in call for call in calls))
 
     def test_event_monitors_run_once_outside_the_bulk_suite(self):
         result, calls = self.run_grouped_build()
         self.assertEqual(result.returncode, 0, result.stderr)
         targets = [
-            "supacodeTests/GitWorktreeRegistryMonitorTests",
-            "supacodeTests/CLISocketServerTests/disconnectMonitorActivatesDuringCreation()",
-            "supacodeTests/CLISocketServerTests/disconnectMonitorOutlivesOriginalDescriptor()",
+            "ProwlTests/GitWorktreeRegistryMonitorTests",
+            "ProwlTests/CLISocketServerTests/disconnectMonitorActivatesDuringCreation()",
+            "ProwlTests/CLISocketServerTests/disconnectMonitorOutlivesOriginalDescriptor()",
         ]
         for target in targets:
             self.assertIn(f"-skip-testing:{target}", calls[0])
@@ -93,7 +93,7 @@ class AppBuildPathTests(unittest.TestCase):
     def test_event_monitor_failure_fails_the_app_test_target(self):
         result, calls = self.run_grouped_build(fail_events=True)
         self.assertNotEqual(result.returncode, 0)
-        self.assertTrue(any("-only-testing:supacodeTests/GitWorktreeRegistryMonitorTests" in call for call in calls))
+        self.assertTrue(any("-only-testing:ProwlTests/GitWorktreeRegistryMonitorTests" in call for call in calls))
 
     def test_default_build_reaches_xcodebuild_with_bash_nounset(self):
         arguments = self.run_failed_build(None)

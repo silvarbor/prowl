@@ -8,10 +8,10 @@ import os
 from pathlib import Path
 import subprocess
 
-INPUTS = [
-    "Package.swift", "Package.resolved", "ProwlCLI", "ProwlCLITests",
-    "ProwlCLIContracts", "supacode/CLIService/Shared",
-]
+# The SwiftPM packages. The app also compiles `Shared` and the relay wire types.
+INPUTS = ["CLI", "Shared", "Mirror/Relay"]
+# The Xcode projects are generated; the manifests and xcconfig files are their tracked inputs.
+APP_INPUTS = ["App", "Mirror/Shared", "Workspace.swift", "Tuist.swift", ".package.resolved"]
 
 
 def tracked_inputs(root, scope):
@@ -26,7 +26,7 @@ def tracked_inputs(root, scope):
         return sorted(cli)
     # The CLI cache owns shared-source timestamps. Restoring a second timestamp
     # for those files would invalidate SwiftPM's restored incremental state.
-    return sorted(listed(["supacode", "supacodeTests", "supacode.xcodeproj"]) - cli)
+    return sorted(listed(APP_INPUTS) - cli)
 
 
 def regular_input(root, name):
@@ -89,7 +89,7 @@ def main():
     args = parser.parse_args()
     root = Path.cwd().resolve()
     names = tracked_inputs(root, args.scope)
-    manifest = args.manifest or root / ".build/prowl-ci-source-mtimes.json"
+    manifest = args.manifest or root / "CLI/.build/prowl-ci-source-mtimes.json"
     if args.scope == "app" and args.manifest is None:
         parser.error("--scope app requires --manifest")
     if args.action == "save":
