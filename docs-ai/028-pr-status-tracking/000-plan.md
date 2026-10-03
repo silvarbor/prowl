@@ -1,13 +1,13 @@
 # 028 — PR Status Tracking: Plan
 
-| | |
-| --- | --- |
-| **Status** | Implemented (retrospective) |
-| **Anchor date** | 2026-05-08 |
-| **Documented** | 2026-07-12 (backfilled) |
-| **Primary PRs** | #256, #305, #366, #379 (anchor wave); #425, #456, #469, #519 (merge queue / fork remotes); #496, #499, #500, #501, #505 (status fidelity / cadence); #533, #538, #539 (flicker) |
-| **Sources** | PR descriptions listed above; fork issues #452, #462, #463; upstream review ledger (2026-06-09 batch, upstream #352) — see `docs-ai/017-upstream-sync-process/upstream-ledger.md` |
-| **Related** | [037-line-diff-tracking](../037-line-diff-tracking/000-plan.md) (sibling sidebar-badge pipeline; per-repo PR observation toggle), [039-gh-cli-hardening](../039-gh-cli-hardening/000-plan.md) (gh subprocess robustness), [017-upstream-sync-process](../017-upstream-sync-process/000-plan.md) (#425 port provenance), [033-ui-refresh-2026-05](../033-ui-refresh-2026-05/000-plan.md) (contributor of #521/#532/#533), `docs/components/github-pull-requests.md` |
+|                 |                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Status**      | Implemented (retrospective)                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| **Anchor date** | 2026-05-08                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| **Documented**  | 2026-07-12 (backfilled)                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| **Primary PRs** | #256, #305, #366, #379 (anchor wave); #425, #456, #469, #519 (merge queue / fork remotes); #496, #499, #500, #501, #505 (status fidelity / cadence); #533, #538, #539 (flicker)                                                                                                                                                                                                                                                                                    |
+| **Sources**     | PR descriptions listed above; fork issues #452, #462, #463; upstream review ledger (2026-06-09 batch, upstream #352) — see `docs-ai/017-upstream-sync-process/upstream-ledger.md`                                                                                                                                                                                                                                                                                  |
+| **Related**     | [037-line-diff-tracking](../037-line-diff-tracking/000-plan.md) (sibling sidebar-badge pipeline; per-repo PR observation toggle), [039-gh-cli-hardening](../039-gh-cli-hardening/000-plan.md) (gh subprocess robustness), [017-upstream-sync-process](../017-upstream-sync-process/000-plan.md) (#425 port provenance), [033-ui-refresh-2026-05](../033-ui-refresh-2026-05/000-plan.md) (contributor of #521/#532/#533), `docs/components/github-pull-requests.md` |
 
 ## Background
 
@@ -102,3 +102,6 @@ As of the anchor wave (reconstructed from #256/#305/#366/#379 PR descriptions):
 - Updated 2026-10-02: an account-wide gate stops every gh call on a rate-limit answer,
   backs off, and skips the per-repository fallback — see
   [005-rate-limit-gate.md](005-rate-limit-gate.md)
+- Updated 2026-10-02: refresh only repositories whose worktrees changed, scale the
+  background sweep with the worktree count, and run one query at a time with a minimum
+  gap — see [006-refresh-pacing.md](006-refresh-pacing.md)

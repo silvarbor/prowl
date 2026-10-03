@@ -83,6 +83,7 @@ final class PullRequestRefreshCoordinator {
   private let githubCLI: GithubCLIClient
   private let clock: any Clock<Duration>
   private let softTimeout: Duration
+  private let minimumQueryGap: Duration
   private let resultHandler: @MainActor (Outcome) -> Void
 
   private nonisolated struct BatchKey: Hashable, Sendable {
@@ -94,17 +95,22 @@ final class PullRequestRefreshCoordinator {
   private let flushDebouncer: KeyedDebouncer<BatchKey>
   private var inflightHosts: Set<BatchKey> = []
   private var queuedByHost: [BatchKey: [Repository.ID: Request]] = [:]
+  // Advanced by reset and cancelHost, so a batch that finishes its gap after either one does not
+  // release state that now belongs to a newer batch.
+  private var generation = 0
 
   init(
     githubCLI: GithubCLIClient,
     clock: any Clock<Duration>,
     debounceWindow: Duration = .milliseconds(250),
     softTimeout: Duration = .seconds(12),
+    minimumQueryGap: Duration = .seconds(15),
     resultHandler: @MainActor @escaping (Outcome) -> Void
   ) {
     self.githubCLI = githubCLI
     self.clock = clock
     self.softTimeout = softTimeout
+    self.minimumQueryGap = minimumQueryGap
     self.resultHandler = resultHandler
     flushDebouncer = KeyedDebouncer(interval: debounceWindow, clock: clock)
   }
@@ -143,6 +149,7 @@ final class PullRequestRefreshCoordinator {
   }
 
   func cancelHost(_ host: String) {
+    generation += 1
     flushDebouncer.cancelAll { $0.host == host }
     pendingByHost = pendingByHost.filter { $0.key.host != host }
     queuedByHost = queuedByHost.filter { $0.key.host != host }
@@ -150,6 +157,7 @@ final class PullRequestRefreshCoordinator {
   }
 
   func reset() {
+    generation += 1
     flushDebouncer.cancelAll()
     pendingByHost.removeAll()
     queuedByHost.removeAll()
@@ -205,8 +213,17 @@ final class PullRequestRefreshCoordinator {
       return
     }
     inflightHosts.insert(key)
+    let startedGeneration = generation
     let requests = Array(bucket.values)
     await processBatch(key: key, requests: requests)
+    // Requests that arrive during the gap merge into the next batch instead of starting their own,
+    // so a burst of new worktrees costs one query rather than one per repository.
+    if minimumQueryGap > .zero {
+      try? await clock.sleep(for: minimumQueryGap)
+    }
+    guard generation == startedGeneration else {
+      return
+    }
     inflightHosts.remove(key)
     if let queued = queuedByHost.removeValue(forKey: key), !queued.isEmpty {
       pendingByHost[key, default: [:]].merge(queued) { _, new in new }
@@ -224,86 +241,94 @@ final class PullRequestRefreshCoordinator {
         allowedHeadRepositories: group.allowedHeadRepositories
       )
     }
-    do {
-      let result = try await runBatchWithTimeout(
-        host: key.host,
-        requests: crossRepoRequests,
-        accountOverride: key.accountOverride
-      )
-      var prsByRepo = result.successByRepo
-      var failedMessagesByRepo = result.failedRepos.mapValues { String(describing: $0) }
-      // A smaller query cannot fix a rate limit, so only the other failures fall back per repository.
-      let retryableFailures = result.failedRepos.filter { !$0.value.isRateLimited }
-      if !retryableFailures.isEmpty {
-        let failedGroups = retryableFailures.keys.compactMap { groupsByKey[$0] }
-        let fallback = await fetchFallbackResults(key: key, groups: failedGroups)
-        for (repoKey, prsByBranch) in fallback.successByRepo {
-          prsByRepo[repoKey] = prsByBranch
-          failedMessagesByRepo.removeValue(forKey: repoKey)
-        }
-        failedMessagesByRepo.merge(fallback.failedMessagesByRepo) { _, new in new }
-      }
-      emitOutcomes(
-        requests,
-        prsByRepo: prsByRepo,
-        failedMessagesByRepo: failedMessagesByRepo
-      )
-    } catch let error as GithubCLIError where error.isRateLimited {
-      // A smaller query cannot fix a rate limit; the gate reports the retry time on its own.
-      for request in requests {
-        resultHandler(
-          .failed(
-            repositoryID: request.repositoryID,
-            worktreeIDs: request.worktreeIDs,
-            message: error.localizedDescription
-          )
+    // Each call below sends exactly one query, so the gap spaces every query rather than only every
+    // batch: a batch of many repositories, or a fallback, cannot turn into back-to-back requests.
+    var pacer = QueryPacer(gap: minimumQueryGap, clock: clock)
+    var prsByRepo: [RepoKey: [String: GithubPullRequest]] = [:]
+    var failedMessagesByRepo: [RepoKey: String] = [:]
+    var fallbackKeys: [RepoKey] = []
+    let chunks = crossRepoRequests.chunked(by: crossRepoBatchAliasLimit)
+    for (index, chunk) in chunks.enumerated() {
+      await pacer.beforeQuery()
+      do {
+        let result = try await runBatchWithTimeout(
+          host: key.host,
+          requests: chunk,
+          accountOverride: key.accountOverride
         )
+        prsByRepo.merge(result.successByRepo) { _, new in new }
+        for (repoKey, error) in result.failedRepos {
+          failedMessagesByRepo[repoKey] = String(describing: error)
+          // A smaller query cannot fix a rate limit, so only the other failures fall back per repository.
+          if !error.isRateLimited {
+            fallbackKeys.append(repoKey)
+          }
+        }
+      } catch let error as GithubCLIError where error.isRateLimited {
+        // The gate now refuses every later query, so the rest of the batch and its fallback fail
+        // without asking; the gate reports the retry time on its own.
+        for repoKey in fallbackKeys + chunks[index...].joined().map(\.key) {
+          failedMessagesByRepo[repoKey] = error.localizedDescription
+        }
+        fallbackKeys.removeAll()
+        break
+      } catch {
+        fallbackKeys.append(contentsOf: chunk.map(\.key))
       }
-    } catch {
-      let fallback = await fetchFallbackResults(key: key, groups: Array(groupsByKey.values))
-      emitOutcomes(
-        requests,
-        prsByRepo: fallback.successByRepo,
-        failedMessagesByRepo: fallback.failedMessagesByRepo
-      )
     }
+    if !fallbackKeys.isEmpty {
+      let fallback = await fetchFallbackResults(
+        key: key,
+        groups: fallbackKeys.compactMap { groupsByKey[$0] },
+        pacer: &pacer
+      )
+      for (repoKey, prsByBranch) in fallback.successByRepo {
+        prsByRepo[repoKey] = prsByBranch
+        failedMessagesByRepo.removeValue(forKey: repoKey)
+      }
+      failedMessagesByRepo.merge(fallback.failedMessagesByRepo) { _, new in new }
+    }
+    emitOutcomes(
+      requests,
+      prsByRepo: prsByRepo,
+      failedMessagesByRepo: failedMessagesByRepo
+    )
   }
 
   private func fetchFallbackResults(
     key: BatchKey,
-    groups: [RepoRequestGroup]
+    groups: [RepoRequestGroup],
+    pacer: inout QueryPacer
   ) async -> RepoFetchResults {
-    // Run per-repo fallback requests concurrently; serial awaits here would multiply
-    // a slow recovery path by the number of repos in the batch.
-    await withTaskGroup(of: RepoFetchOutcome.self) { taskGroup in
-      let githubCLI = self.githubCLI
-      for repoGroup in groups {
-        taskGroup.addTask {
-          do {
-            let prs = try await githubCLI.batchPullRequests(
-              key.host,
-              repoGroup.key.owner,
-              repoGroup.key.repo,
-              repoGroup.branches,
-              key.accountOverride
-            )
-            return .success(repoGroup.key, prs)
-          } catch {
-            return .failed(repoGroup.key, String(describing: error))
-          }
+    // One query at a time, each paced: the fallback runs after a failed batch, which is exactly
+    // when a burst of queries does the most harm to an account other tools share.
+    var results = RepoFetchResults()
+    for (index, repoGroup) in groups.enumerated() {
+      var prsByBranch: [String: GithubPullRequest] = [:]
+      do {
+        for branches in repoGroup.branches.chunked(by: batchPullRequestsChunkSize) {
+          await pacer.beforeQuery()
+          let prs = try await githubCLI.batchPullRequests(
+            key.host,
+            repoGroup.key.owner,
+            repoGroup.key.repo,
+            branches,
+            key.accountOverride
+          )
+          prsByBranch.merge(prs) { _, new in new }
         }
-      }
-      var results = RepoFetchResults()
-      for await outcome in taskGroup {
-        switch outcome {
-        case .success(let repoKey, let prsByBranch):
-          results.successByRepo[repoKey] = prsByBranch
-        case .failed(let repoKey, let message):
-          results.failedMessagesByRepo[repoKey] = message
+        results.successByRepo[repoGroup.key] = prsByBranch
+      } catch let error as GithubCLIError where error.isRateLimited {
+        // The gate now refuses every later query, so the remaining repositories fail without asking.
+        for remaining in groups[index...] {
+          results.failedMessagesByRepo[remaining.key] = error.localizedDescription
         }
+        break
+      } catch {
+        results.failedMessagesByRepo[repoGroup.key] = String(describing: error)
       }
-      return results
     }
+    return results
   }
 
   private func runBatchWithTimeout(
@@ -451,9 +476,30 @@ final class PullRequestRefreshCoordinator {
     var failedMessagesByRepo: [RepoKey: String] = [:]
   }
 
-  private enum RepoFetchOutcome: Sendable {
-    case success(RepoKey, [String: GithubPullRequest])
-    case failed(RepoKey, String)
+}
+
+// Spaces the queries of one batch: every query after the first waits the gap.
+private struct QueryPacer {
+  let gap: Duration
+  let clock: any Clock<Duration>
+  private var queriesSent = 0
+
+  init(gap: Duration, clock: any Clock<Duration>) {
+    self.gap = gap
+    self.clock = clock
+  }
+
+  mutating func beforeQuery() async {
+    if queriesSent > 0, gap > .zero {
+      try? await clock.sleep(for: gap)
+    }
+    queriesSent += 1
+  }
+}
+
+extension Array {
+  nonisolated fileprivate func chunked(by size: Int) -> [[Element]] {
+    stride(from: 0, to: count, by: size).map { Array(self[$0..<Swift.min($0 + size, count)]) }
   }
 }
 
