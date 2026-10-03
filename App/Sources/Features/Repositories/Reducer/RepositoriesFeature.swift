@@ -348,6 +348,17 @@ struct RepositoriesFeature {
     var statusToast: StatusToast?
     var snapshotPersistencePhase: SnapshotPersistencePhase = .idle
     var githubIntegrationAvailability: GithubIntegrationAvailability = .unknown
+    /// When GitHub last answered a pull request refresh for each worktree; a periodic refresh skips
+    /// a worktree whose pull request has settled until its cadence comes round.
+    var pullRequestCheckedAtByWorktreeID: [Worktree.ID: Date] = [:]
+    /// Worktrees the next refresh must ask about whatever their cadence says: after a pull
+    /// request action, or a remote change that can point a branch at other pull requests. A mark
+    /// clears only when a refresh that asks about the worktree is sent, so an answer to an older
+    /// request cannot undo it.
+    var pullRequestRefreshForcedWorktreeIDs: Set<Worktree.ID> = []
+    /// Marks a sent refresh carries until GitHub answers for their branches. Whatever is left when
+    /// the refresh completes, because it failed or never reached GitHub, is marked again.
+    var sentPullRequestRefreshMarks: [Repository.ID: Set<Worktree.ID>] = [:]
     var pendingPullRequestRefreshByRepositoryID: [Repository.ID: PendingPullRequestRefresh] = [:]
     var inFlightPullRequestRefreshRepositoryIDs: Set<Repository.ID> = []
     var prRefreshBatchCountsByRepositoryID: [Repository.ID: Int] = [:]
