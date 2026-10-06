@@ -102,6 +102,23 @@ limit, Prowl stops sending GitHub requests of any kind:
 - PR actions (merge, close, mark ready, re-run, copy logs) are refused with
   **GitHub rate-limited until HH:MM** and send nothing to GitHub.
 
+## How often Prowl asks GitHub
+
+The `gh` account Prowl uses is usually shared with other tools and agents, so
+Prowl paces its pull request queries:
+
+- The selected worktree's repository refreshes every 30 seconds. Every other
+  repository refreshes in one background sweep, every 60 seconds or every 2
+  seconds per worktree Prowl tracks, whichever is longer — about every 100
+  seconds with 50 worktrees.
+- Adding or removing worktrees refreshes only the repositories they belong to.
+- Prowl keeps one query queue for each GitHub host and account pin. Each queue
+  runs one query at a time and waits at least 15 seconds between queries,
+  including the queries of one large refresh. Refreshes requested in the
+  meantime join the next query, so opening many worktrees at once costs one
+  query, not one each. A repository pinned to an account has its own queue,
+  even when the pin names the account `gh` already uses.
+
 ## Gotchas for agents
 
 - "GitHub rate-limited until HH:MM" means Prowl is holding off for the whole
