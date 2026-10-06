@@ -185,6 +185,13 @@ struct ProwlApp: App {
     #endif
   }
 
+  private static func makeGhosttyRuntime(initialSettings: GlobalSettings) -> GhosttyRuntime {
+    GhosttyRuntime(
+      initialColorScheme: initialSettings.appearanceMode.colorScheme,
+      configSource: GhosttyConfigSource(dedicatedPath: initialSettings.ghosttyConfigPath)
+    )
+  }
+
   private static func initializeGhostty(resolvedKeybindings: ResolvedKeybindingMap) {
     let ghosttyArgv = GhosttyCLI.argv(resolvedKeybindings: resolvedKeybindings)
     ghosttyArgv.withUnsafeBufferPointer { buffer in
@@ -212,7 +219,7 @@ struct ProwlApp: App {
       setenv("GHOSTTY_RESOURCES_DIR", resourceURL.path, 1)
     }
     Self.initializeGhostty(resolvedKeybindings: initialResolvedKeybindings)
-    let runtime = GhosttyRuntime(initialColorScheme: initialSettings.appearanceMode.colorScheme)
+    let runtime = Self.makeGhosttyRuntime(initialSettings: initialSettings)
     _ghostty = State(initialValue: runtime)
     let shortcuts = GhosttyShortcutManager(runtime: runtime)
     _ghosttyShortcuts = State(initialValue: shortcuts)
@@ -805,15 +812,8 @@ struct ProwlApp: App {
       },
       textDelivery: { target, text, trailingEnter in
         guard let state = terminalManager.stateIfExists(for: target.worktreeID) else { return false }
-        let delivery = CLISendTextDelivery(
-          insertText: { paneID, payload in
-            state.insertCommittedText(payload, in: paneID)
-          },
-          submitLine: { paneID in
-            state.submitLine(in: paneID)
-          }
-        )
-        return delivery.deliver(to: target, text: text, trailingEnter: trailingEnter)
+        guard trailingEnter else { return state.insertCommittedText(text, in: target.paneID) }
+        return await state.submitAgentLine(text, surfaceID: target.paneID, purpose: .send) == .submitted
       },
       waiterProvider: { worktreeID, surfaceID in
         terminalManager.stateIfExists(for: worktreeID)?
@@ -994,7 +994,7 @@ struct ProwlApp: App {
         else {
           return false
         }
-        return await state.deliverAgentDispatch(text, surfaceID: surfaceID)
+        return await state.submitAgentLine(text, surfaceID: surfaceID, purpose: .dispatch) == .submitted
       },
       cancelDispatch: { dispatchID in
         terminalManager.cancelAgentDispatchIssuance(dispatchID: dispatchID)
@@ -1674,12 +1674,16 @@ struct ProwlApp: App {
         WindowLifecycleDiagnostics.logWithWindows("mainWindow content onAppear")
         WindowLifecycleDiagnostics.noteMainWindowAppeared()
         syncGhosttyManagedShortcuts(with: store.resolvedKeybindings)
+        ghostty.setConfigSource(GhosttyConfigSource(dedicatedPath: store.settings.ghosttyConfigPath))
       }
       .onDisappear {
         WindowLifecycleDiagnostics.logWithWindows("mainWindow content onDisappear")
       }
       .onChange(of: store.resolvedKeybindings) { _, newValue in
         syncGhosttyManagedShortcuts(with: newValue)
+      }
+      .onChange(of: store.settings.ghosttyConfigPath) { _, newValue in
+        ghostty.setConfigSource(GhosttyConfigSource(dedicatedPath: newValue))
       }
       .preferredColorScheme(store.settings.appearanceMode.colorScheme)
     }

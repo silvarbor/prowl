@@ -98,3 +98,10 @@ Anchor wave, all landed 2026-04-04/05:
   [006-ci-source-cache-reuse.md](006-ci-source-cache-reuse.md)
 - Updated 2026-09-06: App incremental-state reuse and measured module extraction — see
   [007-app-incremental-and-module-boundaries.md](007-app-incremental-and-module-boundaries.md)
+- Updated 2026-10-04: the CAS cache step used a path that never existed after 007; restore the
+  CAS from the newest App incremental entry on a miss, save large caches only from main, and
+  run the mirror client jobs only when they change (corrects 007's CAS note) — see
+  [008-cas-fallback-and-cache-scope.md](008-cas-fallback-and-cache-scope.md)
+- Updated 2026-10-04: a watchdog samples the test processes and interrupts xcodebuild after 10
+  minutes without test output, so a hung run fails early and names the hung test — see
+  [009-test-hang-watchdog.md](009-test-hang-watchdog.md)

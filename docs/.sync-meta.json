@@ -1,6 +1,6 @@
 {
-  "_comment": "Metadata for the docs/ manual. The last_synced_commit is the commit at which docs/ was last verified against the implementation; the sync-docs skill (.claude/skills/sync-docs/SKILL.md) diffs HEAD against it and updates this file. Committed to git on purpose so the baseline persists across sessions and machines. A dotfile + .json so a future docs website does not render it as a page.",
-  "last_synced_commit": "b22157f04dc194cc0bd120689baee786f3ce0691",
-  "last_synced_date": "2026-09-29",
-  "note": "Verified changes since the prior baseline: workspace editing (#830), prowl list pane.visible and caller (#839/#842), Codex daemon caller identity and log detection (#839-#841), Codex 0.158 screen shapes (#838), and Agent Island width (#835). Each PR updated its docs; no further manual content changes were needed. Model suggestion list changes (#832) are not documented in the manual."
+  "_comment": "Metadata for the docs/ manual. The last_synced_commit is the commit at which docs/ was last verified against the implementation; the sync-docs skill (.agents/skills/sync-docs/SKILL.md) diffs HEAD against it and updates this file. Committed to git on purpose so the baseline persists across sessions and machines. A dotfile + .json so a future docs website does not render it as a page.",
+  "last_synced_commit": "92c18998c0ce749af14029eaa48c62f173b02898",
+  "last_synced_date": "2026-10-06",
+  "note": "Verified the dedicated Ghostty config source (#860), CJK font fallback (#861), and the font size baseline fix (#863). Feature PRs updated the manual. CLI socket accept (#857) and README changes (#858, #859) need no manual changes."
 }

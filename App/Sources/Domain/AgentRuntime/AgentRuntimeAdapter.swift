@@ -254,9 +254,10 @@ nonisolated enum AgentRuntimeError: Error, Equatable, Sendable {
   case unsupportedStartIntent(AgentProfileRuntime, AgentStartIntent)
 }
 
-nonisolated enum AgentRuntimeAdapterRegistry {
-  static func profileAdapter(for runtime: AgentProfileRuntime) -> (any AgentRuntimeAdapter)? {
-    switch runtime {
+extension AgentProfileRuntime {
+  // An exhaustive switch makes a new agent fail to compile until it is mapped.
+  fileprivate nonisolated var adapter: any AgentRuntimeAdapter {
+    switch self {
     case .claude: ClaudeCodeRuntimeAdapter()
     case .codex: CodexRuntimeAdapter()
     case .gemini: GeminiRuntimeAdapter()
@@ -266,6 +267,7 @@ nonisolated enum AgentRuntimeAdapterRegistry {
     case .copilot: CopilotRuntimeAdapter()
     case .kimi: KimiRuntimeAdapter()
     case .droid: DroidRuntimeAdapter()
+    case .devin: DevinRuntimeAdapter()
     case .amp: AmpRuntimeAdapter()
     case .qoder: QoderRuntimeAdapter()
     case .qwen: QwenRuntimeAdapter()
@@ -273,6 +275,12 @@ nonisolated enum AgentRuntimeAdapterRegistry {
     case .pi: PiRuntimeAdapter()
     case .omp: OMPRuntimeAdapter()
     }
+  }
+}
+
+nonisolated enum AgentRuntimeAdapterRegistry {
+  static func profileAdapter(for runtime: AgentProfileRuntime) -> (any AgentRuntimeAdapter)? {
+    runtime.adapter
   }
 
   /// Canonical launch adapter for one detected runtime.
@@ -882,7 +890,7 @@ nonisolated private struct OMPRuntimeAdapter: AgentRuntimeAdapter {
 }
 
 nonisolated extension [String] {
-  fileprivate func optionValue(long: String, short: String? = nil) -> String? {
+  func optionValue(long: String, short: String? = nil) -> String? {
     for index in indices.reversed() {
       let argument = self[index]
       if argument == long || short == argument {

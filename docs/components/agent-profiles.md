@@ -24,6 +24,26 @@ On first run Prowl seeds one bare profile per installed runtime. Seeds are
 ordinary profiles: rename, edit, or delete them freely — deleted seeds never
 respawn.
 
+### Devin
+
+Choose **Devin** in the Profile runtime picker. Prowl resolves `devin` through your
+login shell and uses your existing Devin login and configuration. Model accepts
+any model ID your account can run; leaving it blank preserves the configured model.
+Standard renders `--permission-mode auto`; Unrestricted renders
+`--permission-mode dangerous`. Reasoning effort and Dedicated Home are not exposed:
+no separate effort flag or complete account relocation has been verified.
+
+Prompted launches put the task after `--`, as required by Devin's interactive CLI.
+Profiles can be selected for workflow launch roles, including handoff and Review
+Loop. Trust and permission requests remain visible as Blocked and must be resolved
+before work continues. Workflow completion requires the normal delivery receipt.
+Devin can lose an Enter that arrives before it accepts a paste. Prowl therefore waits
+for the pasted prompt to appear before it submits dispatches and workflow messages, and
+does not type them over an existing draft. `prowl send` with Enter waits the same way
+when the composer is empty. With a draft or a selection menu, it types directly, so it
+can still answer trust and permission prompts.
+Install bundled helper skills with `prowl skills install --target devin`.
+
 ## Launching
 
 - **Toolbar Agents capsule** — always opens a popover. A "Run a workflow"
@@ -218,6 +238,7 @@ executable, icon, screen heuristics, home, and session identity.
 | Grok Build | Yes | Yes | Standard / Unrestricted | No verified full-state relocation |
 | Pi | Yes | Yes | Runtime default only | `PI_CODING_AGENT_DIR` |
 | Oh My Pi | Yes | Yes | Standard / Unrestricted | `PI_CODING_AGENT_DIR` |
+| Devin | Yes | No | Standard / Unrestricted | No verified full-state relocation |
 
 The execution-mode picker appears only when Prowl can render both choices
 honestly. Cline maps Standard to `--auto-approve false` and Unrestricted to

@@ -14,6 +14,7 @@ nonisolated enum AgentProfileRuntime: String, Codable, CaseIterable, Identifiabl
   case copilot
   case kimi
   case droid
+  case devin
   case amp
   case qoder = "qodercli"
   case qwen
@@ -34,6 +35,7 @@ nonisolated enum AgentProfileRuntime: String, Codable, CaseIterable, Identifiabl
     case .opencode: .opencode
     case .copilot: .copilot
     case .kimi: .kimi
+    case .devin: .devin
     case .droid: .droid
     case .amp: .amp
     case .qoder: .qoder
@@ -45,23 +47,7 @@ nonisolated enum AgentProfileRuntime: String, Codable, CaseIterable, Identifiabl
   }
 
   init(agent: DetectedAgent) {
-    switch agent {
-    case .claude: self = .claude
-    case .codex: self = .codex
-    case .gemini: self = .gemini
-    case .cursor: self = .cursor
-    case .cline: self = .cline
-    case .opencode: self = .opencode
-    case .copilot: self = .copilot
-    case .kimi: self = .kimi
-    case .droid: self = .droid
-    case .amp: self = .amp
-    case .qoder: self = .qoder
-    case .qwen: self = .qwen
-    case .grok: self = .grok
-    case .pi: self = .pi
-    case .omp: self = .omp
-    }
+    self = agent.profileRuntime
   }
 
   var iconLookupToken: String {
@@ -81,6 +67,7 @@ nonisolated enum AgentProfileRuntime: String, Codable, CaseIterable, Identifiabl
     case .opencode: ".local/share/opencode"
     case .copilot: ".copilot"
     case .kimi: ".kimi"
+    case .devin: ".config/devin"
     case .droid: ".factory"
     case .amp: ".config/amp"
     case .qoder: ".qoder"
@@ -88,6 +75,30 @@ nonisolated enum AgentProfileRuntime: String, Codable, CaseIterable, Identifiabl
     case .grok: ".grok"
     case .pi: ".pi/agent"
     case .omp: ".omp/agent"
+    }
+  }
+}
+
+extension DetectedAgent {
+  // An exhaustive switch makes a new agent fail to compile until it is mapped.
+  fileprivate nonisolated var profileRuntime: AgentProfileRuntime {
+    switch self {
+    case .claude: .claude
+    case .codex: .codex
+    case .gemini: .gemini
+    case .cursor: .cursor
+    case .cline: .cline
+    case .opencode: .opencode
+    case .copilot: .copilot
+    case .kimi: .kimi
+    case .droid: .droid
+    case .devin: .devin
+    case .amp: .amp
+    case .qoder: .qoder
+    case .qwen: .qwen
+    case .grok: .grok
+    case .pi: .pi
+    case .omp: .omp
     }
   }
 }

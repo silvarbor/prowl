@@ -1,10 +1,20 @@
 name: test
 
+# The Mac app. The mirror clients have their own workflows, and a change to only those
+# clients does not run this one.
 on:
   push:
     branches:
       - main
+    paths-ignore:
+      - Mirror/iOS/**
+      - Mirror/Android/**
+      - .github/workflows/mirror-*.yml
   pull_request:
+    paths-ignore:
+      - Mirror/iOS/**
+      - Mirror/Android/**
+      - .github/workflows/mirror-*.yml
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -12,9 +22,13 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-26
-    # A green run takes about 15 minutes; a slow runner has taken 2.5x that.
-    # Without this the default is 6 hours, so a stuck run had to be cancelled by hand.
+    # The Swift 6.4 toolchain selects different package manifests than Swift 6.3 and earlier,
+    # so .package.resolved changes with the Xcode major version. Use the same Xcode as local
+    # builds and releases. GitHub marks this image as a preview until a macos-27 label exists.
+    runs-on: xcode-27
+    # A green run takes 6 to 10 minutes, and a slow runner has taken 2.5 times as long. The test
+    # watchdog stops a hung test run sooner; this limit stops anything else that hangs. Without
+    # it the default is 6 hours, so a stuck run had to be cancelled by hand.
     timeout-minutes: 45
     permissions:
       contents: read
@@ -28,10 +42,10 @@ jobs:
         with:
           submodules: recursive
       - uses: ./.github/actions/setup-macos
-      - run: make lint
-      - run: make check-localization
       - name: Stage debug app resources
         run: make embed-cli-debug embed-docs embed-skills
+      - name: Generate workspace
+        run: make ensure-project
       - name: Build app and run tests in parallel
         shell: bash
         run: |
@@ -67,23 +81,39 @@ jobs:
             return "$status"
           }
 
+          # A hung test run prints nothing until the job timeout, and a cancelled job keeps no
+          # result bundle. After 10 minutes without test output, the watchdog samples the test
+          # processes into build/ci-logs/hang and interrupts xcodebuild. The step then fails,
+          # and the result bundle marks the running test as canceled.
+          python3 scripts/ci-test-watchdog.py \
+            --logs 'build/test-results/*.xcresult.log' \
+            --results "$GITHUB_WORKSPACE/build/test-results/" \
+            --products "$PROWL_DERIVED_DATA_PATH/Build/Products" \
+            --out build/ci-logs/hang &
+          pid_watchdog=$!
+
           run_task app-tests make test-app &
           pid_app=$!
           # SwiftPM serializes access to .build; keep its checks in one branch.
           run_task cli-tests make test-cli-smoke test-cli-unit test-cli-integration &
           pid_cli=$!
-          run_task scripts make test-scripts &
-          pid_scripts=$!
+          # Lint and the localization check need no build, so they run beside it.
+          run_task checks make lint check-localization test-scripts &
+          pid_checks=$!
 
           failed=0
           wait "$pid_app" || failed=1
           wait "$pid_cli" || failed=1
-          wait "$pid_scripts" || failed=1
+          wait "$pid_checks" || failed=1
+          kill "$pid_watchdog" 2>/dev/null || true
           {
             printf '## Build and test wall time\n\n| Task | Seconds | Exit status |\n| --- | ---: | ---: |\n'
             cat build/ci-logs/*.timing
             printf '\nTasks run in parallel; their times must not be added.\n\n'
-            python3 scripts/summarize-xcode-build.py build/test-results/*.build.json
+            if [ -d build/ci-logs/hang ]; then
+              printf '**The test output stopped.** The watchdog interrupted xcodebuild. The xcresult bundle names the canceled test, and ci-logs/hang in the logs artifact has the process samples.\n\n'
+            fi
+            python3 scripts/summarize-xcode-build.py build/test-results/*.build.json build/test-results/*.action.json
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$failed"
       - name: Collect mirror diagnostics
@@ -98,6 +128,7 @@ jobs:
         run: |
           python3 scripts/ci-source-mtimes.py save
           python3 scripts/ci-source-mtimes.py save --scope app --manifest "$PROWL_DERIVED_DATA_PATH/source-times.json"
+      - uses: ./.github/actions/save-macos-caches
       - name: Upload build and test logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -107,10 +138,12 @@ jobs:
             build/ci-logs/
             build/test-results/*.log
             build/test-results/*.build.json
+            build/test-results/*.action.json
           if-no-files-found: ignore
           retention-days: 7
       - name: Upload xcresult bundle (on failure)
-        if: failure()
+        # A job that reaches its timeout is cancelled, and its partial results are still useful.
+        if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
           name: xcresult-${{ github.run_id }}-${{ github.run_attempt }}

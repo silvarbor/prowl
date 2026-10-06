@@ -225,10 +225,15 @@ extension ProwlApp {
         guard let state = terminalManager.stateIfExists(for: worktree.id) else {
           return .insertFailed
         }
-        // Same main-actor turn as the insertion: a fence raised by a cancel cannot slip in between.
         guard isLive() else { return .stale }
-        guard state.insertCommittedText(line, in: surfaceID) else { return .insertFailed }
-        return state.submitLine(in: surfaceID) ? .delivered : .submitFailed
+        let submission = await state.submitAgentLine(
+          line, surfaceID: surfaceID, purpose: .workflowMessage, isLive: isLive)
+        guard isLive() else { return .stale }
+        switch submission {
+        case .submitted: return .delivered
+        case .notInserted: return .insertFailed
+        case .notSubmitted: return .submitFailed
+        }
       },
       launch: { worktree, frozenPlan, request in
         await launchWorkflowRole(

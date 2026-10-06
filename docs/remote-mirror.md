@@ -19,10 +19,10 @@ A listener is reachable from the local network or a VPN; the internet cannot rea
 it unless a router forwards the port. Without a paired device key or a live pairing
 code, a connection fails during the TLS handshake.
 
-**Add a Device** opens a modal pairing sheet. It lists the addresses a Client can
-enter (the Bonjour name and each interface reachable through the current listen
-setting, each with the port and a copy button), then a large 60-second code with a
-copy button (⌘C). If the listener is restarting, the sheet waits before generating
+**Add a Device** opens a modal pairing sheet with a 60-second code, a reachable
+Wi-Fi or VPN address and port, and a QR code. **Copy Connection Details** (⌘C)
+copies the address, port, code, and expiry together. When multiple addresses are
+available, choose **Connection address** first. If the listener is restarting, the sheet waits before generating
 its first code; if Host is off, the sheet offers **Start Host**. **Refresh Code**
 replaces the code; **Cancel** invalidates an unused code without stopping Host or
 revoking a device that already paired. When a device completes pairing, the sheet
@@ -141,11 +141,12 @@ navigation contract. Both devices share the Host view, so scrolling can move the
 Host user's view too. An older Host leaves remote scrolling unavailable.
 
 The Mac client keeps the original styled terminal while an application redraws
-its own screen. When the Host viewport moves into native terminal scrollback,
-it displays **Host scrollback · Plain text** using that viewport's physical rows.
-Returning to the active viewport restores the styled terminal. This is selected
-from terminal state, independent of the Agent being run. The existing Ghostty
-APIs expose scrollback text but not its styles; mobile remains text throughout.
+its own screen. Native terminal scrollback also keeps its styles when both Macs
+support styled scrollback and the viewport can be reconstructed safely (see
+**Native history appearance on Mac** below). Otherwise it displays
+**Host scrollback · Plain text** using that viewport's physical rows. Returning
+to the active viewport restores the styled terminal. This is selected from
+terminal state, independent of the Agent being run; mobile remains text throughout.
 
 History remains a separate, read-only view. Its scrolling and page loading do not
 send remote scroll input or change the frozen snapshot. No output archive or

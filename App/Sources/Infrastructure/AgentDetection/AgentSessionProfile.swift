@@ -50,7 +50,14 @@ nonisolated struct AgentSessionProfile: Sendable {
   var rootedPIDKeyedSession: (@Sendable (_ configRoot: URL, _ pid: pid_t, _ processStartedAt: Date) -> AgentSession?)?
 
   static func profile(for agent: DetectedAgent) -> AgentSessionProfile {
-    switch agent {
+    agent.sessionProfile
+  }
+}
+
+extension DetectedAgent {
+  // An exhaustive switch makes a new agent fail to compile until it is mapped.
+  fileprivate nonisolated var sessionProfile: AgentSessionProfile {
+    switch self {
     case .codex: .codex
     case .claude: .claude
     case .pi: .pi
@@ -61,6 +68,7 @@ nonisolated struct AgentSessionProfile: Sendable {
     case .copilot: .copilot
     case .kimi: .kimi
     case .droid: .droid
+    case .devin: .devin
     case .opencode: .opencode
     case .amp: .amp
     case .qoder: .qoder
