@@ -105,3 +105,5 @@ As of the anchor wave (reconstructed from #256/#305/#366/#379 PR descriptions):
 - Updated 2026-10-02: refresh only repositories whose worktrees changed, scale the
   background sweep with the worktree count, and run one query at a time with a minimum
   gap — see [006-refresh-pacing.md](006-refresh-pacing.md)
+- Updated 2026-10-02: badge refreshes fetch per-state check counts, and only the selected
+  worktree's pull request lists each check — see [007-check-counts.md](007-check-counts.md)
