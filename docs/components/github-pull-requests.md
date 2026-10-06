@@ -122,6 +122,22 @@ Prowl paces its pull request queries:
   query, not one each. A repository pinned to an account has its own queue,
   even when the pin names the account `gh` already uses.
 
+## Which pull requests a refresh asks about
+
+Background refreshes skip pull requests that are unlikely to have changed, so
+each query to the shared `gh` account stays small:
+
+- The selected worktree is always refreshed.
+- An open PR with checks still running, mergeability still being computed, or a
+  place in the merge queue is refreshed every time.
+- A settled open PR is refreshed every 3 minutes, a branch without a PR every 5
+  minutes, and a merged or closed PR every 30 minutes.
+- A new worktree is refreshed right away, and so is every worktree of a
+  repository whose remotes change.
+
+A PR opened outside Prowl therefore appears within 5 minutes, or at once when you
+select its worktree.
+
 ## Gotchas for agents
 
 - "GitHub rate-limited until HH:MM" means Prowl is holding off for the whole

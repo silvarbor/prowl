@@ -72,6 +72,8 @@ extension RepositoriesFeature {
       else {
         return .none
       }
+      // An action just changed this pull request; its refresh must not wait for the cadence.
+      state.pullRequestRefreshForcedWorktreeIDs.insert(worktreeID)
       let repositoryRootURL = worktree.repositoryRootURL
       let worktreeIDs = repository.worktrees.map(\.id)
       return .run { send in
@@ -92,12 +94,27 @@ extension RepositoriesFeature {
       guard repositorySettings.fetchesPullRequestState else {
         return .none
       }
-      let worktrees = worktreeIDs.compactMap { state.worktree(for: $0) }
+      let selectedWorktreeID = state.selectedWorktreeID
+      let checkedAt = state.pullRequestCheckedAtByWorktreeID
+      let forced = state.pullRequestRefreshForcedWorktreeIDs
+      let currentDate = worktreeIDs.contains { checkedAt[$0] != nil && !forced.contains($0) } ? now : nil
+      let worktrees = worktreeIDs.compactMap { state.worktree(for: $0) }.filter { worktree in
+        guard let currentDate, !forced.contains(worktree.id) else {
+          return true
+        }
+        return PullRequestRefreshCadence.isDue(
+          pullRequest: state.worktreeInfo(for: worktree.id)?.pullRequest,
+          lastCheckedAt: checkedAt[worktree.id],
+          now: currentDate,
+          isSelected: worktree.id == selectedWorktreeID
+        )
+      }
       guard let firstWorktree = worktrees.first,
         let repositoryID = state.repositoryID(containing: firstWorktree.id)
       else {
         return .none
       }
+      let dueWorktreeIDs = worktrees.map(\.id)
       var seen = Set<String>()
       let branches =
         worktrees
@@ -112,7 +129,7 @@ extension RepositoriesFeature {
           queuePullRequestRefresh(
             repositoryID: repositoryID,
             repositoryRootURL: repositoryRootURL,
-            worktreeIDs: worktreeIDs,
+            worktreeIDs: dueWorktreeIDs,
             refreshesByRepositoryID: &state.queuedPullRequestRefreshByRepositoryID
           )
           return .none
@@ -120,6 +137,11 @@ extension RepositoriesFeature {
         state.inFlightPullRequestRefreshRepositoryIDs.insert(repositoryID)
         // Only the selected worktree's pull request lists each check; the rest carry counts.
         let detailBranches = worktrees.filter { $0.id == state.selectedWorktreeID }.map(\.name)
+        let sentMarks = state.pullRequestRefreshForcedWorktreeIDs.intersection(dueWorktreeIDs)
+        state.pullRequestRefreshForcedWorktreeIDs.subtract(sentMarks)
+        if !sentMarks.isEmpty {
+          state.sentPullRequestRefreshMarks[repositoryID, default: []].formUnion(sentMarks)
+        }
         return enqueueBatchedPullRequestRefresh(
           repositoryID: repositoryID,
           repositoryRootURL: repositoryRootURL,
@@ -131,7 +153,7 @@ extension RepositoriesFeature {
         queuePullRequestRefresh(
           repositoryID: repositoryID,
           repositoryRootURL: repositoryRootURL,
-          worktreeIDs: worktreeIDs,
+          worktreeIDs: dueWorktreeIDs,
           refreshesByRepositoryID: &state.pendingPullRequestRefreshByRepositoryID
         )
         return .send(.githubIntegration(.refreshGithubIntegrationAvailability))
@@ -139,7 +161,7 @@ extension RepositoriesFeature {
         queuePullRequestRefresh(
           repositoryID: repositoryID,
           repositoryRootURL: repositoryRootURL,
-          worktreeIDs: worktreeIDs,
+          worktreeIDs: dueWorktreeIDs,
           refreshesByRepositoryID: &state.pendingPullRequestRefreshByRepositoryID
         )
         return .none
@@ -147,7 +169,7 @@ extension RepositoriesFeature {
         queuePullRequestRefresh(
           repositoryID: repositoryID,
           repositoryRootURL: repositoryRootURL,
-          worktreeIDs: worktreeIDs,
+          worktreeIDs: dueWorktreeIDs,
           refreshesByRepositoryID: &state.pendingPullRequestRefreshByRepositoryID
         )
         return .none
@@ -185,6 +207,7 @@ extension RepositoriesFeature {
         }
         state.queuedPullRequestRefreshByRepositoryID.removeAll()
         state.inFlightPullRequestRefreshRepositoryIDs.removeAll()
+        state.restoreUnansweredPullRequestRefreshMarks()
         clearAllPullRequestRefreshTracking(state: &state)
         return .run { send in
           while !Task.isCancelled {
@@ -219,6 +242,7 @@ extension RepositoriesFeature {
       )
 
     case .repositoryPullRequestRefreshCompleted(let repositoryID):
+      state.restoreUnansweredPullRequestRefreshMarks(of: repositoryID)
       state.inFlightPullRequestRefreshRepositoryIDs.remove(repositoryID)
       clearPullRequestRefreshTracking(repositoryID: repositoryID, state: &state)
       guard state.githubIntegrationAvailability == .available,
@@ -709,6 +733,7 @@ extension RepositoriesFeature {
         state.pendingPullRequestRefreshByRepositoryID.removeAll()
         state.queuedPullRequestRefreshByRepositoryID.removeAll()
         state.inFlightPullRequestRefreshRepositoryIDs.removeAll()
+        state.restoreUnansweredPullRequestRefreshMarks()
         clearAllPullRequestRefreshTracking(state: &state)
         return .merge(
           .cancel(id: CancelID.githubIntegrationRecovery),
@@ -719,6 +744,7 @@ extension RepositoriesFeature {
       state.pendingPullRequestRefreshByRepositoryID.removeAll()
       state.queuedPullRequestRefreshByRepositoryID.removeAll()
       state.inFlightPullRequestRefreshRepositoryIDs.removeAll()
+      state.restoreUnansweredPullRequestRefreshMarks()
       clearAllPullRequestRefreshTracking(state: &state)
       let worktreeIDs = Array(state.worktreeInfoByID.keys)
       for worktreeID in worktreeIDs {
@@ -779,6 +805,17 @@ extension RepositoriesFeature {
       // it arrived before this final refreshed outcome — suppress confirmed clears.
       let confirmedNoPrBranches = hadFailedBatch ? [] : accumulatedConfirmedNoPrBranches
       state.prRefreshResultPrioritiesByRepositoryID.removeValue(forKey: repositoryID)
+      // A branch's status is settled only when every host batch came back and none failed: a found
+      // pull request or a confirmed absence then records when GitHub answered and drops its mark.
+      // Otherwise the branch stays due, and a sent mark goes back on completion.
+      if !hadFailedBatch {
+        recordAnsweredPullRequestRefresh(
+          repositoryID: repositoryID,
+          worktreeIDs: worktreeIDs,
+          answeredBranches: Set(mergedPRsByBranch.keys).union(confirmedNoPrBranches),
+          state: &state
+        )
+      }
       let prsByWorktreeID = pullRequestsByWorktreeID(
         repository: repository,
         worktreeIDs: worktreeIDs,
@@ -892,6 +929,25 @@ extension RepositoriesFeature {
     state.prRefreshFailedBatchRepositoryIDs.removeAll()
     state.prRefreshRemotePrioritiesByRepositoryID.removeAll()
     state.prRefreshResultPrioritiesByRepositoryID.removeAll()
+  }
+
+  private func recordAnsweredPullRequestRefresh(
+    repositoryID: Repository.ID,
+    worktreeIDs: [Worktree.ID],
+    answeredBranches: Set<String>,
+    state: inout State
+  ) {
+    guard !answeredBranches.isEmpty else {
+      return
+    }
+    let checkedAt = now
+    for worktreeID in worktreeIDs {
+      guard let name = state.worktree(for: worktreeID)?.name, answeredBranches.contains(name) else {
+        continue
+      }
+      state.pullRequestCheckedAtByWorktreeID[worktreeID] = checkedAt
+      state.sentPullRequestRefreshMarks[repositoryID]?.remove(worktreeID)
+    }
   }
 
   private func consumePullRequestRefreshBatch(
