@@ -3,8 +3,28 @@ import Testing
 @testable import Prowl
 
 struct AgentNativeStateTests {
-  private func snapshot(_ state: AgentRawState, session: String = "a", revision: Double = 1) -> AgentDetectionEvent {
-    .native(AgentNativeSnapshot(sessionID: session, state: state, statusUpdatedAt: revision))
+  private func snapshot(
+    _ state: AgentRawState, session: String = "a", revision: Double = 1, background: Bool = false
+  ) -> AgentDetectionEvent {
+    .native(
+      AgentNativeSnapshot(
+        sessionID: session, state: state, statusUpdatedAt: revision, hasBackgroundWork: background))
+  }
+
+  @Test func backgroundShellAfterTurnShowsIdleButKeepsOutstandingWork() {
+    var machine = AgentStateMachine()
+    _ = machine.receive(screen(.working), now: 0)
+    _ = machine.receive(snapshot(.working), now: 0)
+    let shell = machine.receive(snapshot(.idle, revision: 2, background: true), now: 1)
+    #expect(shell.state == .idle)
+    #expect(shell.reason == .native(.idle))
+    #expect(shell.hasOutstandingWork)
+    // The turn's retained working frame stays fenced while the shells run.
+    #expect(machine.receive(screen(.working), now: 2).state == .idle)
+    #expect(machine.receive(.tick, now: 10_000).hasOutstandingWork)
+    let finished = machine.receive(snapshot(.idle, revision: 3), now: 10_001)
+    #expect(finished.state == .idle)
+    #expect(!finished.hasOutstandingWork)
   }
 
   private func screen(_ state: AgentRawState, content: Int = 1) -> AgentDetectionEvent {

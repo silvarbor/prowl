@@ -25,6 +25,47 @@ struct AgentDispatchCommandHandlerTests {
     }
   }
 
+  @Test func idleWithBackgroundWorkIsNotReadyForDispatchOrWait() async {
+    var agent = agentEntry(surfaceID: UUID(), status: .idle)
+    agent.stateDecision = AgentStateDecision(
+      state: .idle, reason: .native(.idle), logSessionID: "session", hasOutstandingWork: true)
+    let current = AgentConditionSnapshot(
+      agent: agent, signal: turnEnded, revision: 2, isLive: true, signals: .empty,
+      screenDetection: .init(state: .idle, reason: .noRuleMatched))
+    let state = AgentConditionEvidence.normalizedState(current)
+    #expect(state == "idle")
+    #expect(AgentConditionEvidence.idleVerdict(for: current) == .busy("idle"))
+    let baseline = AgentConditionEvidence.Baseline(
+      revision: 1, changedSignal: nil, terminalSignal: nil, state: "working")
+    #expect(
+      AgentConditionEvidence.exactMatch(
+        condition: .idle, snapshot: current, normalizedState: state, baseline: baseline, minimumConfidence: .heuristic)
+        == nil)
+    #expect(
+      !AgentConditionEvidence.heuristicMatches(
+        condition: .idle, snapshot: current, normalizedState: state, baseline: baseline))
+
+    let target = resolvedTarget()
+    var paneAgent = agentEntry(surfaceID: surfaceID(of: target), status: .idle)
+    paneAgent.stateDecision = agent.stateDecision
+    var issued = false
+    let handler = AgentDispatchCommandHandler(
+      resolveTarget: { _ in .success(target) },
+      inputProtection: { _ in nil },
+      conditionSnapshot: { [paneAgent] _ in
+        AgentConditionSnapshot(
+          agent: paneAgent, signal: self.turnEnded, revision: 3, isLive: true, signals: .empty)
+      },
+      issueDispatch: { _ in
+        issued = true
+        return .failure(.bindingMissing)
+      })
+    let response = await handler.handle(envelope: dispatch(pane: target.paneID))
+    #expect(response.error?.code == CLIErrorCode.dispatchTargetBusy)
+    #expect(response.error?.message.contains("still runs background work") == true)
+    #expect(!issued)
+  }
+
   @Test func fallbackIdleIsNotEvidenceForDispatchOrWait() {
     let agent = agentEntry(surfaceID: UUID(), status: .idle)
     let snapshot = AgentConditionSnapshot(

@@ -270,6 +270,10 @@ final class AgentDispatchCommandHandler: CommandHandler {
     let reason: String =
       if let signal = snapshot.signal, signal.event == .needsInput {
         "its runtime reported needs-input"
+      } else if observation.status == .idle || observation.status == .done,
+        snapshot.agent?.stateDecision?.hasOutstandingWork == true
+      {
+        "its runtime still runs background work"
       } else {
         "the detector reports \(observation.status.rawValue)"
       }

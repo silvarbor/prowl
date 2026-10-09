@@ -15,9 +15,12 @@ adding a duplicate production work ledger.
 interactive Darwin kind, timestamps, and supported status. Exact OS generation is
 checked before and after acquisition. Older snapshots suspend authority.
 
-`busy` and `shell` map to Working, `waiting` to Blocked, and `idle` to Idle. Native
-state includes observed assigned children and background shell work, including work
-retained across `/new`. It remains private, process-scoped heuristic evidence; a
+`busy` maps to Working, `waiting` to Blocked, and `idle` to Idle. `shell` maps to
+Idle with outstanding work: the turn has ended and the composer accepts input, but
+readiness waits and dispatch stay closed until the background shells finish. A
+long-running monitor shell would otherwise show the pane as Working indefinitely.
+Native state includes observed assigned children and background shell work, including
+work retained across `/new`. It remains private, process-scoped heuristic evidence; a
 native Idle is neither successful task delivery nor a public completion signal.
 
 Missing/partial reads suspend authority; unsupported records revoke it. Recovery
