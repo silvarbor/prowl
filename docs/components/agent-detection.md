@@ -235,9 +235,11 @@ at a `~/.grok/` install (so Cursor's own `agent` entrypoint stays Cursor).
    consumes pending events without replaying earlier turn starts.
 
    Claude reads the detected PID's native registry under its configured root
-   (`~/.claude/sessions` by default). `busy` and `shell` mean **Working**, including
-   assigned child and background shell work; `waiting` means **Blocked**, and `idle`
-   means **Idle**. Process generation is checked before and after each read.
+   (`~/.claude/sessions` by default). `busy` means **Working**, including assigned
+   child work; `waiting` means **Blocked**, and `idle` means **Idle**. `shell` means
+   the turn has ended while background shells still run: the pane shows **Idle**, and
+   `agents wait --until idle`, `agents dispatch`, and workflow idle waits stay closed
+   until the shells finish. Process generation is checked before and after each read.
    `/new` and resume use the registry's current session. Two processes sharing a
    transcript retain independent states. Missing, partial, stale, or unsupported
    records fall back to the screen. Background daemon/remote sessions are not
