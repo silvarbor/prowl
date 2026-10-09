@@ -33,12 +33,79 @@ before other hooks can prevent stopping. A workflow finishes only after its expl
 `prowl workflow deliver` receipt. `agents read` has no semantic Devin result reader;
 use `prowl read` for terminal output and workflow delivery for complete artifacts.
 
+### Antigravity CLI
+
+Antigravity (`agy`, verified 1.3.2) keeps an attached conversation's
+`~/.gemini/antigravity-cli/presence/<id>.lock` descriptor open for the life of
+the session, so that open file — not a lock file left behind after exit —
+identifies the session exactly. Its `conversations/<id>.db` and
+`brain/<id>/.system_generated/logs/transcript.jsonl` share the same id.
+
+The detector reads the full active screen and anchors on the live composer:
+a terminal-wide `─` border, a column-0 `>` prompt row (wrapped input
+continues on indented rows), and a terminal-wide `─` bottom border. The
+built-in status row renders directly below that box — `esc to cancel` or
+`esc to interrupt` is **Working** while a turn runs, `? for shortcuts` is
+**Idle** — padded away from the right-aligned model label (`Gemini 3.8 Flash
+· high`, `Claude Sonnet 4.6 (Thinking)`, or nothing until the label
+resolves). The last composer on screen is the live one, and the row under
+its bottom border is the only state evidence: a `stack_with_default` status
+script renders verbatim below that row, so nothing below it counts, however
+it is shaped. A typed draft drops the signature from the status row (only
+the model label remains), and the slash-command autocomplete popup that
+opens under the composer when `/` is typed rewrites it to `esc to cancel`
+whatever the turn state; both are **unknown**, so the state from before the
+user started typing is retained. A screen without a composer, a composer
+caught without its status row, or a viewer such as `/help` or `/model` is
+**unknown**, never Idle.
+
+Workspace-trust, tool-permission, and ask-user dialogs are **Blocked**: they
+replace the composer with option rows (a column-0 `> ` marks the selection,
+within eight rows above the hint) and a `↑/↓ Navigate` hint row, and a
+permission dialog keeps `esc to cancel`, so the dialog read runs before the
+status row and nothing below the hint can veto it. The autocomplete popup
+shares the hint shape but renders below a live composer box, which a dialog
+never does, so a hint under a composer is the popup. Agent responses render
+indented, so column-0 dialog chrome is the live dialog or the user's own
+echoed text; a verbatim quote at column 0 reads Blocked until it scrolls off
+the screen, a delay rather than a dispatch into a modal prompt. Answered
+dialogs leave only the chosen option echoed at column 0 (`> Red`), never the
+hint. A bare hint row with no selection — cropped
+chrome or residue — denies the composer evidence below it and reads
+**unknown**. Option shape alone is not dialog evidence: a slash command
+echoes as a column-0 `> ` row with no rule above it and an indented result
+beneath, and an echoed prompt whose rule scrolled off the top of the screen
+looks the same, so a dialog whose hint copy the detector does not recognize
+falls through to the composer read and fails toward unknown, never Idle.
+
+Terminal width is the longest `─`-only column-0 row on screen. The echoed
+prompt's rule is narrower, agent responses render indented, and the dialog
+rule is not followed by a prompt row, so none of them can pose as the
+composer. The accepted residual is a user's own status script that draws a
+terminal-wide `─`/`>`/`─` box followed by a padded status signature under
+an idle or working composer; that output is the user's configuration, and
+the plain spoofs reviewed so far (`? for shortcuts custom help`, narrower
+boxes, dividers) fail toward unknown, while a live dialog stays Blocked
+whatever is stacked beneath it.
+
+A pane that never shows a recognized screen — a headless `agy --print` run,
+a viewer overlay such as `/diff`, or a future layout change — reports
+unknown the whole time. Its process is still classified, but an unknown
+pane emits no roster entry: it is absent from Active Agents and
+`prowl agents`, `agents wait --until idle|blocked` times out on it, and
+`agents wait --until exit` treats it as gone. The state machine retains the
+last recognized state, so a working turn that only briefly drops its footer
+stays Working.
+
+Antigravity currently uses screen state and cooperative delivery, without a
+managed hook channel or transcript reader.
+
 ## Agents it recognizes
 
 Claude (Claude Code), Codex, Gemini, Cursor, Cline, OpenCode, GitHub Copilot,
 Kimi, Droid, Amp, Pi (`pi`), Oh My Pi (`omp`, `oh-my-pi`), Qoder CLI (`qodercli`),
-Qwen Code (`qwen`), Grok Build (`grok`), and Devin (`devin`).
-Detection covers
+Qwen Code (`qwen`), Grok Build (`grok`), Devin (`devin`), and Antigravity
+(`agy`). Detection covers
 common wrappers (node, python, bun, bash, etc.) so agents launched indirectly are
 still found. Pi and Oh My Pi are independent detected agents. Pi recognizes its
 own minimal working/idle cues, including its built-in braille-prefixed `Working...`
@@ -89,14 +156,39 @@ at a `~/.grok/` install (so Cursor's own `agent` entrypoint stays Cursor).
    and initial sign-in menus as **Blocked** from
    their complete selected-choice and footer structures. Ordinary prompt text and completed
    responses are not confirmation boundaries.
+   Amp (verified 0.0.1791547250) reads only its bottom composer box. Any status in the
+   box's bottom border — `Connecting`, `Sending`, `Waiting`, `Thinking`, `Streaming`
+   (with or without a token counter), `Running Tools`, and whatever else the thread
+   client reports behind its `∼`/`≈`/`≋` spinner — is **Working**; a bare border is
+   **Idle**. `Disconnected` and `Amp Is Redeploying` keep the previous state. A dialog
+   box directly above the composer (`Approval Required` with `‣`-marked options,
+   `Tell Amp what to do differently`) is **Blocked** even though the border still says
+   `Running Tools`, and so is a `‣` option row inside the composer (`Out of Credits`).
+   Quoted status or approval text elsewhere on screen is ignored, and a screen without
+   a complete composer keeps the previous state. Older Amp builds cannot start threads
+   any more, so their `esc to cancel` and approval-text cues are no longer recognized.
    Pi also treats its bottom `── <braille spinner> Working ──` footer and the adjacent
    `async subagent … · background` header with a matching braille job row as **Working**.
    The compact `subagents (N/M running)`, progressive
    `Async agents · N agent(s) running`, and multi-job `Async agents · background`
    layouts carry the same signal; completed, paused, and failed cards use static
-   glyphs and remain idle. Other agent families keep their own patterns (including
-   Oh My Pi's `Working… ⟦esc⟧` loader and bottom-of-screen `󱊷 Working…`
-   (also `⎋`/`esc`) prefix form, braille frames, symbol cycles, Cursor's
+   glyphs and remain idle.
+   Oh My Pi's loader row is **Working** evidence when it leads with the theme's Esc
+   glyph (`󱊷`, `⎋`, or `esc`) followed by any label: the label is the model's own
+   intent (`Working…`, `Running requested command`, `等待命令完成`, …) and is not
+   enumerated. The row counts in the bottom five non-blank rows and in the five rows
+   directly above the live `box` composer, so a long queued draft does not hide it.
+   While a turn runs, Oh My Pi's status line swaps its brand glyph for a braille spinner
+   and turn timer (`⠋ 9s`); the `box` composer embeds that status in its `╭──` header,
+   which is **Working** evidence when the header belongs to the live composer — the last
+   `╭` row followed only by `│` input rows and a final `╰` row, which covers one-line,
+   multiline, and IME-safe layouts. An older spinner frame above transcript text or above
+   a newer idle composer is ignored. The `band` (fresh-install default), `claude`, and the
+   other composer shapes start a status row with that spinner, which the leading-spinner
+   rule reads; an idle composer shows the static brand glyph instead.
+   Other agent families keep their own patterns (including
+   Oh My Pi's `Working… ⟦esc⟧` loader and the Esc-prefixed loader row above,
+   braille frames, symbol cycles, Cursor's
    hexagons, Kimi's moon phases, etc.). Copilot recognizes the bottom
    `Working … esc interrupt` footer across its `∙ ∘ ○ ◎ ◉` animation frames,
    including an optional streaming-size field such as `· 101 B` or `· 1.2 KB`. Its live boxed numbered choices with

@@ -17,6 +17,11 @@ extension DetectedAgent {
   /// the live signal off when a long todo list plus a multi-line status line
   /// pushed the spinner row past the limit and a working agent read as idle.
   ///
+  /// Antigravity reads the full screen for the same reason: its detector anchors
+  /// on the live composer box by shape and ignores everything below the status
+  /// row, so a tail budget only let a long `stack_with_default` status script
+  /// push the composer out of the slice and turn a working pane unknown.
+  ///
   /// Every other detector keeps a bounded tail as its guard against transcript
   /// history. Pi retains 32 non-blank lines so pi-subagents' adaptive widget can
   /// keep its header and live job row together; the remaining detectors keep 24.
@@ -26,7 +31,7 @@ extension DetectedAgent {
   /// until its regions are bounded by shape the same way.
   nonisolated func detectionScreenText(from screen: String) -> String {
     switch self {
-    case .claude:
+    case .claude, .antigravity:
       screen
     case .pi:
       agentDetectionRecentLines(screen, limit: piAgentDetectionRecentLineLimit)
@@ -71,6 +76,7 @@ extension DetectedAgent {
     case .qoder: detectQoder(text)
     case .qwen: detectQwen(text)
     case .grok: detectGrok(text)
+    case .antigravity: detectAntigravity(text)
     case .claude, .codex, .devin: .unknown
     }
   }
@@ -271,16 +277,59 @@ nonisolated private func hasOMPAskPrompt(_ content: String) -> Bool {
 nonisolated private func hasOMPWorkingLine(_ content: String) -> Bool {
   let lines = content.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
     .filter { !$0.isEmpty }
-  return lines.contains { line in
-    isPiWorkingText(line) || hasOMPInterruptHint(line) || hasLabeledBrailleSpinner(line)
-  } || lines.suffix(5).contains(where: hasOMPLeadingEscapeHint)
+  if lines.contains(where: { isPiWorkingText($0) || hasOMPInterruptHint($0) || hasLabeledBrailleSpinner($0) }) {
+    return true
+  }
+  let composerHeaderIndex = ompLiveBoxComposerHeaderIndex(lines)
+  if let composerHeaderIndex, ompBoxComposerHeaderHasSpinner(lines[composerHeaderIndex]) {
+    return true
+  }
+  return ompLoaderCandidateRows(lines, composerHeaderIndex: composerHeaderIndex).contains(where: isOMPLoaderRow)
 }
 
-nonisolated private func hasOMPLeadingEscapeHint(_ line: String) -> Bool {
-  // OMP 18.1.10 puts its theme's Esc symbol before the loader message.
+/// OMP's loader row leads with the theme's Esc glyph (the interrupt key) and shows the
+/// model's self-reported intent: `Working…` before the first token, then free text such as
+/// `Running requested command` or `等待命令完成` while a tool runs. The vocabulary is
+/// unbounded, so any label counts; the row is only read near the composer.
+nonisolated private func isOMPLoaderRow(_ line: String) -> Bool {
   let parts = line.split(maxSplits: 1, whereSeparator: \.isWhitespace)
-  guard parts.count == 2, ["󱊷", "⎋", "esc"].contains(String(parts[0])) else { return false }
-  return piWorkingMessages.contains(String(parts[1]))
+  guard parts.count == 2, ompEscapeGlyphs.contains(String(parts[0])) else { return false }
+  return parts[1].contains(where: \.isLetter)
+}
+
+nonisolated private let ompEscapeGlyphs: Set<String> = ["󱊷", "⎋", "esc"]
+
+/// The rows that can hold the live loader: the bottom of the screen, plus the rows directly
+/// above the live `box` composer, whose queued draft can grow to 18 rows and push the loader
+/// out of a bottom-anchored window.
+nonisolated private func ompLoaderCandidateRows(_ lines: [String], composerHeaderIndex: Int?) -> [String] {
+  var rows = Array(lines.suffix(5))
+  if let composerHeaderIndex {
+    rows += lines[..<composerHeaderIndex].suffix(5)
+  }
+  return rows
+}
+
+/// The live `box` composer is the last `╭` row that closes the screen: every row after it is
+/// a `│` input row and the final row is the `╰` bottom row. That shape covers a one-line
+/// prompt (`╭ … ╮` over `╰─ … ─╯`), a multiline draft, and the IME-safe layout that moves the
+/// bottom border to its own row. Transcript text after a `╰` row marks a tool box or a quoted
+/// frame instead, so an older frame never speaks for a newer composer.
+nonisolated private func ompLiveBoxComposerHeaderIndex(_ lines: [String]) -> Int? {
+  guard let headerIndex = lines.lastIndex(where: { $0.hasPrefix("╭") }),
+    let bottom = lines.last, bottom.hasPrefix("╰"), headerIndex < lines.count - 1
+  else { return nil }
+  let inputRows = lines[(headerIndex + 1)...].dropLast()
+  return inputRows.allSatisfy { $0.hasPrefix("│") } ? headerIndex : nil
+}
+
+/// While a turn runs, OMP's status line replaces its brand glyph with a braille spinner and
+/// a turn timer (`⠋ 9s`). The `box` composer embeds that status line in its top border,
+/// right after the `╭──` run; the other composer shapes start a status row with it, which the
+/// leading-spinner rule already reads.
+nonisolated private func ompBoxComposerHeaderHasSpinner(_ header: String) -> Bool {
+  let status = header.drop(while: { $0 == "╭" || $0 == "─" || $0 == " " })
+  return labeledBrailleSpinnerContent(String(status)) != nil
 }
 
 nonisolated private let piWorkingMessages: Set<String> = ["Working...", "Working…", "Interrupting…"]
@@ -468,29 +517,72 @@ nonisolated private func detectDroid(_ content: String) -> AgentRawState {
   return .idle
 }
 
+// Amp (0.0.1791547250) is a full-screen TUI whose composer box owns the bottom
+// rows: `╭───… ─ <mode> ─╮`, `│ … │` rows, and a bottom border
+// `╰ <spinner> <status> ───… <path> (<branch>) ─╯`. The status is the thread
+// client's live state — `Connecting`, `Sending`, `Waiting`, `Thinking`,
+// `Streaming`, `Streaming 45 tok`, `Running Tools`, … — behind a spinner that
+// cycles `∼`, `≈`, `≋`; an idle composer leaves the border bare. Any status is
+// Working: the label set is open (a token counter trails `Streaming`, a
+// half-painted frame reads `Streami Too`), while the bare border is the only
+// idle shape, so an allowlist flaps on every frame it misses. `Disconnected` and
+// `Amp Is Redeploying` (the two labels in Amp's table that are not turn
+// progress) retain the prior state. Approval and feedback dialogs render as a
+// separate box directly above the composer — `╭─ Approval Required ─…─╮` with
+// `‣`-marked option rows, `╭─ Tell Amp what to do differently ─…─╮` with a `>`
+// input row — while the border keeps `Running Tools`, so the dialog read runs
+// first; the `Out of Credits` dialog puts its `‣` rows inside the composer
+// itself. A screen without a complete composer (startup, a viewer, a redraw
+// caught mid-frame) is unknown so the state machine keeps the prior state;
+// there is no older Amp UI to fall back to, because the service refuses to
+// start threads from a stale CLI.
 nonisolated private func detectAmp(_ content: String) -> AgentRawState {
-  let lower = content.lowercased()
-  let hasWaitingForApproval = lower.contains("waiting for approval")
-  let hasApprovalHeader =
-    lower.contains("invoke tool")
-    || lower.contains("run this command?")
-    || lower.contains("allow editing file:")
-    || lower.contains("allow creating file:")
-    || lower.contains("confirm tool call")
-  let hasApprovalActions =
-    lower.contains("approve")
-    && (lower.contains("allow all for this session")
-      || lower.contains("allow all for every session")
-      || lower.contains("allow file for every session")
-      || lower.contains("deny with feedback"))
+  // Blank rows carry nothing here (every box row has borders), and dropping
+  // them also discards trailing whitespace-only screen rows below the footer.
+  let lines = content.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+    .filter { !$0.isEmpty }
+  let isTop = { (line: String) -> Bool in line.hasPrefix("╭─") && line.hasSuffix("╮") }
+  let isBottom = { (line: String) -> Bool in line.hasPrefix("╰") && line.hasSuffix("╯") }
+  let isInterior = { (line: String) -> Bool in line.hasPrefix("│") && line.hasSuffix("│") }
+  let isSelection = { (line: String) -> Bool in line.hasPrefix("│ ‣ ") }
 
-  if hasApprovalActions && (hasWaitingForApproval || hasApprovalHeader) {
+  guard let footer = lines.indices.last, isBottom(lines[footer]) else { return .unknown }
+  var composerTop = footer - 1
+  while composerTop >= 0, isInterior(lines[composerTop]) {
+    composerTop -= 1
+  }
+  guard composerTop >= 0, isTop(lines[composerTop]), composerTop < footer - 1 else { return .unknown }
+
+  if lines[(composerTop + 1)..<footer].contains(where: isSelection) {
     return .blocked
   }
-  if lower.contains("esc to cancel") {
-    return .working
+
+  // A box whose bottom border touches the composer's top border is a dialog
+  // when it is titled as one or carries a selection row; a long command can
+  // push the title above the detection window, so the rows alone suffice.
+  if composerTop > 0, isBottom(lines[composerTop - 1]) {
+    var dialogTop = composerTop - 2
+    var hasSelection = false
+    while dialogTop >= 0, isInterior(lines[dialogTop]) {
+      hasSelection = hasSelection || isSelection(lines[dialogTop])
+      dialogTop -= 1
+    }
+    let dialogTitles = ["╭─ Approval Required ", "╭─ Tell Amp what to do differently "]
+    let title = dialogTop >= 0 && isTop(lines[dialogTop]) ? lines[dialogTop] : ""
+    if hasSelection || dialogTitles.contains(where: { title.hasPrefix($0) }) {
+      return .blocked
+    }
   }
-  return .idle
+
+  let status = lines[footer].dropFirst().prefix { $0 != "─" }
+    .trimmingCharacters(in: CharacterSet(charactersIn: " ∼≈≋"))
+  if status.isEmpty {
+    return .idle
+  }
+  if status == "Disconnected" || status == "Amp Is Redeploying" {
+    return .unknown
+  }
+  return .working
 }
 
 nonisolated func isNumberedChoice(_ option: String) -> Bool {
@@ -781,4 +873,107 @@ nonisolated private func hasBrailleSpinner(_ content: String) -> Bool {
     return (0x2800...0x28FF).contains(Int(first.value))
       && trimmed.contains(where: \.isLetter)
   }
+}
+
+// Antigravity CLI (`agy`, verified live on 1.3.2): the live region is the
+// composer — a full-width `─` border, a column-0 `>` prompt row (wrapped input
+// continues on indented rows), and a full-width `─` bottom border — and the
+// built-in status row renders directly below it: `esc to cancel` /
+// `esc to interrupt` while a turn runs, `? for shortcuts` when idle, padded away
+// from a right-aligned model label (`Gemini 3.8 Flash · high`,
+// `Claude Sonnet 4.6 (Thinking)`, or nothing until the label resolves). The
+// `stack_with_default` setting renders a user's status script verbatim below
+// that row, so nothing below the status row is evidence. A typed draft hides
+// the signature (the status row keeps only the model label), which reads
+// unknown and retains the prior state. Permission, ask-user,
+// and workspace-trust dialogs replace the composer with option rows (`> ` marks
+// the selection) above a `↑/↓ Navigate …` hint; a permission dialog keeps
+// `esc to cancel`, so the dialog read runs first and is never vetoed by what
+// renders below the hint. Full width is the longest
+// `─`-only column-0 row on screen: the echoed prompt's rule is narrower, agent
+// responses render indented, and a stacked script would have to draw a
+// terminal-wide `─`/`>`/`─` box of its own to forge a composer (documented
+// residual; it fails toward `.unknown`). A screen with neither a live dialog
+// nor a composer followed by a status row is `.unknown`, never affirmative
+// idle — screen heuristics are this runtime's only evidence channel.
+nonisolated private func detectAntigravity(_ content: String) -> AgentRawState {
+  // Trimmed `text` carries the signatures; `raw` keeps the column so typed or
+  // wrapped input (always indented inside the box) cannot pose as chrome.
+  let rows = content.split(separator: "\n", omittingEmptySubsequences: false)
+    .map { (raw: String($0), text: $0.trimmingCharacters(in: .whitespaces)) }
+    .filter { !$0.text.isEmpty }
+  let lines = rows.map(\.text)
+  let isColumnZero = { (index: Int) -> Bool in !rows[index].raw.hasPrefix(" ") }
+  let isRule = { (index: Int) -> Bool in isColumnZero(index) && lines[index].allSatisfy { $0 == "─" } }
+  let fullWidth = rows.indices.filter(isRule).map { lines[$0].count }.max() ?? 0
+  let isBorder = { (index: Int) -> Bool in isRule(index) && lines[index].count == fullWidth }
+  let isPrompt = { (index: Int) -> Bool in
+    isColumnZero(index) && (lines[index] == ">" || lines[index].hasPrefix("> "))
+  }
+
+  // Composer boxes in screen order. A bottom border may double as the next
+  // box's top border, so the scan resumes on it.
+  var composers: [(top: Int, bottom: Int)] = []
+  var index = rows.startIndex
+  while index < rows.endIndex {
+    guard isBorder(index), index + 1 < rows.endIndex, isPrompt(index + 1) else {
+      index += 1
+      continue
+    }
+    var bottom = index + 2
+    while bottom < rows.endIndex, !isColumnZero(bottom) {
+      bottom += 1
+    }
+    guard bottom < rows.endIndex, isBorder(bottom) else {
+      index += 1
+      continue
+    }
+    composers.append((top: index, bottom: bottom))
+    index = bottom
+  }
+
+  // The status row is the signature alone or the signature padded (two or more
+  // spaces) away from the model label. A custom row that continues the
+  // signature with a single space (`? for shortcuts custom help`) is not one.
+  let statusState = { (index: Int) -> AgentRawState? in
+    guard index < lines.endIndex, isColumnZero(index) else { return nil }
+    let signatures: [(String, AgentRawState)] = [
+      ("esc to cancel", .working), ("esc to interrupt", .working), ("? for shortcuts", .idle),
+    ]
+    return signatures.first { lines[index] == $0.0 || lines[index].hasPrefix($0.0 + "  ") }?.1
+  }
+
+  // Dialog chrome is terminal. A `↑/↓ Navigate` hint with a column-0 `> `
+  // selection within eight rows above it (long permission menus) is Blocked,
+  // whatever follows: agent responses render indented, so column-0 chrome is
+  // either the live dialog or the user's own echoed text, and a quoted dialog
+  // that reads Blocked until it scrolls off costs a delay where a vetoed live
+  // dialog would cost a dispatch into a modal prompt. A bare hint — selection
+  // cropped, or residue — denies the composer evidence below it instead.
+  let isHint = { (line: String) -> Bool in
+    line.hasPrefix("↑/↓ Navigate") || line.hasPrefix("↑↓ Navigate")
+  }
+  if let hint = lines.lastIndex(where: isHint) {
+    // The slash-command autocomplete popup (`> /` draft, option rows, the same
+    // hint shape) renders below a live composer box and rewrites the status
+    // row to `esc to cancel` whatever the turn state, so it is unknown: the
+    // state machine keeps the state from before the user started typing.
+    // Dialogs replace the composer, so no box sits above their hint.
+    if let composer = composers.last, composer.bottom < hint {
+      return .unknown
+    }
+    let selected = rows.indices[..<hint].suffix(8).contains { isColumnZero($0) && lines[$0].hasPrefix("> ") }
+    return selected ? .blocked : .unknown
+  }
+  // Option shape alone (a column-0 `> ` row over an indented sibling) is not
+  // dialog evidence: a slash command echoes exactly that way with no `─` rule
+  // above it, an answered question echoes its choice the same way, and so
+  // does any echoed prompt whose rule scrolled off the top of the screen.
+  // Every live dialog carries the hint, so a dialog with unrecognized hint
+  // copy falls through to the composer read and fails toward unknown.
+
+  // The last composer is the live one; a redraw caught without its status row,
+  // or a screen without a composer at all, is unknown rather than idle.
+  guard let composer = composers.last else { return .unknown }
+  return statusState(composer.bottom + 1) ?? .unknown
 }
