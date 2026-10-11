@@ -22,6 +22,58 @@ nonisolated struct CodexDaemonBinding: Sendable, Equatable {
   let liveOffsets: [String: UInt64]
 }
 
+/// The daemon's open rollouts with the lookups every binding needs, built once per change to
+/// the rollouts rather than once per pane.
+nonisolated struct CodexDaemonRolloutIndex: Sendable {
+  let rollouts: [CodexDaemonRollout]
+  let byID: [String: CodexDaemonRollout]
+  /// The rollout that holds each client message id; nil when two rollouts claim one id,
+  /// which leaves every binding ambiguous.
+  let owner: [String: String]?
+  let rootByID: [String: String]
+  /// Every rollout path under each root thread, sorted.
+  let pathsByRoot: [String: [String]]
+
+  init(_ rollouts: [CodexDaemonRollout]) {
+    let byID = Dictionary(rollouts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    var owner: [String: String]? = [:]
+    ownership: for rollout in rollouts {
+      for clientID in rollout.clientIDs {
+        guard owner?[clientID] == nil || owner?[clientID] == rollout.id else {
+          owner = nil
+          break ownership
+        }
+        owner?[clientID] = rollout.id
+      }
+    }
+    var rootByID: [String: String] = [:]
+    var pathsByRoot: [String: [String]] = [:]
+    for rollout in rollouts {
+      let root = rootByID[rollout.id] ?? Self.root(of: rollout.id, in: byID)
+      rootByID[rollout.id] = root
+      pathsByRoot[root, default: []].append(rollout.path)
+    }
+    self.rollouts = rollouts
+    self.byID = byID
+    self.owner = owner
+    self.rootByID = rootByID
+    self.pathsByRoot = pathsByRoot.mapValues { $0.sorted() }
+  }
+
+  func root(of id: String) -> String {
+    rootByID[id] ?? Self.root(of: id, in: byID)
+  }
+
+  private static func root(of id: String, in byID: [String: CodexDaemonRollout]) -> String {
+    var current = id
+    var visited: Set<String> = []
+    while let parent = byID[current]?.parentID, visited.insert(current).inserted {
+      current = parent
+    }
+    return current
+  }
+}
+
 /// A known selection change must not fall back to matching the previous thread's history.
 nonisolated enum CodexDaemonBindingLookup: Sendable {
   case unavailable
@@ -61,8 +113,14 @@ nonisolated struct CodexTUISessionRecord: Sendable, Equatable {
 /// its newest submit that a rollout already holds: a newer unmatched id is a turn whose item
 /// is not written yet, or a steer that waits for the next tool boundary. A child thread
 /// belongs to the root its rollout header names.
+///
+/// Every Codex pane on one daemon asks for its binding on each detection poll, through both
+/// the log provider and the session resolver. They share one scan of the daemon's open
+/// rollouts per `scanReuseInterval`, and one ownership index per change to those rollouts.
 actor CodexDaemonThreadMapper {
-  static let shared = CodexDaemonThreadMapper()
+  /// Shorter than the 300 ms detection poll, so each poll still gets a scan of its own
+  /// while the panes polling within it share that scan.
+  static let shared = CodexDaemonThreadMapper(scanReuseInterval: 0.25)
 
   typealias Rollout = CodexDaemonRollout
   typealias SessionLog = CodexTUISessionRecord
@@ -96,6 +154,18 @@ actor CodexDaemonThreadMapper {
   /// A first lookup reads each open rollout once; later lookups read only appended bytes.
   private let readBudget = 256 * 1_024 * 1_024
 
+  private struct Scan {
+    let daemonPID: pid_t
+    let scannedAt: TimeInterval
+    /// nil when the scan was incomplete or ran out of budget.
+    let index: CodexDaemonRolloutIndex?
+  }
+
+  private var lastScan: Scan?
+  private var lastIndex: (daemonPID: pid_t, index: CodexDaemonRolloutIndex)?
+  private let scanReuseInterval: TimeInterval
+  private let uptime: @Sendable () -> TimeInterval
+
   init(
     sessionLogDirectory: URL = ProwlPaths.codexTUISessionLogDirectory,
     fileManager: FileManager = .default,
@@ -104,19 +174,22 @@ actor CodexDaemonThreadMapper {
       var complete = false
       let paths = ProcessDetection.openFilePaths(pid: pid, complete: &complete)
       return complete ? paths : nil
-    }
+    },
+    scanReuseInterval: TimeInterval = 0,
+    uptime: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
   ) {
     self.sessionLogDirectory = sessionLogDirectory
     self.fileManager = fileManager
     self.sessionLogCache = CodexTUISessionLogCache(read: readSessionLog)
     self.openFilePaths = openFilePaths
+    self.scanReuseInterval = scanReuseInterval
+    self.uptime = uptime
   }
 
   /// The pane driving `threadID`, or nil when the evidence is missing, incomplete, or ambiguous.
   func pane(threadID: String, daemonPID: pid_t) -> CodexThreadPane? {
-    guard let paths = openFilePaths(daemonPID), let rollouts = refreshRollouts(paths.filter(Self.isRolloutPath))
-    else { return nil }
-    return Self.resolve(threadID: threadID, rollouts: rollouts, logs: sessionLogs())
+    guard let index = scan(daemonPID: daemonPID) else { return nil }
+    return Self.resolve(threadID: threadID, index: index, logs: sessionLogs())
   }
 
   /// What the pane's current Codex TUI drives, or nil before its first indexed submit. The
@@ -139,59 +212,62 @@ actor CodexDaemonThreadMapper {
       selections[surfaceID] = Selection(
         tuiStartedAt: tuiStartedAt, logStartedAt: log.startedAt, revision: log.selectionRevision)
     }
-    guard !log.submits.isEmpty, let paths = openFilePaths(daemonPID),
-      let rollouts = refreshRollouts(paths.filter(Self.isRolloutPath)),
-      let binding = Self.binding(for: log, rollouts: rollouts)
+    guard !log.submits.isEmpty, let index = scan(daemonPID: daemonPID),
+      let binding = Self.binding(for: log, index: index)
     else { return selections[surfaceID]?.missing ?? .unavailable }
     selections[surfaceID]?.hasBound = true
     return .bound(binding)
   }
 
+  /// The daemon's open rollouts, scanned at most once per `scanReuseInterval`. The ownership
+  /// index is rebuilt only when the scan read new bytes or the set of open rollouts changed.
+  private func scan(daemonPID: pid_t) -> CodexDaemonRolloutIndex? {
+    let now = uptime()
+    if let lastScan, lastScan.daemonPID == daemonPID, now - lastScan.scannedAt < scanReuseInterval {
+      return lastScan.index
+    }
+    var index: CodexDaemonRolloutIndex?
+    if let paths = openFilePaths(daemonPID), let refresh = refreshRollouts(paths.filter(Self.isRolloutPath)) {
+      if !refresh.changed, let lastIndex, lastIndex.daemonPID == daemonPID {
+        index = lastIndex.index
+      } else {
+        index = CodexDaemonRolloutIndex(refresh.rollouts)
+      }
+    }
+    lastIndex = index.map { (daemonPID, $0) }
+    lastScan = Scan(daemonPID: daemonPID, scannedAt: now, index: index)
+    return index
+  }
+
   // MARK: - Resolution
 
   static func binding(for log: SessionLog, rollouts: [Rollout]) -> CodexDaemonBinding? {
-    let byID = Dictionary(rollouts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-    guard let owner = owners(rollouts) else { return nil }
-    guard let submit = log.submits.dropFirst(log.selectionSubmitOffset ?? 0).last(where: { owner[$0.clientID] != nil }),
-      let bound = owner[submit.clientID].flatMap({ byID[$0] })
+    binding(for: log, index: CodexDaemonRolloutIndex(rollouts))
+  }
+
+  static func binding(for log: SessionLog, index: CodexDaemonRolloutIndex) -> CodexDaemonBinding? {
+    guard let owner = index.owner,
+      let submit = log.submits.dropFirst(log.selectionSubmitOffset ?? 0).last(where: { owner[$0.clientID] != nil }),
+      let bound = owner[submit.clientID].flatMap({ index.byID[$0] })
     else { return nil }
-    let rootID = root(of: bound.id, in: byID)
-    let family = rollouts.filter { root(of: $0.id, in: byID) == rootID }
+    let rootID = index.root(of: bound.id)
     return CodexDaemonBinding(
       rootID: rootID,
-      paths: family.map(\.path).sorted(),
+      paths: index.pathsByRoot[rootID] ?? [],
       liveOffsets: bound.turnStartOffsets[submit.clientID].map { [bound.path: $0] } ?? [:]
     )
   }
 
-  private static func owners(_ rollouts: [Rollout]) -> [String: String]? {
-    var owner: [String: String] = [:]
-    for rollout in rollouts {
-      for clientID in rollout.clientIDs {
-        guard owner[clientID] == nil || owner[clientID] == rollout.id else { return nil }
-        owner[clientID] = rollout.id
-      }
-    }
-    return owner
-  }
-
-  private static func root(of id: String, in byID: [String: Rollout]) -> String {
-    var current = id
-    var visited: Set<String> = []
-    while let parent = byID[current]?.parentID, visited.insert(current).inserted {
-      current = parent
-    }
-    return current
-  }
-
   static func resolve(threadID: String, rollouts: [Rollout], logs: [SessionLog]) -> CodexThreadPane? {
-    let byID = Dictionary(rollouts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-    guard let owner = owners(rollouts) else { return nil }
-    func root(_ id: String) -> String { Self.root(of: id, in: byID) }
-    let target = root(threadID)
+    resolve(threadID: threadID, index: CodexDaemonRolloutIndex(rollouts), logs: logs)
+  }
+
+  static func resolve(threadID: String, index: CodexDaemonRolloutIndex, logs: [SessionLog]) -> CodexThreadPane? {
+    guard let owner = index.owner else { return nil }
+    let target = index.root(of: threadID)
     let bound = logs.compactMap { log -> (log: SessionLog, submittedAt: Date)? in
       guard let submit = log.submits.last(where: { owner[$0.clientID] != nil }),
-        let thread = owner[submit.clientID], root(thread) == target
+        let thread = owner[submit.clientID], index.root(of: thread) == target
       else { return nil }
       return (log, submit.submittedAt)
     }
@@ -270,21 +346,24 @@ actor CodexDaemonThreadMapper {
 
   /// Reads the bytes appended since the last lookup. Returns nil when a file changed identity
   /// or the budget ran out, because a partial index could bind a pane to a stale thread.
-  private func refreshRollouts(_ paths: [String]) -> [Rollout]? {
+  /// `changed` is false only when the open rollouts and their contents match the last refresh.
+  private func refreshRollouts(_ paths: [String]) -> (rollouts: [Rollout], changed: Bool)? {
     var next = cursors.filter { paths.contains($0.key) }
+    var changed = next.count != cursors.count
     var budget = readBudget
     for path in paths {
       guard let attributes = try? fileManager.attributesOfItem(atPath: path),
         let inode = attributes[.systemFileNumber] as? UInt64,
         let size = attributes[.size] as? UInt64
       else { return nil }
-      var cursor =
-        next[path].flatMap { $0.inode == inode && size >= $0.offset ? $0 : nil }
-        ?? Cursor(inode: inode, offset: 0)
+      let kept = next[path].flatMap { $0.inode == inode && size >= $0.offset ? $0 : nil }
+      if kept == nil { changed = true }
+      var cursor = kept ?? Cursor(inode: inode, offset: 0)
       guard size > cursor.offset else {
         next[path] = cursor
         continue
       }
+      changed = true
       guard size - cursor.offset <= UInt64(budget), let handle = FileHandle(forReadingAtPath: path) else {
         cursors = next
         return nil
@@ -303,7 +382,7 @@ actor CodexDaemonThreadMapper {
       next[path] = cursor
     }
     cursors = next
-    return next.values.compactMap(\.rollout)
+    return (next.values.compactMap(\.rollout), changed)
   }
 
   private static func consume(_ cursor: inout Cursor, path: String) {
