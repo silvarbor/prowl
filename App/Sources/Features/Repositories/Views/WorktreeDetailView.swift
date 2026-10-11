@@ -46,7 +46,6 @@ struct WorktreeDetailView: View {
     let selectedTerminalWorktree = repositories.selectedTerminalWorktree
     let canvasFocusedTerminalWorktree = canvasFocusedTerminalWorktree(repositories: repositories)
     let actionTargetWorktree = selectedTerminalWorktree ?? canvasFocusedTerminalWorktree
-    let historyContext = workflowHistoryContext(worktree: actionTargetWorktree, repositories: repositories)
     let selectedWorktreeSummaries = selectedWorktreeSummaries(from: repositories)
     let showsMultiSelectionSummary = shouldShowMultiSelectionSummary(
       repositories: repositories,
@@ -95,9 +94,7 @@ struct WorktreeDetailView: View {
       selectedTerminalWorktree: selectedTerminalWorktree,
       selectedWorktreeSummaries: selectedWorktreeSummaries
     )
-    .navigationTitle(
-      WindowTitle.compute(repositories: repositories, terminalManager: terminalManager)
-    )
+    .modifier(WindowTitleModifier(repositories: repositories, terminalManager: terminalManager))
     .toolbar(removing: .title)
     .toolbar {
       detailToolbarContent(
@@ -106,8 +103,15 @@ struct WorktreeDetailView: View {
     }
     .environment(historyStore)
     .environment(toolbarPopovers)
-    .task { loadWorkflowHistory(context: historyContext, runs: state.workflowRuns.sessions.values.map(\.run)) }
-    .onChange(of: historyContext) { _, context in historyStore.send(.context(context)) }
+    .modifier(
+      WorkflowHistoryContextModifier(
+        historyStore: historyStore,
+        terminalManager: terminalManager,
+        store: store,
+        worktree: actionTargetWorktree,
+        workflowRuns: state.workflowRuns
+      )
+    )
     .onChange(of: state.workflowRuns.sessions) { _, sessions in
       historyStore.send(.liveRuns(sessions.values.map(\.run)))
     }
@@ -207,27 +211,57 @@ struct WorktreeDetailView: View {
     )
   }
 
-  private func loadWorkflowHistory(context: WorkflowHistoryContext, runs: [WorkflowRun]) {
-    historyStore.send(.context(context))
-    historyStore.send(.liveRuns(runs))
-    historyStore.send(.refresh)
+  /// The window title reads the selected tab's live title, which an agent's spinner
+  /// rewrites about once a second per tab. Reading it here, not in the detail body,
+  /// keeps that write from re-running the whole detail view and its toolbar.
+  private struct WindowTitleModifier: ViewModifier {
+    let repositories: RepositoriesFeature.State
+    let terminalManager: WorktreeTerminalManager
+
+    func body(content: Content) -> some View {
+      content.navigationTitle(
+        WindowTitle.compute(repositories: repositories, terminalManager: terminalManager)
+      )
+    }
   }
 
-  private func workflowHistoryContext(worktree: Worktree?, repositories: RepositoriesFeature.State)
-    -> WorkflowHistoryContext
-  {
-    let pane = worktree.flatMap { terminalManager.stateIfExists(for: $0.id)?.currentFocusedSurfaceId() }
-    let agent = repositories.activeAgents.entries.first { $0.surfaceID == pane }
-    return WorkflowHistoryContext(
-      paneID: pane,
-      session: agent.flatMap { entry in
-        WorkflowHistorySessionIdentity.resolve(
-          agent: entry.agent, detected: entry.session,
-          currentSignal: terminalManager.currentAgentSignalEvidenceSnapshot(surfaceID: entry.surfaceID)
-            .latestManagedHook)
-      },
-      worktreeID: worktree?.id,
-      livePaneIDs: Set(terminalManager.activeWorktreeStates.flatMap { $0.surfaces.keys }))
+  /// The history context reads the active agent entries and every live pane, which
+  /// change on most detection polls. Reading them here, not in the detail body, keeps
+  /// those changes from re-running the whole detail view and its toolbar. The entries
+  /// come from the store, not a state copy: the detail body no longer re-runs when
+  /// they change, so a copy passed down from it would be stale.
+  private struct WorkflowHistoryContextModifier: ViewModifier {
+    let historyStore: StoreOf<WorkflowStepHistoryFeature>
+    let terminalManager: WorktreeTerminalManager
+    let store: StoreOf<AppFeature>
+    let worktree: Worktree?
+    let workflowRuns: WorkflowRunsFeature.State
+
+    func body(content: Content) -> some View {
+      let context = historyContext()
+      content
+        .task {
+          historyStore.send(.context(context))
+          historyStore.send(.liveRuns(workflowRuns.sessions.values.map(\.run)))
+          historyStore.send(.refresh)
+        }
+        .onChange(of: context) { _, context in historyStore.send(.context(context)) }
+    }
+
+    private func historyContext() -> WorkflowHistoryContext {
+      let pane = worktree.flatMap { terminalManager.stateIfExists(for: $0.id)?.currentFocusedSurfaceId() }
+      let agent = store.repositories.activeAgents.entries.first { $0.surfaceID == pane }
+      return WorkflowHistoryContext(
+        paneID: pane,
+        session: agent.flatMap { entry in
+          WorkflowHistorySessionIdentity.resolve(
+            agent: entry.agent, detected: entry.session,
+            currentSignal: terminalManager.currentAgentSignalEvidenceSnapshot(surfaceID: entry.surfaceID)
+              .latestManagedHook)
+        },
+        worktreeID: worktree?.id,
+        livePaneIDs: Set(terminalManager.activeWorktreeStates.flatMap { $0.surfaces.keys }))
+    }
   }
 
   private func toolbarSharedState(
