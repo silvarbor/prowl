@@ -29,20 +29,16 @@ nonisolated enum ClaudeRuntimeDecoder {
   /// are not consulted, so a status this decoder does not know still yields the identity
   /// (the session resolver reads it through `ClaudeSessionRegistry`, docs-ai 079.004).
   static func sessionID(_ record: Record, process: AgentProcessGeneration) -> String? {
-    guard record.pid == process.pid, record.kind == "interactive", record.pidDomain == "darwin",
-      UUID(uuidString: record.sessionId) != nil, record.cwd.hasPrefix("/"),
-      let start = processStart(record),
-      start.timeIntervalSince1970 == floor(process.startedAt.timeIntervalSince1970)
-    else { return nil }
-    return record.sessionId
+    processStart(record, process: process) == nil ? nil : record.sessionId
   }
 
   static func snapshot(_ record: Record, process: AgentProcessGeneration) throws -> AgentNativeSnapshot {
-    guard let sessionID = sessionID(record, process: process), let start = processStart(record),
+    guard let start = processStart(record, process: process),
       record.updatedAt.isFinite, record.statusUpdatedAt.isFinite,
       record.updatedAt >= record.statusUpdatedAt,
       record.statusUpdatedAt / 1000 >= start.timeIntervalSince1970
     else { throw Failure.unsupported }
+    let sessionID = record.sessionId
     let state: AgentRawState
     switch record.status {
     case "busy", "shell": state = .working
@@ -53,12 +49,24 @@ nonisolated enum ClaudeRuntimeDecoder {
     return AgentNativeSnapshot(sessionID: sessionID, state: state, statusUpdatedAt: record.statusUpdatedAt)
   }
 
-  /// The registry uses `TZ=UTC ps -o lstart`, which has whole-second precision.
-  private static func processStart(_ record: Record) -> Date? {
+  /// The record's process start when the record belongs to `process`, nil otherwise.
+  private static func processStart(_ record: Record, process: AgentProcessGeneration) -> Date? {
+    guard record.pid == process.pid, record.kind == "interactive", record.pidDomain == "darwin",
+      UUID(uuidString: record.sessionId) != nil, record.cwd.hasPrefix("/"),
+      let start = processStartFormatter.date(from: record.procStart),
+      start.timeIntervalSince1970 == floor(process.startedAt.timeIntervalSince1970)
+    else { return nil }
+    return start
+  }
+
+  /// The registry uses `TZ=UTC ps -o lstart`, which has whole-second precision. Every poll of
+  /// every Claude pane parses it, so one formatter is shared; a configured `DateFormatter`
+  /// parses safely from several threads.
+  nonisolated(unsafe) private static let processStartFormatter: DateFormatter = {
     let formatter = DateFormatter()
     formatter.locale = Locale(identifier: "en_US_POSIX")
     formatter.timeZone = TimeZone(secondsFromGMT: 0)
     formatter.dateFormat = "EEE MMM d HH:mm:ss yyyy"
-    return formatter.date(from: record.procStart)
-  }
+    return formatter
+  }()
 }
