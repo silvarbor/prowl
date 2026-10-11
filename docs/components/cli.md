@@ -383,8 +383,7 @@ first. Because a receipt can precede Codex's own `turn-ended` by a second or two
 For Codex, observed open main or child work in the selected log keeps this
 precondition busy even if a parent `turn-ended` signal has arrived. Claude native
 Working/Waiting applies the same veto, including assigned children. A Claude pane whose
-turn has ended while background shells still run shows `idle`, and the veto holds until
-the shells finish.
+turn has ended while background shells still run is `idle` and accepts a dispatch.
 
 The coordinator waits by exact id:
 

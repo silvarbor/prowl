@@ -243,10 +243,7 @@ enum AgentConditionEvidence {
     baseline: Baseline
   ) -> Bool {
     switch condition {
-    case .idle:
-      snapshot.agent?.stateDecision?.hasOutstandingWork != true
-        && detectorReports(condition, normalizedState: normalizedState)
-    case .blocked: detectorReports(condition, normalizedState: normalizedState)
+    case .idle, .blocked: detectorReports(condition, normalizedState: normalizedState)
     case .changed: snapshot.revision > baseline.revision && normalizedState != baseline.state
     case .exit: !snapshot.isLive || snapshot.agent == nil
     }

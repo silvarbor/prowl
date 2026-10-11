@@ -176,7 +176,7 @@ nonisolated struct AgentStateMachine: Sendable {
       return AgentStateDecision(
         state: blocked ? .blocked : native.state,
         reason: blocked && native.state != .blocked ? .screen(screen.reason) : .native(native.state),
-        logSessionID: native.sessionID, hasOutstandingWork: native.state != .idle || native.hasBackgroundWork)
+        logSessionID: native.sessionID, hasOutstandingWork: native.state != .idle)
     }
 
     if let native, native.state == .idle,

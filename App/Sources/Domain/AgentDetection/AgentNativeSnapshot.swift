@@ -5,7 +5,4 @@ nonisolated struct AgentNativeSnapshot: Equatable, Sendable {
   let sessionID: String
   let state: AgentRawState
   let statusUpdatedAt: TimeInterval
-  /// Work the runtime still runs after its turn, such as a background shell. It keeps
-  /// readiness waits closed without making the agent look busy.
-  var hasBackgroundWork = false
 }

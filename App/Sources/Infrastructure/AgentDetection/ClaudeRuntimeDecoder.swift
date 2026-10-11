@@ -39,19 +39,14 @@ nonisolated enum ClaudeRuntimeDecoder {
       record.statusUpdatedAt / 1000 >= start.timeIntervalSince1970
     else { throw Failure.unsupported }
     let state: AgentRawState
-    var hasBackgroundWork = false
     switch record.status {
     case "busy": state = .working
     // The turn has ended and the composer accepts input; only background shells still run.
-    case "shell":
-      state = .idle
-      hasBackgroundWork = true
+    case "shell": state = .idle
     case "waiting": state = .blocked
     case "idle": state = .idle
     default: throw Failure.unsupported
     }
-    return AgentNativeSnapshot(
-      sessionID: record.sessionId, state: state, statusUpdatedAt: record.statusUpdatedAt,
-      hasBackgroundWork: hasBackgroundWork)
+    return AgentNativeSnapshot(sessionID: record.sessionId, state: state, statusUpdatedAt: record.statusUpdatedAt)
   }
 }

@@ -17,14 +17,12 @@ struct ClaudeRuntimeProviderTests {
   }
 
   @Test func nativeStatesIncludeBackgroundShellWork() throws {
-    for (raw, expected, background) in [
-      ("busy", AgentRawState.working, false), ("shell", .idle, true), ("waiting", .blocked, false),
-      ("idle", .idle, false),
+    for (raw, expected) in [
+      ("busy", AgentRawState.working), ("shell", .idle), ("waiting", .blocked), ("idle", .idle),
     ] {
       let snapshot = try ClaudeRuntimeDecoder.decode(
         record(status: raw), process: AgentProcessGeneration(pid: 42, startedAt: start))
       #expect(snapshot.state == expected)
-      #expect(snapshot.hasBackgroundWork == background)
       #expect(snapshot.sessionID == session)
     }
   }
