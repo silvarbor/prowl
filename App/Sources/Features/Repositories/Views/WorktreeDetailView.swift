@@ -27,6 +27,10 @@ struct WorktreeDetailView: View {
   /// Drive the chrome (nav + toolbar) tint for Normal and Canvas modes.
   @Shared(.repositoryAppearances) private var repositoryAppearances
   @Shared(.settingsFile) private var settingsFile
+  /// Held by the view rather than declared inside `agentsLauncherItems`, which runs on every
+  /// body evaluation: each declaration there looks up and loads a fresh shared reference.
+  @Shared(.userGlobalSettings) private var globalSettings
+  @Shared(.agentRuntimeAvailabilityProbeResults) private var runtimeProbeResults
   /// True while a Canvas card is expanded in place, so the otherwise-transparent
   /// Canvas toolbar gets a matching material scrim instead of showing through.
   @State private var isCanvasCardExpanded = false
@@ -469,7 +473,6 @@ struct WorktreeDetailView: View {
   /// runtime grays the row with a reason instead of silently recommending
   /// another profile (docs-ai 053).
   private func agentsLauncherItems(for worktree: Worktree?) -> [AgentsLauncherItem] {
-    @Shared(.userGlobalSettings) var globalSettings
     let profiles = globalSettings.agentProfiles
     guard let worktree, !profiles.isEmpty else { return [] }
     @Shared(.userRepositorySettings(worktree.repositoryRootURL)) var repositorySettings
@@ -490,7 +493,8 @@ struct WorktreeDetailView: View {
         runtimeName: AgentRuntimeAdapterRegistry.displayName(for: profile.runtime),
         iconSource: profile.iconSource,
         isRecommended: profile.id == recommendedID,
-        availabilityWarning: AgentProfileAvailability.launchWarning(for: profile)
+        availabilityWarning: AgentProfileAvailability.launchWarning(
+          for: profile, probedAvailable: runtimeProbeResults[profile.runtime]?.isAvailable)
       )
     }
   }
