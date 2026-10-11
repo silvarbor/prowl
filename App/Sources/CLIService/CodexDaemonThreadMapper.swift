@@ -150,19 +150,21 @@ actor CodexDaemonThreadMapper {
   private var sessionLogCache: CodexTUISessionLogCache
   private let sessionLogDirectory: URL
   private let fileManager: FileManager
-  private var cursors: [String: Cursor] = [:]
   /// A first lookup reads each open rollout once; later lookups read only appended bytes.
   private let readBudget = 256 * 1_024 * 1_024
 
-  private struct Scan {
-    let daemonPID: pid_t
-    let scannedAt: TimeInterval
-    /// nil when the scan was incomplete or ran out of budget.
-    let index: CodexDaemonRolloutIndex?
+  /// One daemon's read positions and latest scan. Panes whose `CODEX_HOME` selects different
+  /// daemons keep separate state, so polling them in turn neither rescans nor rereads.
+  private struct DaemonScan {
+    var cursors: [String: Cursor] = [:]
+    var scannedAt: TimeInterval?
+    /// nil when the latest scan was incomplete or ran out of budget.
+    var index: CodexDaemonRolloutIndex?
   }
 
-  private var lastScan: Scan?
-  private var lastIndex: (daemonPID: pid_t, index: CodexDaemonRolloutIndex)?
+  private var daemons: [pid_t: DaemonScan] = [:]
+  /// A daemon no pane has asked about for this long has exited or lost its panes.
+  private static let idleDaemonLifetime: TimeInterval = 60
   private let scanReuseInterval: TimeInterval
   private let uptime: @Sendable () -> TimeInterval
 
@@ -223,20 +225,21 @@ actor CodexDaemonThreadMapper {
   /// index is rebuilt only when the scan read new bytes or the set of open rollouts changed.
   private func scan(daemonPID: pid_t) -> CodexDaemonRolloutIndex? {
     let now = uptime()
-    if let lastScan, lastScan.daemonPID == daemonPID, now - lastScan.scannedAt < scanReuseInterval {
-      return lastScan.index
+    var state = daemons[daemonPID] ?? DaemonScan()
+    if let scannedAt = state.scannedAt, now - scannedAt < scanReuseInterval {
+      return state.index
     }
-    var index: CodexDaemonRolloutIndex?
-    if let paths = openFilePaths(daemonPID), let refresh = refreshRollouts(paths.filter(Self.isRolloutPath)) {
-      if !refresh.changed, let lastIndex, lastIndex.daemonPID == daemonPID {
-        index = lastIndex.index
-      } else {
-        index = CodexDaemonRolloutIndex(refresh.rollouts)
-      }
+    let previous = state.index
+    state.index = nil
+    if let paths = openFilePaths(daemonPID),
+      let refresh = refreshRollouts(paths.filter(Self.isRolloutPath), cursors: &state.cursors)
+    {
+      state.index = (refresh.changed ? nil : previous) ?? CodexDaemonRolloutIndex(refresh.rollouts)
     }
-    lastIndex = index.map { (daemonPID, $0) }
-    lastScan = Scan(daemonPID: daemonPID, scannedAt: now, index: index)
-    return index
+    state.scannedAt = now
+    daemons = daemons.filter { now - ($0.value.scannedAt ?? now) < Self.idleDaemonLifetime }
+    daemons[daemonPID] = state
+    return state.index
   }
 
   // MARK: - Resolution
@@ -347,7 +350,9 @@ actor CodexDaemonThreadMapper {
   /// Reads the bytes appended since the last lookup. Returns nil when a file changed identity
   /// or the budget ran out, because a partial index could bind a pane to a stale thread.
   /// `changed` is false only when the open rollouts and their contents match the last refresh.
-  private func refreshRollouts(_ paths: [String]) -> (rollouts: [Rollout], changed: Bool)? {
+  private func refreshRollouts(
+    _ paths: [String], cursors: inout [String: Cursor]
+  ) -> (rollouts: [Rollout], changed: Bool)? {
     var next = cursors.filter { paths.contains($0.key) }
     var changed = next.count != cursors.count
     var budget = readBudget

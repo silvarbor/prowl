@@ -328,8 +328,12 @@ struct CodexDaemonThreadMapperTests {
     #expect(await mapper.binding(surfaceID: Self.paneB, daemonPID: 1, tuiStartedAt: tuiStart)?.rootID == "t2")
     #expect(scans.withLock { $0 } == 2)
 
-    // A different daemon never reuses another daemon's scan.
+    // A different daemon never reuses another daemon's scan, and does not evict it: panes on
+    // two daemons polled in turn each keep their own daemon's scan for the interval.
     _ = await mapper.binding(surfaceID: Self.paneA, daemonPID: 2, tuiStartedAt: tuiStart)
+    #expect(scans.withLock { $0 } == 3)
+    #expect(await mapper.binding(surfaceID: Self.paneA, daemonPID: 1, tuiStartedAt: tuiStart)?.rootID == "t2")
+    _ = await mapper.binding(surfaceID: Self.paneB, daemonPID: 2, tuiStartedAt: tuiStart)
     #expect(scans.withLock { $0 } == 3)
   }
 
