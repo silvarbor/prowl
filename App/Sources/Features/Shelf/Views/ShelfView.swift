@@ -70,6 +70,7 @@ struct ShelfView: View {
           openIndex: openIndex,
           activeAgentEntries: activeAgentEntriesByWorktreeID[book.id] ?? []
         )
+        .modifier(ShelfSpineMotion())
         if book.id == openBookID {
           openBookArea(for: book, state: state)
         }

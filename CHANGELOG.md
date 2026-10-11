@@ -1,5 +1,25 @@
 # Changelog
 
+## [2026.10.11](https://github.com/onevcat/Prowl/releases/tag/v2026.10.11)
+
+Agents can now report their status to Prowl directly through OSC 7501, starting with Claude Code and Pi. Split panes also get a close button.
+
+### New
+
+- **OSC 7501 program status support.** Prowl now accepts status reports that agents send through the terminal (OSC 7501), so Working, Blocked, and Done come straight from the agent instead of being inferred from the screen. Claude Code 2.1.295+ and Pi 1.1.0+ are the first supported agents; more will follow. Pi now shows Blocked when waiting for extension confirmations, questions, or authentication.
+- Split panes now have a close button beside the zoom control. Hover over the pane’s top drag handle to reveal it; the tooltip shows your configured shortcut, which defaults to ⌘W.
+
+### Improved
+
+- Exited agents disappear from Active Agents sooner in terminals with shell integration.
+- User settings now use `global.user.json` and `prowl.user.json`. Existing settings migrate automatically while preserving legacy files, symlink targets, and any existing destination files.
+
+### Fixed
+
+- Fixed session tracking after creating or resuming sessions in Claude Code and Pi, so Prowl updates without requiring another keystroke.
+- Prevented automatic settings saves from overwriting configuration after a failed load.
+- Fixed a potential crash during terminal initialization.
+
 ## [2026.10.10](https://github.com/onevcat/Prowl/releases/tag/v2026.10.10)
 
 This release adds Devin and Antigravity support, reduces GitHub refresh traffic, and improves agent status detection.

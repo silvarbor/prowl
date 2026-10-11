@@ -24,16 +24,21 @@ nonisolated enum ClaudeRuntimeDecoder {
     return try JSONDecoder().decode(Record.self, from: data)
   }
 
-  static func snapshot(_ record: Record, process: AgentProcessGeneration) throws -> AgentNativeSnapshot {
-    // The registry uses `TZ=UTC ps -o lstart`, which has whole-second precision.
-    let formatter = DateFormatter()
-    formatter.locale = Locale(identifier: "en_US_POSIX")
-    formatter.timeZone = TimeZone(secondsFromGMT: 0)
-    formatter.dateFormat = "EEE MMM d HH:mm:ss yyyy"
+  /// The record's session when it belongs to `process`: the same pid and OS start second,
+  /// an interactive Darwin kind, a UUID session id, and an absolute cwd. The status fields
+  /// are not consulted, so a status this decoder does not know still yields the identity
+  /// (the session resolver reads it through `ClaudeSessionRegistry`, docs-ai 079.004).
+  static func sessionID(_ record: Record, process: AgentProcessGeneration) -> String? {
     guard record.pid == process.pid, record.kind == "interactive", record.pidDomain == "darwin",
       UUID(uuidString: record.sessionId) != nil, record.cwd.hasPrefix("/"),
-      let start = formatter.date(from: record.procStart),
-      start.timeIntervalSince1970 == floor(process.startedAt.timeIntervalSince1970),
+      let start = processStart(record),
+      start.timeIntervalSince1970 == floor(process.startedAt.timeIntervalSince1970)
+    else { return nil }
+    return record.sessionId
+  }
+
+  static func snapshot(_ record: Record, process: AgentProcessGeneration) throws -> AgentNativeSnapshot {
+    guard let sessionID = sessionID(record, process: process), let start = processStart(record),
       record.updatedAt.isFinite, record.statusUpdatedAt.isFinite,
       record.updatedAt >= record.statusUpdatedAt,
       record.statusUpdatedAt / 1000 >= start.timeIntervalSince1970
@@ -45,6 +50,15 @@ nonisolated enum ClaudeRuntimeDecoder {
     case "idle": state = .idle
     default: throw Failure.unsupported
     }
-    return AgentNativeSnapshot(sessionID: record.sessionId, state: state, statusUpdatedAt: record.statusUpdatedAt)
+    return AgentNativeSnapshot(sessionID: sessionID, state: state, statusUpdatedAt: record.statusUpdatedAt)
+  }
+
+  /// The registry uses `TZ=UTC ps -o lstart`, which has whole-second precision.
+  private static func processStart(_ record: Record) -> Date? {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = TimeZone(secondsFromGMT: 0)
+    formatter.dateFormat = "EEE MMM d HH:mm:ss yyyy"
+    return formatter.date(from: record.procStart)
   }
 }

@@ -66,11 +66,10 @@ struct ShelfSpineView: View {
     // its intrinsic size and push the entire window taller.
     .frame(maxHeight: .infinity, alignment: .top)
     .background(
-      // Single `Rectangle` with a computed fill so the color change
-      // interpolates in place as `distanceFromOpen` shifts, rather than
-      // swapping one view for another (which the previous `@ViewBuilder`
-      // if/else did). Fill is derived from a stepped accent-alpha ladder
-      // so the open book glows strongest and neighbors fade outward.
+      // Keep one Rectangle for selection and hover updates. Selection tint
+      // changes immediately at the ShelfSpineMotion boundary; hover still
+      // interpolates locally. The accent-alpha ladder makes the open book
+      // strongest and reduces tint on more distant books.
       //
       // Only extends `.bottom`: the spine stops at the toolbar's lower edge
       // (the uniform toolbar tint up there is owned by

@@ -172,7 +172,16 @@ at a `~/.grok/` install (so Cursor's own `agent` entrypoint stays Cursor).
    The compact `subagents (N/M running)`, progressive
    `Async agents · N agent(s) running`, and multi-job `Async agents · background`
    layouts carry the same signal; completed, paused, and failed cards use static
-   glyphs and remain idle.
+   glyphs and remain idle. Pi 1.1.0 and later also reports its state through
+   [program status](#program-status-osc-7501), and that root record outranks these
+   screen cues: the footer and the subagent cards are read only when Pi sends no
+   reports (`PI_PROGRAM_STATUS=0`, older versions). Pi's built-in tools never ask for
+   confirmation, so its first **Blocked** comes from the protocol: an extension dialog
+   (`ctx.ui.confirm` → `osc.blocked.permission`; `select`, `input`, `editor` →
+   `osc.blocked.question`) or an OAuth login wait (`osc.blocked.auth`); a provider
+   failure during a turn is `osc.error`, which reads as Idle and may show the Done
+   badge. Pi's own selectors (`/model`, `/settings`) send nothing and leave the
+   previous state in place.
    Oh My Pi's loader row is **Working** evidence when it leads with the theme's Esc
    glyph (`󱊷`, `⎋`, or `esc`) followed by any label: the label is the model's own
    intent (`Working…`, `Running requested command`, `等待命令完成`, …) and is not
@@ -240,9 +249,25 @@ at a `~/.grok/` install (so Cursor's own `agent` entrypoint stays Cursor).
    means **Idle**. Process generation is checked before and after each read.
    `/new` and resume use the registry's current session. Two processes sharing a
    transcript retain independent states. Missing, partial, stale, or unsupported
-   records fall back to the screen. Background daemon/remote sessions are not
+   records fall back to the screen. The registry's `sessionId` is also the pane's
+   session identity (`process_log`, `exact`): it follows `/clear` and an in-process
+   `/resume` without any screen text, within the resolver's 5 s result cache plus one
+   delegated tick (about 7 s) while the registry stays readable, so a delegated pane
+   tracks a rotation too. A transient read failure keeps the last registry identity
+   for three poll resolutions before the transcript scan and fingerprint take over
+   (`agents read` reports only current evidence meanwhile); they remain the fallback
+   for versions without the registry. Background daemon/remote sessions are not
    supported by this adapter. A manually relocated config root must be supplied
    through a Prowl launch profile; shell-only overrides can fall back to screen.
+   Claude Code 2.1.295 and later also reports its state through
+   [program status](#program-status-osc-7501). That root record outranks the
+   registry and the screen, and the native state provider does not sample the
+   registry while it decides (the session resolver still reads it for identity). The
+   registry and the screen rules are the fallback: Claude sends nothing before the
+   trust dialog is answered, so that prompt is still the screen blocker, and a
+   cleared record hands the pane back to them. A finished command (OSC 133) only
+   wakes a fresh probe: the same Claude keeps its record and its authority (a
+   nested shell's prompt), and a confirmed exit releases the entry.
 
 For diagnostics and sanitized regression captures, `prowl read --source detection`
 returns the exact active-screen buffer used by stage 2. It is explicitly requested
@@ -253,9 +278,11 @@ because it can differ from the visible viewport when a pane is scrolled; the def
 the final state decision and `screen_reason` for the screen rule. Codex can report
 `log.openWork`, `log.turnEnded`, or a `screen.*` fallback reason; `raw_state` remains
 the latest screen classification. A current blocker reports its screen-rule ID.
-Claude reports `native.working`, `native.blocked`, or `native.idle`; a fresh screen
+Claude reports an `osc.*` reason while its program status root record decides, and
+otherwise `native.working`, `native.blocked`, or `native.idle`; a fresh screen
 blocker can retain its screen-rule ID. Screen-only runtimes keep their existing rule identifiers. An ordinary profile miss
-reports `fallback.noRuleMatched`; unmigrated classifiers report `legacy.detector`.
+reports `fallback.noRuleMatched`; unmigrated classifiers report `legacy.detector`,
+which is also Pi's fallback reason when no root record decides.
 Reasons never include screen text. Screen fallback IDs are:
 
 - `screen.logUnavailable`: log authority is unavailable or suspended.
@@ -264,10 +291,69 @@ Reasons never include screen text. Screen fallback IDs are:
 - `screen.afterTurn`: new Working screen evidence appeared after completion.
 - `screen.retainedCompletion`: an unchanged completed frame is still suppressed.
 
-For idle waits and dispatch readiness, a current `log.turnEnded` or `native.idle` decision keeps
+For idle waits and dispatch readiness, a current `log.turnEnded`, `native.idle`, or OSC
+`osc.idle`/`osc.done`/`osc.error` decision keeps
 the existing idle evidence and stabilization rules even when the screen reports
 `fallback.noRuleMatched`. Without current log authority, that unmatched screen
 provides no idle evidence. Dispatch still checks the input area before delivery.
+Readiness reads the detector's current decision, not the Active Agents entry: a
+reason that moved from `screen.*` to `osc.idle` without a state change never reaches
+the entry, and a withdrawn OSC reason is dropped from the current decision at once.
+
+## Program status (OSC 7501)
+
+Programs that speak the [program status protocol](https://www.superlogical.com/rex/docs/build/program-status)
+report their own state into the terminal: `idle`, `working`, `done`, `blocked` (with a
+`kind` of `permission`, `question`, or `auth`), `error`, and `clear`, optionally per
+record id (`build/test` is a child of `build`). Prowl answers the support query and keeps
+one record tree per pane with the protocol's rules: a report replaces its record, `clear`
+removes a record and its descendants (an empty id removes everything), a record without
+`app` inherits the nearest ancestor's, and at most 256 records are kept. Record text
+(`title`, `msg`) is never logged or published.
+
+A root record is **attributed** to the pane's detected agent only when its `app` is the
+agent's own name (`claude-code` for Claude Code, `pi` for Pi) and it arrived after that
+agent's process started. That rejects another program's records and a predecessor's
+leftovers (an agent that exited without `clear`); it does not authenticate the writer: a
+wrapper or nested program that writes the expected `app` is attributed like the agent
+itself. Whether an attributed root may **decide** the state is a static per-agent table
+in the app, not a setting:
+
+| Support | Meaning |
+| --- | --- |
+| unverified | Records are stored and resolved, but only compared with the live decision; disagreements are logged (`AgentDetection` category). Every agent except Claude Code and Pi today. |
+| verified | The root record is the first-priority state evidence, applied the moment the report arrives. Claude Code (2.1.295 and later, `app=claude-code`) and Pi (1.1.0 and later, `app=pi`). |
+
+For a verified producer the pane follows the **root** record only: `working` → Working
+(`osc.working`), `blocked` → Blocked (`osc.blocked.<kind>`, `unspecified` without a
+kind), `idle`/`done`/`error` → Idle (`osc.idle`, `osc.done`, `osc.error`). A child
+record that is `blocked` makes the pane Blocked (`osc.childBlocked.<kind>`) and vetoes
+idle waits, because a subagent's prompt needs an answer; a child that is `working`
+changes nothing, so background agents and subagents never keep a pane Working or block
+`agents wait --until idle`, dispatch, or workflows. `done` and `error` may show the Done
+badge; `idle` never does (it is sent at mount, on interrupt, and on a session reset).
+While the root record decides, Prowl stops reading the screen and the native/log files;
+every 2 s it only probes the process and resolves the session (against the last screen
+text it read), and `screen_reason` reports `screen.delegated`. A key press or CLI input
+puts the pane back on the 300 ms loop, with screen reads, for about 3 s, so a session the
+input switched (`/new`, `/resume`) is attributed from the frame it settles into before the
+tick delegates again. Clearing the record withdraws that authority and the next poll reads
+the screen and the native/log files again, with their usual reasons; a finished command
+wakes the probe described below, which keeps the authority when the same agent is still
+there and releases the entry when it is gone. There is no silence timeout.
+
+Producers that never report (older versions, `CLAUDE_CODE_DISABLE_TERMINAL_TITLE`,
+`PI_PROGRAM_STATUS=0`) get today's screen and provider detection unchanged. The
+producer's own variables are the escape hatch; Prowl has no setting for this.
+
+Independently of the support table, Ghostty's shell integration tells Prowl when the
+foreground command finished (OSC 133). Detection then probes the process at once,
+bypassing its cache, and a single miss releases the pane's agent entry instead of the
+usual six consecutive misses, so a normal exit or a `kill -9` of any agent clears Active
+Agents within about a hundred milliseconds. Panes without shell integration (nested
+shells, `--shell-integration=none`, ssh, tmux) keep the slower six-miss release. A
+finished nested shell inside a running agent releases nothing: the probe still finds the
+agent.
 
 Use `status` to decide whether intervention is needed. A blocked `screen_reason`
 with Idle status can be a stale prompt fenced by completion; do not send Enter
@@ -435,6 +521,14 @@ completion remain separate protocols.
 - ~**2 s** for a short warm window after typing, paste, CLI input, or an initial
   command starts in the pane.
 - ~**300 ms** once an agent is detected, so Working/Blocked/Done stays responsive.
+- ~**2 s**, process probe only, while a verified OSC 7501 producer's root record
+  decides the state (see [Program status](#program-status-osc-7501)); the report itself
+  is applied the moment it arrives.
+
+A key press, a finished command, an OSC 7501 report for a pane without a detected
+agent, and the clearing of a record that was deciding the state each wake the loop
+immediately instead of waiting for the next tick, and a wake keeps the 300 ms cadence
+for about 3 s before a verified producer's pane delegates again.
 
 The heavier process probe is throttled (cached ≈ 0.75 s per process group unless
 something changes) so many panes don't add up to high CPU. Status indicators redraw on a

@@ -105,7 +105,7 @@ keep the old paths. Use this table to find a file that an old entry names:
 | 020 | [observability](020-observability/000-plan.md) | 2026-04-18 | Sentry + PostHog wiring; the App-Hang enable→tune→remove arc |
 | 021 | [sparkle-update-ux](021-sparkle-update-ux/000-plan.md) | 2026-04-18 | Update badge, Sparkle 2.9.2, background downloads, confirm-install |
 | 022 | [tab-title-and-icon](022-tab-title-and-icon/000-plan.md) | 2026-04-18 | Tab titles/icons: manual, auto-detected, pinned, persisted |
-| 023 | [shelf-mode](023-shelf-mode/000-plan.md) | 2026-04-21 | Shelf stacked-book mode + jank investigation |
+| 023 | [shelf-mode](023-shelf-mode/000-plan.md) | 2026-04-21 | Shelf mode, jank investigation, and spine animation boundary |
 | 024 | [canvas-interaction-evolution](024-canvas-interaction-evolution/000-plan.md) | 2026-04-25 | Canvas v2 UX: zoom/pan, expand-in-place, spatial navigation |
 | 025 | [repo-identity-appearance](025-repo-identity-appearance/000-plan.md) | 2026-04-27 | Per-repo icon/color/title identity |
 | 026 | [sidebar-container-refactor](026-sidebar-container-refactor/000-plan.md) | 2026-05-03 | Sidebar container/presentation refactor |
@@ -159,3 +159,6 @@ keep the old paths. Use this table to find a file that an old entry names:
 | 074 | [project-restructure-and-tuist](074-project-restructure-and-tuist/000-plan.md) | 2026-10-03 | Tuist-generated macOS and iOS mirror projects (no `.xcodeproj` in Git), `supacode` → `Prowl` for targets, module, and types, and a root folder for each product (`App`, `CLI`, `Mirror`, `Shared`); no user-visible change |
 | 075 | [terminal-config-source](075-terminal-config-source/000-plan.md) | 2026-10-05 | Dedicated Ghostty config file for Prowl (#693) through one `GhosttyConfigSource`; CJK font fallback when the active config sets no fonts |
 | 076 | [devin-cli-support](076-devin-cli-support/000-plan.md) | 2026-10-06 | Process and native session detection, screen state, Profiles, and workflow integration |
+| 078 | [ghostty-1-4-upgrade-rehearsal](078-ghostty-1-4-upgrade-rehearsal/000-plan.md) | 2026-10-10 | Fork patch set replayed on upstream tip (Zig 0.16), Prowl adapted to the 1.4 embedded C API, launch crash fixed, live verification record |
+| 079 | [program-status-osc-7501](079-program-status-osc-7501/000-plan.md) | 2026-10-10 | OSC 7501 program status: fork action `GHOSTTY_ACTION_PROGRAM_STATUS` + Swift copy (slice 1), producer baselines for Claude Code and Pi, a root-record state provider with a delegated detection schedule, command-finished release, and a per-producer verified table (slice 2), and Claude Code and Pi flipped to verified after their baselines replayed inside Prowl (slices 3 and 4) |
+| 080 | [neutral-user-settings](080-neutral-user-settings/000-plan.md) | 2026-10-10 | Neutral user settings filenames; non-destructive migration, strict error handling, and symlink preservation (#751) |

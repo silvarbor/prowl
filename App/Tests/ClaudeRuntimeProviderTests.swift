@@ -53,6 +53,19 @@ struct ClaudeRuntimeProviderTests {
     }
   }
 
+  @Test func sessionIdentityIgnoresTheStatusFields() throws {
+    let process = AgentProcessGeneration(pid: 42, startedAt: start)
+    let unknown = try ClaudeRuntimeDecoder.record(record(status: "future-state"))
+    #expect(ClaudeRuntimeDecoder.sessionID(unknown, process: process) == session)
+    #expect(throws: (any Error).self) { try ClaudeRuntimeDecoder.snapshot(unknown, process: process) }
+    let known = try ClaudeRuntimeDecoder.record(record())
+    #expect(ClaudeRuntimeDecoder.sessionID(known, process: AgentProcessGeneration(pid: 43, startedAt: start)) == nil)
+    #expect(
+      ClaudeRuntimeDecoder.sessionID(
+        known, process: AgentProcessGeneration(pid: 42, startedAt: start.addingTimeInterval(2)))
+        == nil)
+  }
+
   @Test func processReplacementDuringReadCannotPublishSnapshot() async throws {
     let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

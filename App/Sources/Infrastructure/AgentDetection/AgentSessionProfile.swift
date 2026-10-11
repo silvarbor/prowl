@@ -116,12 +116,18 @@ nonisolated extension AgentSessionProfile {
 
   /// Claude Code ≥ 2.1: `~/.claude/projects/<sanitized cwd>/<uuid>.jsonl`,
   /// closed between writes; every non-alphanumeric cwd character becomes `-`.
-  /// `CLAUDE_CODE_SESSION_ID` on Bash/MCP tool children.
+  /// `CLAUDE_CODE_SESSION_ID` on Bash/MCP tool children. The pid registry
+  /// `~/.claude/sessions/<pid>.json` names the current session exactly, so the
+  /// transcript scan is the fallback for versions without it.
   fileprivate static let claude = AgentSessionProfile(
     parsePath: { uuidJSONL(path: $0, marker: "/.claude/projects/") },
     candidateRoots: { home, cwd, _, _ in
       guard let cwd else { return [] }
       return [home.appending(path: ".claude/projects/\(alphanumericDashed(cwd.path))")]
+    },
+    pidKeyedSession: { home, pid, processStartedAt in
+      ClaudeSessionRegistry.session(
+        root: home.appending(path: ".claude"), pid: pid, processStartedAt: processStartedAt)
     },
     rootedCandidateRoots: { configRoot, cwd, _, _ in
       guard let cwd else { return [] }
@@ -129,6 +135,9 @@ nonisolated extension AgentSessionProfile {
     },
     rootedParsePath: { path, configRoot in
       uuidJSONL(path: path, underRoot: configRoot.appending(path: "projects"))
+    },
+    rootedPIDKeyedSession: { configRoot, pid, processStartedAt in
+      ClaudeSessionRegistry.session(root: configRoot, pid: pid, processStartedAt: processStartedAt)
     }
   )
 
@@ -581,7 +590,7 @@ nonisolated extension AgentSessionProfile {
   /// accented characters (NFD) while Node keeps the shell's precomposed form,
   /// so normalize to NFC first; NFD-named directories stay unresolved, which
   /// is the safe direction.
-  fileprivate static func alphanumericDashed(_ path: String) -> String {
+  static func alphanumericDashed(_ path: String) -> String {
     String(
       path.precomposedStringWithCanonicalMapping.utf16.map { unit -> Character in
         let isAlphanumeric =

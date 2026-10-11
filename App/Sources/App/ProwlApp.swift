@@ -193,13 +193,17 @@ struct ProwlApp: App {
   }
 
   private static func initializeGhostty(resolvedKeybindings: ResolvedKeybindingMap) {
+    // libghostty keeps the argv pointer and reads it again later
+    // (`ghostty_config_load_cli_args`), so the array must live as long as the
+    // process, like `CommandLine.unsafeArgv`. A Swift array's storage would be
+    // freed when this function returns and leave libghostty with a dangling
+    // `char**`; the leak here is intentional.
     let ghosttyArgv = GhosttyCLI.argv(resolvedKeybindings: resolvedKeybindings)
-    ghosttyArgv.withUnsafeBufferPointer { buffer in
-      let argc = UInt(max(0, buffer.count - 1))
-      let argv = UnsafeMutablePointer(mutating: buffer.baseAddress)
-      if ghostty_init(argc, argv) != GHOSTTY_SUCCESS {
-        preconditionFailure("ghostty_init failed")
-      }
+    let argv = UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>.allocate(capacity: ghosttyArgv.count)
+    argv.initialize(from: ghosttyArgv, count: ghosttyArgv.count)
+    let argc = UInt(max(0, ghosttyArgv.count - 1))
+    if ghostty_init(argc, argv) != GHOSTTY_SUCCESS {
+      preconditionFailure("ghostty_init failed")
     }
   }
 
@@ -916,20 +920,10 @@ struct ProwlApp: App {
       guard let surfaceID = UUID(uuidString: target.paneID) else {
         return .init(agent: nil, signal: nil, revision: 0, isLive: false, signals: .empty)
       }
-      let observed = terminalManager.agentObservationSnapshot(surfaceID: surfaceID)
       let agent = appStore.state.repositories.activeAgents.entries.first {
         $0.surfaceID == surfaceID
       }
-      let signalEvidence = terminalManager.currentAgentSignalEvidence(surfaceID: surfaceID)
-      return .init(
-        agent: agent,
-        signal: signalEvidence.activeTerminal,
-        changedSignal: signalEvidence.latest,
-        revision: observed?.revision ?? 0,
-        isLive: terminalManager.isSurfaceLive(surfaceID),
-        signals: terminalManager.agentSignalsPayload(surfaceID: surfaceID),
-        screenDetection: terminalManager.agentScreenDetection(surfaceID: surfaceID)
-      )
+      return terminalManager.agentConditionSnapshot(surfaceID: surfaceID, agent: agent)
     }
     let agentWaitHandler = AgentWaitCommandHandler(
       observeDispatch: { dispatchID in

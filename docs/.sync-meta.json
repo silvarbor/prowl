@@ -1,6 +1,6 @@
 {
   "_comment": "Metadata for the docs/ manual. The last_synced_commit is the commit at which docs/ was last verified against the implementation; the sync-docs skill (.agents/skills/sync-docs/SKILL.md) diffs HEAD against it and updates this file. Committed to git on purpose so the baseline persists across sessions and machines. A dotfile + .json so a future docs website does not render it as a page.",
-  "last_synced_commit": "5325d42a9407a88cfee7bbb113c807e4f9733d51",
-  "last_synced_date": "2026-10-09",
-  "note": "Verified Devin (#865, #866) and Antigravity (#883, #884) support, PR refresh pacing, cadence, check counts, and the rate-limit gate (#877-#880), daemon-owned Codex session resolution (#876), and the Amp (#885) and Oh My Pi (#882) detection changes. Feature PRs updated the manual. The repository icon (#867), model suggestion (#872), and contract fingerprint (#864) changes need no manual changes."
+  "last_synced_commit": "b9d3be3896588e75ebe2c1e15e23b6486bb53dc5",
+  "last_synced_date": "2026-10-11",
+  "note": "Verified OSC 7501 program status (#887, #893, #895, #896), Ghostty tip upgrade (#886), split close button (#888), and neutral user settings paths (#889). Feature PRs updated the manual; no further edits needed."
 }

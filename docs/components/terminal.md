@@ -58,9 +58,12 @@ next pane, `⌘⌥↑/↓/←/→` for directional pane focus, `⌘⌥⇧F` to z
 focused pane. Shelf spines also expose **split vertical / split horizontal**
 buttons on the open book.
 
-Zoom also has a mouse affordance: hovering a pane's top drag handle reveals a
-zoom button in the pane's top-right corner, and a zoomed pane keeps a persistent
-exit-zoom button in the same spot so it's always clear how to leave zoom.
+Zoom and close also have mouse affordances: hovering a pane's top drag handle
+reveals a zoom button and a close button in the pane's top-right corner. The
+close button closes that pane with the same confirmation as the tab bar's close
+button, and its tooltip shows the `close_surface` shortcut (⌘W by default) so
+the keyboard route is discoverable. A zoomed pane keeps both buttons visible so
+it's always clear how to leave zoom.
 
 ## Tab titles — important caveat
 
@@ -111,6 +114,15 @@ sequences:
   tab's activity indicator and task status. Task status *also* folds in detected
   agent activity (Working/Blocked, incl. background workflows) — see
   [agent-detection](agent-detection.md#worktree-running-indicator).
+- **Program status (OSC 7501)** — Prowl answers the support query, so programs
+  that speak the protocol (Claude Code 2.1.295+, Pi 1.1.0+) report
+  idle/working/blocked/done/error. Prowl keeps one record tree per pane with the
+  protocol's lifetime rules (a report replaces its record, `clear` removes a
+  subtree, `app` is inherited, at most 256 records) and feeds the root record to
+  agent detection — see
+  [agent-detection](agent-detection.md#program-status-osc-7501) for which
+  producers it trusts. OSC 133 also tells detection that the foreground command
+  ended, which releases an agent's entry within one probe.
 - **Bell / desktop notification** — increments unread indicators.
 
 `--capture` in the CLI **requires OSC 133** on the target pane; without it you get

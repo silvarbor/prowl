@@ -175,3 +175,35 @@ nonisolated enum GrokActiveSessions {
     return path.addingPercentEncoding(withAllowedCharacters: unreserved) ?? path
   }
 }
+
+/// Claude Code keeps `<root>/sessions/<pid>.json` for every live interactive process
+/// (docs-ai 068): its `sessionId` follows `/clear` and an in-process `/resume` at once, so
+/// the pane's identity needs no screen text (docs-ai 079.004). The file outlives a crash,
+/// so the claim is checked against the live process's start second; the transcript path
+/// is reported once the first prompt has created it.
+nonisolated enum ClaudeSessionRegistry {
+  static func session(
+    root: URL,
+    pid: pid_t,
+    processStartedAt: Date,
+    fileManager: FileManager = .default
+  ) -> AgentSession? {
+    guard let handle = try? FileHandle(forReadingFrom: root.appending(path: "sessions/\(pid).json")) else {
+      return nil
+    }
+    defer { try? handle.close() }
+    guard let data = try? handle.read(upToCount: 65_537),
+      let record = try? ClaudeRuntimeDecoder.record(data),
+      let id = ClaudeRuntimeDecoder.sessionID(
+        record, process: AgentProcessGeneration(pid: pid, startedAt: processStartedAt))
+    else { return nil }
+    let transcript = root.appending(
+      path: "projects/\(AgentSessionProfile.alphanumericDashed(record.cwd))/\(id).jsonl")
+    return AgentSession(
+      id: id,
+      transcriptPath: fileManager.fileExists(atPath: transcript.path) ? transcript : nil,
+      source: .processLog,
+      confidence: .exact
+    )
+  }
+}

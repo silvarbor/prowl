@@ -213,7 +213,17 @@ actor AgentSessionResolver {
     let usedWideScan: Bool
     var unresolvedStreak: Int = 0
     var provisionalSoleID: String?
+    /// Consecutive uncached resolutions in which the profile's pid-keyed artifact
+    /// yielded nothing while `session` is the exact identity it named before.
+    var pidKeyedMisses: Int = 0
   }
+
+  /// How many consecutive pid-keyed misses keep the artifact's last exact identity. A
+  /// registry or sidecar that named this process's session once is authoritative for the
+  /// generation, so a transient read failure must not promote a fingerprint guess in its
+  /// place (and rotate the evidence epoch); the hold is bounded so a removed artifact
+  /// eventually falls back to the scan.
+  nonisolated static let pidKeyedHoldMisses = 3
 
   /// The immutable inputs of one uncached resolution, grouped so the scan and
   /// match steps take a single subject rather than a long parameter list.
@@ -457,7 +467,7 @@ actor AgentSessionResolver {
       }
     }
 
-    let (resolved, usedWideScan) = resolveUncached(
+    let uncached = resolveUncached(
       ResolveRequest(
         identified: identified,
         processStartedAt: startedAt,
@@ -468,8 +478,23 @@ actor AgentSessionResolver {
       ),
       fragments: &fragmentCache
     )
-    var session = resolved
+    var session = uncached.session
     var provisionalID: String?
+    var pidKeyedMisses = 0
+    if uncached.pidKeyedMissed, let held = cached?.session, held.source == .processLog, held.confidence == .exact,
+      let misses = cached?.pidKeyedMisses, misses < Self.pidKeyedHoldMisses
+    {
+      // The hold is the poll's policy. A fresh read (`agents read`) exports current
+      // evidence only — the frame's exact or high match, or nothing — and leaves the
+      // cache entry alone so it neither spends the hold's budget nor replaces the
+      // held identity.
+      if bypassResultCache {
+        let current = uncached.session.flatMap { $0.confidence == .medium ? nil : $0 }
+        return AgentSessionResolution(session: current, isFresh: true)
+      }
+      session = held
+      pidKeyedMisses = misses + 1
+    }
     if let candidate = session, candidate.confidence == .medium {
       if claimedByAnotherProcess(candidate.id, excluding: key) {
         session = nil
@@ -480,14 +505,15 @@ actor AgentSessionResolver {
     cache[key] = CachedResult(
       resolvedAt: now,
       session: session,
-      usedWideScan: usedWideScan,
+      usedWideScan: uncached.usedWideScan,
       // A pending sole confirmation retries fast instead of backing off.
       unresolvedStreak: Self.nextUnresolvedStreak(
         resolvedNow: session != nil || provisionalID != nil,
         previousWasUnresolved: cached.map { $0.session == nil && $0.provisionalSoleID == nil } ?? false,
         previousStreak: cached?.unresolvedStreak ?? 0
       ),
-      provisionalSoleID: provisionalID
+      provisionalSoleID: provisionalID,
+      pidKeyedMisses: pidKeyedMisses
     )
     if cache.count > 128 {
       cache = cache.filter { entry in
@@ -519,10 +545,19 @@ actor AgentSessionResolver {
     return profile.parsePath
   }
 
+  /// One uncached resolution. `pidKeyedMissed` is true when the profile defines a pid-keyed
+  /// lookup for this configuration and it yielded nothing, so the caller can hold a
+  /// previous exact result.
+  private struct UncachedResolution {
+    let session: AgentSession?
+    let usedWideScan: Bool
+    var pidKeyedMissed = false
+  }
+
   private func resolveUncached(
     _ request: ResolveRequest,
     fragments cache: inout TranscriptFragmentCache
-  ) -> (session: AgentSession?, usedWideScan: Bool) {
+  ) -> UncachedResolution {
     let identified = request.identified
     let profile = AgentSessionProfile.profile(for: identified.agent)
     let parsePath = Self.pathParser(profile: profile, configRoot: request.configRoot)
@@ -544,22 +579,21 @@ actor AgentSessionResolver {
         source: .openFile,
         confidence: .exact
       )
-      return (resolved, false)
+      return UncachedResolution(session: resolved, usedWideScan: false)
     }
 
-    if let configRoot = request.configRoot,
-      let session = profile.rootedPIDKeyedSession?(
-        configRoot,
-        identified.process.pid,
-        request.processStartedAt
-      )
-    {
-      return (session, false)
+    var pidKeyedMissed = false
+    if let configRoot = request.configRoot, let lookup = profile.rootedPIDKeyedSession {
+      if let session = lookup(configRoot, identified.process.pid, request.processStartedAt) {
+        return UncachedResolution(session: session, usedWideScan: false)
+      }
+      pidKeyedMissed = true
     }
-    if request.configRoot == nil,
-      let session = profile.pidKeyedSession?(homeDirectory, identified.process.pid, request.processStartedAt)
-    {
-      return (session, false)
+    if request.configRoot == nil, let lookup = profile.pidKeyedSession {
+      if let session = lookup(homeDirectory, identified.process.pid, request.processStartedAt) {
+        return UncachedResolution(session: session, usedWideScan: false)
+      }
+      pidKeyedMissed = true
     }
 
     let openCandidates = openSessions.compactMap { session -> AgentSessionCandidate? in
@@ -580,7 +614,7 @@ actor AgentSessionResolver {
         source: .transcriptMatch,
         confidence: .high
       )
-      return (resolved, false)
+      return UncachedResolution(session: resolved, usedWideScan: false, pidKeyedMissed: pidKeyedMissed)
     }
 
     let (candidates, usedWideScan) = recentCandidates(
@@ -601,11 +635,11 @@ actor AgentSessionResolver {
         source: .transcriptMatch,
         confidence: .high
       )
-      return (resolved, usedWideScan)
+      return UncachedResolution(session: resolved, usedWideScan: usedWideScan, pidKeyedMissed: pidKeyedMissed)
     }
     let sole = AgentSessionCandidate.uniqueActiveCandidate(candidates, processStartedAt: request.processStartedAt)?
       .session
-    return (sole, usedWideScan)
+    return UncachedResolution(session: sole, usedWideScan: usedWideScan, pidKeyedMissed: pidKeyedMissed)
   }
 
   private func uniqueSession(_ sessions: [AgentSession]) -> AgentSession? {
