@@ -3,7 +3,7 @@
 > The terminal layer: tabs within a worktree, splitting a tab into panes, the
 > Ghostty engine underneath, tab titles & icons, shell integration, and fonts.
 
-**Keywords:** terminal, tab, split, pane, surface, ghostty, font size, shell integration, OSC 133, scrollback, find, search, close tab, new tab, tab title, tab icon, CJK
+**Keywords:** terminal, tab, split, pane, surface, ghostty, font size, shell integration, OSC 133, scrollback, find, search, close tab, new tab, tab title, tab icon, CJK, font fallback, Japanese, Hiragino, ghostty config, dedicated config
 
 **Related:** [concepts](../concepts.md) · [canvas](canvas.md) · [shelf](shelf.md) · [agent-detection](agent-detection.md) · [cli](cli.md) · [keyboard-shortcuts](../reference/keyboard-shortcuts.md)
 
@@ -58,9 +58,12 @@ next pane, `⌘⌥↑/↓/←/→` for directional pane focus, `⌘⌥⇧F` to z
 focused pane. Shelf spines also expose **split vertical / split horizontal**
 buttons on the open book.
 
-Zoom also has a mouse affordance: hovering a pane's top drag handle reveals a
-zoom button in the pane's top-right corner, and a zoomed pane keeps a persistent
-exit-zoom button in the same spot so it's always clear how to leave zoom.
+Zoom and close also have mouse affordances: hovering a pane's top drag handle
+reveals a zoom button and a close button in the pane's top-right corner. The
+close button closes that pane with the same confirmation as the tab bar's close
+button, and its tooltip shows the `close_surface` shortcut (⌘W by default) so
+the keyboard route is discoverable. A zoomed pane keeps both buttons visible so
+it's always clear how to leave zoom.
 
 ## Tab titles — important caveat
 
@@ -111,6 +114,17 @@ sequences:
   tab's activity indicator and task status. Task status *also* folds in detected
   agent activity (Working/Blocked, incl. background workflows) — see
   [agent-detection](agent-detection.md#worktree-running-indicator).
+- **Program status (OSC 7501)** — Prowl answers the support query, so programs
+  that speak the protocol (Claude Code 2.1.295+, Pi 1.1.0+, Oh My Pi 18.8.7+) report
+  idle/working/blocked/done/error. Prowl keeps one record tree per pane with the
+  protocol's lifetime rules (a report replaces its record, `clear` removes a
+  subtree, `app` is inherited, at most 256 records) and feeds the root record to
+  agent detection — see
+  [agent-detection](agent-detection.md#program-status-osc-7501) for which
+  producers it trusts. OSC 133 also tells detection that the foreground command
+  ended, which releases an agent's entry within one probe (except after Oh My Pi
+  has drawn a user message: its own OSC 133 marks use up the shell's command
+  timer, see [agent-detection](agent-detection.md#program-status-osc-7501)).
 - **Bell / desktop notification** — increments unread indicators.
 
 `--capture` in the CLI **requires OSC 133** on the target pane; without it you get
@@ -138,6 +152,9 @@ When a command finishes (via OSC 133), Prowl can:
   `⌘0` / `⌘+` / `⌘-`).
 - The chosen size is remembered (`terminalFontSize`) and applied across worktrees;
   new tabs and splits inherit the focused pane's size.
+- Going back to Ghostty's `font-size` (for example with **Reset**) clears the
+  remembered size, so later changes to `font-size` apply again. A remembered size
+  that equals the current `font-size` is cleared at launch.
 
 ## In-terminal search
 
@@ -148,8 +165,47 @@ Selection for Find** (`search_selection`). These are Ghostty-managed.
 ## Scrollback, CJK, copy/paste
 
 Scrollback, wide/CJK character rendering, and copy/paste are handled by Ghostty
-with its defaults — Prowl doesn't override them. Customize terminal behavior in
-your Ghostty config at `~/.config/ghostty/config`.
+with its defaults. Customize terminal behavior in the Ghostty config that Prowl
+uses (see [Ghostty config](#ghostty-config)).
+
+**CJK font fallback.** When the active Ghostty config sets neither `font-family`
+nor `font-codepoint-map` (including its `config-file` includes, the active theme
+file, and `--font-family=…` launch arguments), Prowl maps kana, CJK punctuation,
+CJK ideographs (including the supplementary planes), and fullwidth forms to one
+system CJK font, and Hangul to Apple SD Gothic Neo. Without this, Ghostty picks a font for kana and
+punctuation by scoring every installed font, which often selects BIZ UDGothic,
+BIZ UDMincho, or Osaka-Mono, so CJK text changes face and size within a line.
+The font follows the first CJK language in the system language list (a
+`-AppleLanguages` launch argument wins; Prowl's own app language does not count):
+
+| First CJK language | Font |
+|---|---|
+| Japanese | Hiragino Sans |
+| Korean | Apple SD Gothic Neo |
+| Traditional Chinese (Taiwan) | PingFang TC |
+| Traditional Chinese (Hong Kong, Macau) | PingFang HK |
+| Simplified Chinese, or no CJK language | PingFang SC |
+
+Set `font-family` or `font-codepoint-map` to take over; Prowl then adds nothing.
+
+## Ghostty config
+
+By default Prowl reads the same config files as the standalone Ghostty app
+(`config` or `config.ghostty` in `~/.config/ghostty/` and in
+`~/Library/Application Support/com.mitchellh.ghostty/`, plus their `config-file`
+includes), so a change applies to both apps.
+
+**Settings → General → Terminal Config → Choose File…** selects a dedicated file
+for Prowl only (`ghosttyConfigPath`). That file **replaces** Ghostty's config
+files; it is not layered on top of them, so copy any setting you want to keep.
+Relative `config-file` includes resolve from the file's folder. If the file does
+not exist, terminals use Ghostty's built-in defaults and Settings shows a
+warning; **Open Config** creates it. **Use Ghostty's Config** returns to the
+shared files. **Open Config** and **Reload** act on whichever source is active,
+and a change of source applies to running terminals immediately.
+
+Prowl-only keys such as `prowl-split-divider-width` are read from the active
+source's file.
 
 ## Color scheme
 
@@ -160,7 +216,10 @@ no in-app Ghostty theme picker; change Ghostty colors via its config file.
 
 If `restoreTerminalLayoutOnLaunch` is enabled, Prowl saves the tab/split layout
 (which worktrees, tabs, split trees, titles, icons) and restores it on next
-launch. Notification bodies are not persisted.
+launch. Notification bodies are not persisted. If a repository fails to load at
+launch (for example, its folder is gone), Prowl still restores the layout of the
+other repositories and applies the default view mode; the worktrees of the
+failed repository are skipped.
 
 ## Gotchas for agents
 

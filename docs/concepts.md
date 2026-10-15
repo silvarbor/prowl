@@ -78,14 +78,14 @@ all agents and their statuses is the
 
 - **Global settings:** `~/.prowl/settings.json`
 - **Per-repository settings:** `~/.prowl/repo/<repo-name>/prowl.json`
-- **Per-repository user custom commands:** `~/.prowl/repo/<repo-name>/prowl.onevcat.json`
+- **Per-repository user custom commands:** `~/.prowl/repo/<repo-name>/prowl.user.json`
 - **Per-workspace metadata:** `<workspace>/.prowl/workspace.json`
 - **Workflow files:** `~/.prowl/workflows/*.pwlworkflow` and `<repo root>/.prowl/workflows/*.pwlworkflow`;
   runs leave `~/.prowl/logs/workflow-runs/<root-name>-<root-hash>/YYYY-MM/<run-id>/`
 - **CLI socket:** `~/Library/Application Support/com.onevcat.prowl/cli.sock`
   (overridable with `PROWL_CLI_SOCKET`)
 - Legacy `~/.supacode` is migrated to `~/.prowl` on first launch. (Prowl is a fork
-  of Supacode; some internal identifiers still read `supacode`.)
+  of Supacode; a few stored values, such as the `supacodeClassic` sound, keep the old name.)
 
 Full field-by-field detail: [`reference/settings-fields.md`](reference/settings-fields.md).
 

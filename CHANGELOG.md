@@ -1,5 +1,112 @@
 # Changelog
 
+## [2026.10.15](https://github.com/onevcat/Prowl/releases/tag/v2026.10.15)
+
+### New
+
+- Canvas remembers your chosen layout and places new cards without overlap. Run `prowl canvas layout tile --show` to open Canvas and tile your tabs; it keeps tiling as tabs come and go.
+
+### Improved
+
+- Switching Shelf books uses less CPU, with selection highlights and bottom controls updating immediately.
+- Oh My Pi now reports working, approval, question, and error states directly to Prowl, including ongoing background jobs. Agent sessions are also detected correctly in temporary directories such as `/tmp` and through directory symlinks.
+
+### Fixed
+
+- Changing **Settings → Worktree → Auto-delete archived worktrees** now asks for confirmation if the new period would immediately delete archived worktrees. Cancel keeps both the previous setting and your worktrees.
+- Terminal layouts and your default Shelf or Canvas view now restore even when a repository fails to load, skipping unavailable worktrees.
+- GitHub rate limits now pause requests by host and API, so a primary limit no longer blocks unrelated requests. Click the toolbar’s rate-limit status or open **Settings → GitHub** to see the cause and select **Retry Now**.
+- Codex workflows can now read tasks and deliver results when caller-pane detection fails. Supported Codex profile launches also stay independent of the shared daemon to preserve their pane context.
+- On-device branch name suggestions now use the prefix your repository's branches already use, such as `feat/`, including remote-only branches, instead of falling back to `worktree/`.
+- Settings edits no longer overwrite newly detected repository icons, pinned **Open in** choices, or agent and workflow settings saved elsewhere. Imported repository icons also finish saving if you switch Settings panes.
+
+## [2026.10.11](https://github.com/onevcat/Prowl/releases/tag/v2026.10.11)
+
+Agents can now report their status to Prowl directly through OSC 7501, starting with Claude Code and Pi. Split panes also get a close button.
+
+### New
+
+- **OSC 7501 program status support.** Prowl now accepts status reports that agents send through the terminal (OSC 7501), so Working, Blocked, and Done come straight from the agent instead of being inferred from the screen. Claude Code 2.1.295+ and Pi 1.1.0+ are the first supported agents; more will follow. Pi now shows Blocked when waiting for extension confirmations, questions, or authentication.
+- Split panes now have a close button beside the zoom control. Hover over the pane’s top drag handle to reveal it; the tooltip shows your configured shortcut, which defaults to ⌘W.
+
+### Improved
+
+- Exited agents disappear from Active Agents sooner in terminals with shell integration.
+- User settings now use `global.user.json` and `prowl.user.json`. Existing settings migrate automatically while preserving legacy files, symlink targets, and any existing destination files.
+
+### Fixed
+
+- Fixed session tracking after creating or resuming sessions in Claude Code and Pi, so Prowl updates without requiring another keystroke.
+- Prevented automatic settings saves from overwriting configuration after a failed load.
+- Fixed a potential crash during terminal initialization.
+
+## [2026.10.10](https://github.com/onevcat/Prowl/releases/tag/v2026.10.10)
+
+This release adds Devin and Antigravity support, reduces GitHub refresh traffic, and improves agent status detection.
+
+### New
+- Added Devin CLI and Antigravity CLI (`agy`) support, including agent detection, profiles, and skill installation. Choose either runtime in Agent Profiles to configure launch options; Devin is also available in workflow role selection.
+- Added `gpt-6.1-sol` to the model suggestions in the profile editor.
+
+### Improved
+- Pull request refreshes now batch requests and check settled PRs less often, reducing GitHub API usage across large workspaces while keeping active checks refreshed.
+- When GitHub rate-limits requests, Prowl pauses and retries automatically. The toolbar and Settings › GitHub show the retry time.
+
+### Fixed
+- Corrected Working and Blocked detection for current Amp versions and Working detection for manually launched Oh My Pi sessions. Antigravity no longer gets stuck as Blocked after slash commands or answered questions.
+- Fixed transcript reads for Codex panes using a shared daemon, and prevented previous-session context from lingering after a thread switch.
+- Made Devin message submission wait for pasted text to be ready, and fixed `prowl send` when answering menus or adding to an existing draft.
+- Fixed delayed PR updates after branch switches and preserved known PR status when GitHub returns incomplete results.
+
+## [2026.10.6](https://github.com/onevcat/Prowl/releases/tag/v2026.10.6)
+
+This release adds a separate terminal configuration for Prowl and fixes font rendering, font size resets, and a quit hang.
+
+### New
+
+- Use a dedicated Ghostty config through Settings → General → Terminal Config → Choose File…. It replaces the shared Ghostty config and applies to running terminals immediately; select Use Ghostty's Config to switch back.
+
+### Fixed
+
+- Chinese, Japanese, and Korean text now uses appropriate system fonts when no font is configured, avoiding mismatched fonts and oversized characters. Explicit font settings remain respected.
+- Resetting terminal font size now correctly follows the config, so new tabs and splits pick up later `font-size` changes instead of retaining the old size.
+- Fixed a rare hang when quitting Prowl after CLI activity.
+
+## [2026.10.4](https://github.com/onevcat/Prowl/releases/tag/v2026.10.4)
+
+### New
+
+- `.pwlworkflow` bundles now appear as packages with a Prowl workflow icon in Finder. Use **Show Package Contents** to browse their files; open and run workflows from Prowl, not by double-clicking the bundle.
+
+### Improved
+
+- Experimental Remote Mirror remains opt-in with `PROWL_REMOTE_MIRROR=1`. Pair another Mac by copying and pasting connection details, or scan the Host’s QR code with a compatible mobile Mirror client. Mobile clients are distributed separately.
+- Mirror’s **Scroll Up** and **Scroll Down** controls move the Host’s shared terminal view by about a page. Mac Mirror preserves scrollback styling when supported, with a plain-text fallback.
+- Use **Pair Again…** to replace saved Mirror access, or **Revoke All Devices…** on Host to require every device to pair again.
+
+### Fixed
+
+- Mirror input from compatible mobile clients is no longer blocked by a pending automation dispatch. Fixed Mac Mirror updates stalling when a terminal uses a fixed title or reloads its configuration.
+- Canvas mode’s Run and custom-command buttons now match the spacing and margins in Normal and Shelf modes.
+
+## [2026.9.29](https://github.com/onevcat/Prowl/releases/tag/v2026.9.29)
+
+This release adds workspace editing and more reliable status tracking for Codex sessions.
+
+### New
+
+- Edit existing workspaces from the sidebar workspace menu or **Edit Workspace** in the Command Palette. Change the title, description, task links, repository names and roles, or add, reorder, and remove repositories.
+- Create a workspace with just one repository and add more later. The workspace editor also supports Simplified Chinese.
+- Agent profile model suggestions now include GPT-6 models, Claude Fable 5.1, and Claude Opus 5.5.
+- Use `prowl list --json` to check pane visibility through the new `pane.visible` field, and find the calling pane through `caller`.
+
+### Fixed
+
+- Codex sessions started by typing `codex` now track working and idle states through the shared daemon, including subagent work and resumed conversations. Codex 0.158 footer layouts and folder trust prompts are also recognized correctly.
+- Commands run by Codex through its shared daemon now resolve to the correct pane, preventing agent signals, dispatch completions, and workflow actions from being attributed to another tab.
+- Agent Island keeps a consistent width when expanding or collapsing on external displays, and its full floating bar responds to hover.
+- Fixed a Canvas layout cleanup crash on older macOS Swift runtimes, including macOS 26.3.1.
+
 ## [2026.9.25](https://github.com/onevcat/Prowl/releases/tag/v2026.9.25)
 
 ### Improved

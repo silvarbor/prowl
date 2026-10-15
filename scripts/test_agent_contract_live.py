@@ -45,6 +45,28 @@ class ResponseTests(unittest.TestCase):
 
 
 class ExportTests(unittest.TestCase):
+    def test_suite_exports_current_app_resource_directory(self):
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        row = dict(runtime='pi', executable='/test/pi', inventory={'status': 'passed'},
+                   route={'status': 'configured'})
+        binary = SimpleNamespace(path='/test/pi', search_path='/test')
+        captured = []
+
+        def export(requests, directory, search_path, timeout):
+            captured.extend(requests)
+            return ([{'status': 'blocked'} for _ in requests], 'nonce')
+
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(live, 'runtime_configuration', return_value=('model', [], {})), \
+                 patch.object(live, 'export_launches', side_effect=export):
+                live.run_suite([row], Path(directory), lambda _: binary, {}, 1, 1, verify=True)
+        self.assertEqual(len(captured), 2)
+        for request in captured:
+            self.assertEqual(Path(request['resources']), live.core.ROOT / 'App/Resources')
+
     def test_rejects_skipped_zero_stale_and_wrong_runtime(self):
         counts = dict(result='Passed', totalTestCount=1, passedTests=1, failedTests=0, skippedTests=0)
         receipt = dict(schema=1, nonce='current', launches=[{'runtime': 'pi'}])
@@ -70,6 +92,20 @@ class ExportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(live.core.PolicyError):
                 live.runtime_configuration('codex', route, Path(directory))
+
+    def test_droid_scoped_model_id_cannot_collide_with_a_global_entry(self):
+        import tempfile, json
+        from pathlib import Path
+        route = dict(model='deepseek-v4-flash', base_url='https://api.deepseek.com/v1',
+                     api_key_env='DEEPSEEK_API_KEY', wire_api='chat-completions')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model, arguments, _ = live.runtime_configuration('droid', route, root)
+            entry = json.loads((root / 'state/settings.json').read_text())['customModels'][0]
+            self.assertEqual((model, entry['model'], entry['apiKey']), ('deepseek-v4-flash', 'deepseek-v4-flash', '${DEEPSEEK_API_KEY}'))
+            # Droid resolves `custom:<model>` from the user's global settings too; the scoped entry must not share it.
+            self.assertNotEqual(entry['id'], 'custom:' + model)
+            self.assertEqual(arguments[arguments.index('-m') + 1], entry['id'])
 
 
 class SocketTests(unittest.TestCase):

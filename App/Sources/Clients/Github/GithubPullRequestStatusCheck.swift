@@ -1,0 +1,252 @@
+import Foundation
+
+nonisolated struct GithubPullRequestStatusCheck: Decodable, Equatable, Hashable {
+  let name: String?
+  let detailsUrl: String?
+  let status: String?
+  let conclusion: String?
+  let state: String?
+
+  init(
+    name: String? = nil,
+    detailsUrl: String? = nil,
+    status: String? = nil,
+    conclusion: String? = nil,
+    state: String? = nil
+  ) {
+    self.name = name
+    self.detailsUrl = detailsUrl
+    self.status = status
+    self.conclusion = conclusion
+    self.state = state
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case name
+    case context
+    case detailsUrl
+    case targetUrl
+    case status
+    case conclusion
+    case state
+  }
+
+  nonisolated init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    let name = try container.decodeIfPresent(String.self, forKey: .name)
+    let context = try container.decodeIfPresent(String.self, forKey: .context)
+    self.name = name ?? context
+    let detailsUrl = try container.decodeIfPresent(String.self, forKey: .detailsUrl)
+    let targetUrl = try container.decodeIfPresent(String.self, forKey: .targetUrl)
+    self.detailsUrl = detailsUrl ?? targetUrl
+    self.status = try container.decodeIfPresent(String.self, forKey: .status)
+    self.conclusion = try container.decodeIfPresent(String.self, forKey: .conclusion)
+    self.state = try container.decodeIfPresent(String.self, forKey: .state)
+  }
+
+  var checkState: GithubPullRequestCheckState {
+    if let status, status.uppercased() != "COMPLETED" {
+      return .inProgress
+    }
+    if let state {
+      switch state.uppercased() {
+      case "SUCCESS":
+        return .success
+      case "FAILURE", "ERROR":
+        return .failure
+      case "EXPECTED":
+        return .expected
+      case "PENDING":
+        return .inProgress
+      default:
+        return .inProgress
+      }
+    }
+    if let conclusion {
+      switch conclusion.uppercased() {
+      case "SUCCESS", "NEUTRAL":
+        return .success
+      case "CANCELLED", "SKIPPED":
+        return .skipped
+      case "FAILURE", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE", "STALE":
+        return .failure
+      default:
+        return .inProgress
+      }
+    }
+    return .inProgress
+  }
+
+  var displayName: String {
+    name ?? "Check"
+  }
+}
+
+// The checks reported for a pull request's head commit. A refresh carries `counts` for every pull
+// request and the individual `checks` only where they are shown; `breakdown` reads whichever is
+// present.
+nonisolated struct GithubPullRequestStatusCheckRollup: Decodable, Equatable, Hashable {
+  let checks: [GithubPullRequestStatusCheck]
+  let counts: PullRequestCheckBreakdown?
+
+  init(checks: [GithubPullRequestStatusCheck], counts: PullRequestCheckBreakdown? = nil) {
+    self.checks = checks
+    self.counts = counts
+  }
+
+  var breakdown: PullRequestCheckBreakdown {
+    counts ?? PullRequestCheckBreakdown(checks: checks)
+  }
+
+  init(from decoder: Decoder) throws {
+    if let checks = try? [GithubPullRequestStatusCheck](from: decoder) {
+      self.init(checks: checks)
+      return
+    }
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    if let checks = try? container.decode([GithubPullRequestStatusCheck].self, forKey: .contexts) {
+      self.init(checks: checks)
+      return
+    }
+    if let contexts = try? container.decode(GithubPullRequestStatusCheckContexts.self, forKey: .contexts) {
+      self.init(checks: contexts.nodes ?? [], counts: contexts.breakdown)
+      return
+    }
+    self.init(checks: [])
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case contexts
+  }
+}
+
+nonisolated private struct GithubPullRequestStatusCheckContexts: Decodable, Equatable {
+  struct StateCount: Decodable, Equatable {
+    let state: String
+    let count: Int
+  }
+
+  let nodes: [GithubPullRequestStatusCheck]?
+  let checkRunCountsByState: [StateCount]?
+  let statusContextCountsByState: [StateCount]?
+
+  // Maps GitHub's per-state counts onto the same buckets `GithubPullRequestStatusCheck.checkState`
+  // assigns to an individual check, so counts and a fetched list always agree.
+  var breakdown: PullRequestCheckBreakdown? {
+    guard checkRunCountsByState != nil || statusContextCountsByState != nil else {
+      return nil
+    }
+    var passed = 0
+    var failed = 0
+    var inProgress = 0
+    var expected = 0
+    var skipped = 0
+    for entry in checkRunCountsByState ?? [] {
+      switch entry.state.uppercased() {
+      case "SUCCESS", "NEUTRAL":
+        passed += entry.count
+      case "CANCELLED", "SKIPPED":
+        skipped += entry.count
+      case "FAILURE", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE", "STALE":
+        failed += entry.count
+      default:
+        inProgress += entry.count
+      }
+    }
+    for entry in statusContextCountsByState ?? [] {
+      switch entry.state.uppercased() {
+      case "SUCCESS":
+        passed += entry.count
+      case "FAILURE", "ERROR":
+        failed += entry.count
+      case "EXPECTED":
+        expected += entry.count
+      default:
+        inProgress += entry.count
+      }
+    }
+    return PullRequestCheckBreakdown(
+      passed: passed,
+      failed: failed,
+      inProgress: inProgress,
+      expected: expected,
+      skipped: skipped
+    )
+  }
+}
+
+extension GithubPullRequest {
+  nonisolated var checkBreakdown: PullRequestCheckBreakdown {
+    statusCheckRollup?.breakdown ?? PullRequestCheckBreakdown(checks: [])
+  }
+}
+
+nonisolated struct PullRequestCheckBreakdown: Equatable, Hashable {
+  let passed: Int
+  let failed: Int
+  let inProgress: Int
+  let expected: Int
+  let skipped: Int
+
+  var total: Int {
+    passed + failed + inProgress + expected + skipped
+  }
+
+  var summaryText: String {
+    var parts: [String] = []
+    if failed > 0 {
+      parts.append(String(localized: "\(failed) failed"))
+    }
+    if inProgress > 0 {
+      parts.append(String(localized: "\(inProgress) in progress"))
+    }
+    if skipped > 0 {
+      parts.append(String(localized: "\(skipped) skipped"))
+    }
+    if expected > 0 {
+      parts.append(String(localized: "\(expected) expected"))
+    }
+    if total > 0 {
+      parts.append(String(localized: "\(passed) successful"))
+    }
+    if parts.isEmpty {
+      return ""
+    }
+    return parts.joined(separator: ", ")
+  }
+
+  init(passed: Int, failed: Int, inProgress: Int, expected: Int, skipped: Int) {
+    self.passed = passed
+    self.failed = failed
+    self.inProgress = inProgress
+    self.expected = expected
+    self.skipped = skipped
+  }
+
+  init(checks: [GithubPullRequestStatusCheck]) {
+    var passed = 0
+    var failed = 0
+    var inProgress = 0
+    var expected = 0
+    var skipped = 0
+    for check in checks {
+      switch check.checkState {
+      case .success:
+        passed += 1
+      case .failure:
+        failed += 1
+      case .inProgress:
+        inProgress += 1
+      case .expected:
+        expected += 1
+      case .skipped:
+        skipped += 1
+      }
+    }
+    self.passed = passed
+    self.failed = failed
+    self.inProgress = inProgress
+    self.expected = expected
+    self.skipped = skipped
+  }
+}

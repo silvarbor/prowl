@@ -27,10 +27,10 @@ and opens that section's root.
 
 | Section | Controls |
 |-----|----------|
-| **General** | Application language (Follow System, 简体中文, English; the same per-app setting as System Settings → Language & Region → Applications; takes effect on next launch), appearance (system/light/dark), default app for opening worktrees, diff tool, confirm-before-quit, default view mode, window chrome tint, automatic repository icon detection, toolbar buttons (Run / Open-in-editor), dim unfocused splits. |
+| **General** | Application language (Follow System, 简体中文, English; the same per-app setting as System Settings → Language & Region → Applications; takes effect on next launch), appearance (system/light/dark), terminal config (share Ghostty's config files or use a dedicated file; Open Config, Reload), default app for opening worktrees, diff tool, confirm-before-quit, default view mode, window chrome tint, automatic repository icon detection, toolbar buttons (Run / Open-in-editor), dim unfocused splits. |
 | **Notifications** | In-app alerts, notification sound picker (Never / system sounds / Prowl Classic), macOS system notifications, move-notified-to-top, command-finished notification + threshold, Dock badge & bounce. → [notifications](notifications.md) |
 | **Shortcuts** | Remap app keyboard shortcuts; view defaults; resolve conflicts. → [keyboard-shortcuts](../reference/keyboard-shortcuts.md) |
-| **Worktree** | Worktree creation/deletion defaults: prompt on create, fetch before create, base directory, copy ignored/untracked files, automatic local-branch cleanup, merged-worktree action, archived auto-delete period. |
+| **Worktree** | Worktree creation/deletion defaults: prompt on create, fetch before create, base directory, copy ignored/untracked files, automatic local-branch cleanup, merged-worktree action, archived auto-delete period (asks for confirmation when the new period would delete archived worktrees right away). |
 | **Updates** | Auto-check toggle, "Check for Updates Now". → [updates](updates.md) |
 | **GitHub** | Enable GitHub integration (uses the `gh` CLI). → [github-pull-requests](github-pull-requests.md) |
 | **Commands** | Global Custom Commands. Enabled commands appear in the window toolbar; each repo can independently hide a Global command. → [custom-actions](custom-actions.md) |
@@ -44,13 +44,15 @@ and opens that section's root.
 ## Where settings live on disk
 
 - **Global:** `~/.prowl/settings.json`
-- **Global custom commands + agent profiles + workflow settings:** `~/.prowl/global.onevcat.json`
+- **Global custom commands + agent profiles + workflow settings:** `~/.prowl/global.user.json`
 - **Your workflow files:** `~/.prowl/workflows/*.pwlworkflow` (per repository: `<repo root>/.prowl/workflows/*.pwlworkflow`)
 - **Per-repo:** `~/.prowl/repo/<repo-name>/prowl.json`
-- **Per-repo custom commands + agent profile default/memory:** `~/.prowl/repo/<repo-name>/prowl.onevcat.json`
+- **Per-repo custom commands + agent profile default/memory:** `~/.prowl/repo/<repo-name>/prowl.user.json`
 - **Dedicated agent profile homes:** `~/.prowl/agent-profiles/<uuid>/`
 
-Legacy `~/.supacode` is migrated to `~/.prowl` on first launch.
+Legacy `~/.supacode` is migrated to `~/.prowl` on first launch. Old `.onevcat.json`
+user settings migrate without deleting the source. See the
+[migration and recovery rules](../reference/settings-fields.md#user-settings-migration).
 
 ## Install the CLI from here
 
@@ -93,11 +95,14 @@ same status as `prowl skills list`.
   summary), and **Reveal** (shows the bundled skill folder in Finder). Workflow-only skills are
   not listed.
 - **Target lines** — one per *detected* target under each skill: `Claude Code`
-  (`~/.claude/skills`), `Codex` (`~/.codex/skills`), and `Shared agents directory`
-  (`~/.agents/skills`), each showing the link's folder (`~/.claude/skills/prowl-cli`), its
-  status, and one action. A target is detected when its parent folder (`~/.claude`, `~/.codex`,
-  `~/.agents`) exists. With no detected target the section says so and points at
-  `prowl skills install --target <claude|codex|agents>`, which creates the folder.
+  (`~/.claude/skills`), `Codex` (`~/.codex/skills`), `Shared agents directory`
+  (`~/.agents/skills`), `Devin` (`~/.config/devin/skills`), and `Antigravity`
+  (`~/.gemini/antigravity-cli/skills`), each showing the link's folder
+  (`~/.claude/skills/prowl-cli`), its status, and one action. A target is
+  detected when its parent folder exists. With no detected target the section
+  says so and points at
+  `prowl skills install --target <claude|codex|agents|devin|antigravity>`,
+  which creates the folder.
 - **Statuses and actions** — one explicit action per skill × target link:
 
   | Status | Meaning | Button |
@@ -116,6 +121,13 @@ same status as `prowl skills list`.
   as Not installed. Project-scope links are CLI-only (`prowl skills install --scope project`).
 - A Debug build that was not built with `make build-app` has no staged skills; the section
   then reports that the bundled skills are unavailable.
+
+## Archived auto-delete confirmation
+
+When changing the archived auto-delete period, the confirmation lists the worktrees eligible for immediate deletion.
+Prowl checks again when you confirm: if another worktree has expired or a repository refresh reveals another eligible
+worktree, it updates the warning and asks you to confirm again. The first cleanup uses the accepted targets only;
+worktrees unarchived or removed before cleanup are skipped. Later automatic cleanup continues to follow the selected period.
 
 ## Gotchas for agents
 

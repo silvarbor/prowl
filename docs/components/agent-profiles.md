@@ -24,6 +24,45 @@ On first run Prowl seeds one bare profile per installed runtime. Seeds are
 ordinary profiles: rename, edit, or delete them freely — deleted seeds never
 respawn.
 
+### Devin
+
+Choose **Devin** in the Profile runtime picker. Prowl resolves `devin` through your
+login shell and uses your existing Devin login and configuration. Model accepts
+any model ID your account can run; leaving it blank preserves the configured model.
+Standard renders `--permission-mode auto`; Unrestricted renders
+`--permission-mode dangerous`. Reasoning effort and Dedicated Home are not exposed:
+no separate effort flag or complete account relocation has been verified.
+
+Prompted launches put the task after `--`, as required by Devin's interactive CLI.
+Profiles can be selected for workflow launch roles, including handoff and Review
+Loop. Trust and permission requests remain visible as Blocked and must be resolved
+before work continues. Workflow completion requires the normal delivery receipt.
+Devin can lose an Enter that arrives before it accepts a paste. Prowl therefore waits
+for the pasted prompt to appear before it submits dispatches and workflow messages, and
+does not type them over an existing draft. `prowl send` with Enter waits the same way
+when the composer is empty. With a draft or a selection menu, it types directly, so it
+can still answer trust and permission prompts.
+Install bundled helper skills with `prowl skills install --target devin`.
+
+### Antigravity
+
+Choose **Antigravity** in the Profile runtime picker. Prowl launches `agy` through
+your login shell and uses your existing Antigravity login under
+`~/.gemini/antigravity-cli`. Model accepts any model ID your account can run
+(`--model`); reasoning effort renders `--effort low|medium|high|xhigh|max`;
+Unrestricted renders `--dangerously-skip-permissions`. Dedicated Home is not
+exposed:
+Antigravity's state spans fixed `~/.gemini` siblings and no complete relocation
+has been verified.
+
+Prompted launches seed the task with `--prompt-interactive`; headless launches
+use `--print`. The prompt always travels as that flag's trailing value token:
+agy's flag parser consumes the token after `--print` or `--prompt-interactive`
+as the prompt — even when that token looks like another flag. Trust and permission
+dialogs remain visible as Blocked and must be answered before work continues.
+Install bundled helper skills with `prowl skills install --target antigravity`;
+project scope shares the standard `.agents/skills` directory.
+
 ## Launching
 
 - **Toolbar Agents capsule** — always opens a popover. A "Run a workflow"
@@ -117,6 +156,11 @@ Arguments, and execution mode to the new runtime defaults. Unsupported fields
 disappear instead of carrying stale state across runtimes; add new values only
 after choosing the destination agent.
 
+**Model** and **Reasoning Effort** offer suggestions and accept custom values
+supported by your CLI and account. For example, a Codex profile can select
+`gpt-6.1-sol` and `max` from the suggestions. Leave either field blank to use
+the runtime default.
+
 **Recommended** resolves in three tiers: the repo's **Default Agent Profile**
 (Repo Settings) → the last profile explicitly launched in this repo → the
 first enabled profile in the Settings list order. Each tier only matches an
@@ -144,7 +188,7 @@ appears in the typed command, shell history, or scrollback. Rules:
   `COPILOT_HOME`, `QWEN_HOME`, `PI_CODING_AGENT_DIR`, and `CLINE_DATA_DIR`) — a custom home must go
   through **Use Dedicated Home**, which always wins over a same-named row.
 - Later duplicate names win (shell-export semantics).
-- Values are stored in plaintext in `~/.prowl/global.onevcat.json` (kept
+- Values are stored in plaintext in `~/.prowl/global.user.json` (kept
   owner-only, `0600`); the Launch Preview shows only the `$PROWL_ENV_*`
   references, never the values.
 - Launch-scoped by design: manual launches, resumed sessions, and restored
@@ -218,6 +262,8 @@ executable, icon, screen heuristics, home, and session identity.
 | Grok Build | Yes | Yes | Standard / Unrestricted | No verified full-state relocation |
 | Pi | Yes | Yes | Runtime default only | `PI_CODING_AGENT_DIR` |
 | Oh My Pi | Yes | Yes | Standard / Unrestricted | `PI_CODING_AGENT_DIR` |
+| Devin | Yes | No | Standard / Unrestricted | No verified full-state relocation |
+| Antigravity | Yes | Yes (`--effort`) | Standard / Unrestricted | No verified full-state relocation |
 
 The execution-mode picker appears only when Prowl can render both choices
 honestly. Cline maps Standard to `--auto-approve false` and Unrestricted to
@@ -242,8 +288,8 @@ still work; `create … --profile <amp-profile> --prompt -` fails without creati
 
 | What | Where |
 |------|-------|
-| Profiles + seeding flag | `~/.prowl/global.onevcat.json` |
-| Per-repo default + launch memory | `~/.prowl/repo/<name>/prowl.onevcat.json` |
+| Profiles + seeding flag | `~/.prowl/global.user.json` |
+| Per-repo default + launch memory | `~/.prowl/repo/<name>/prowl.user.json` |
 | Dedicated profile homes | `~/.prowl/agent-profiles/<uuid>/` |
 
 ## Gotchas for agents

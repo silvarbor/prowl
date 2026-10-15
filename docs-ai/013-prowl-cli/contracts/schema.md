@@ -1,7 +1,7 @@
 # Prowl CLI JSON Schema Bundle
 
 The normative machine-readable Draft 2020-12 bundle is
-[`cli-output-schema.json`](../../../ProwlCLIContracts/Resources/cli-output-schema.json).
+[`cli-output-schema.json`](../../../CLI/Sources/ProwlCLIContracts/Resources/cli-output-schema.json).
 This document intentionally contains no copied JSON: a Markdown code block cannot
 be executed and was the source of the previous schema drift.
 
@@ -21,6 +21,7 @@ The bundle has one versioned success-or-error response schema for every wire com
 | `agents.dispatch-abandon` | `#/$defs/agentsDispatchAbandonResponse` |
 | `agents.wait` | `#/$defs/agentsWaitResponse` (errors may carry `#/$defs/agentsWaitErrorDetails`) |
 | `profiles` | `#/$defs/profilesResponse` |
+| `canvas` | `#/$defs/canvasResponse` |
 | `skills` (local-only) | `#/$defs/skillsResponse` |
 | `workflow` (`list`, `run`, `status`, `done`, `cancel`, `read` over the socket; `validate`/`schema` local-only) | `#/$defs/workflowResponse` |
 | `focus` | `#/$defs/focusResponse` |
@@ -41,7 +42,7 @@ by `prowl workflow schema`) sits beside the bundle and is pinned to its Swift co
 
 ## Executable verification
 
-`ProwlCLITests/ProwlCLIIntegrationTests.swift` loads the bundle through the
+`CLI/Tests/ProwlCLITests/ProwlCLIIntegrationTests.swift` loads the bundle through the
 `ProwlCLIContracts` SwiftPM target and validates every mock socket response that
 contains a command payload or error with the Draft 2020-12 `JSONSchema` validator.
 Those are raw socket bytes, not decoded model assertions. The same suite runs `prowl skills`

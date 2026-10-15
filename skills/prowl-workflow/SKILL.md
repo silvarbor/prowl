@@ -154,7 +154,9 @@ Use the scoped `prowl workflow read` command supplied with the task to retrieve
 the prompt. Read returned resource IDs with the same run ID and invocation number;
 `workflow-resource:` references are handles, not filesystem paths. Use `--json`
 for byte-preserving reads, decode each chunk by its `encoding`, and continue with
-`--offset <next_offset>` until `next_offset` is absent. Only the assigned pane can read this content; reads do not require a token.
+`--offset <next_offset>` until `next_offset` is absent. Only the assigned pane can read this
+content. Run the command exactly as supplied, including its `PROWL_WORKFLOW_TOKEN=` prefix:
+the token lets the read succeed when Prowl cannot identify the calling pane.
 Deliver ordinary text/JSON on stdin with `prowl workflow deliver -`; no project-local
 temporary output file is needed. Explicit delivery is required.
 

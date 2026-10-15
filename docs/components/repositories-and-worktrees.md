@@ -95,7 +95,7 @@ single folder, so slashes, `.`/`..`, and `.git` are rejected).
 Press **↩** to create, **Esc** to cancel. Branch names are validated live
 (`git check-ref-format`).
 
-**Creation runs through the bundled `wt` CLI** (`Resources/git-wt`) and streams
+**Creation runs through the bundled `wt` CLI** (`ThirdParty/git-wt`) and streams
 progress through stages: reading local branches → choosing a name → checking repo
 mode → resolving the base ref → fetching → creating. A **Pending** row shows the
 live status until it's ready.
@@ -154,7 +154,9 @@ Archiving hides a worktree from the main list without deleting it.
   return to the previous worktree), grouped by repo, with **Unarchive** and
   **Delete Selected** (`⌘⇧⌫`) buttons.
 - **Auto-delete:** if `archivedAutoDeletePeriod` is set, archived worktrees older
-  than the period are deleted automatically.
+  than the period are deleted automatically. When you pick a period in Settings →
+  Worktree that would delete existing archived worktrees right away, Prowl lists
+  them and asks first; Cancel keeps the previous period and the worktrees.
 
 The **main worktree cannot be archived.**
 

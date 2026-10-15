@@ -56,6 +56,29 @@ What is *not* here: reviews, audits, routine investigations, test reports, worki
 small polish PRs (git history covers them), and current user-facing behavior (`docs/` is the
 agent-facing manual for that).
 
+## Paths in entries before 074
+
+Entry [074](074-project-restructure-and-tuist/000-plan.md) (2026-10) renamed the project from
+`supacode` to `Prowl` and moved the folders. Numbered files are immutable, so entries `001`–`073`
+keep the old paths. Use this table to find a file that an old entry names:
+
+| Old path or name | Now |
+| --- | --- |
+| `supacode/…` | `App/Sources/…` |
+| `supacodeTests/…` | `App/Tests/…` |
+| `supacode/CLIService/Shared/…` | `Shared/Sources/ProwlCLIShared/…` |
+| `supacode/Features/RemoteMirror/RelayWire/…` | `Mirror/Relay/Sources/MirrorRelayProtocol/…` |
+| `supacode/Info.plist`, `supacode/*.entitlements` | `App/Config/Info.plist`, `App/Config/Prowl*.entitlements` |
+| `supacode/App/supacodeApp.swift`, `SupacodePaths`, `SupaLogger` | `App/Sources/App/ProwlApp.swift`, `ProwlPaths`, `ProwlLogger` |
+| `Resources/…`, `Frameworks/…` | `App/Resources/…`, `App/Frameworks/…` |
+| `Resources/git-wt` | `ThirdParty/git-wt` |
+| `ProwlCLI/…`, `ProwlCLIContracts/…`, `ProwlCLITests/…`, root `Package.swift` | `CLI/Sources/prowl/…`, `CLI/Sources/ProwlCLIContracts/…`, `CLI/Tests/ProwlCLITests/…`, `CLI/Package.swift` |
+| `MirrorRelay/…`, `MirrorRelayTests/…` | `Mirror/Relay/Sources/prowl-mirror-relay/…`, `Mirror/Relay/Tests/MirrorRelayTests/…` |
+| `MirrorClient/…` | `Mirror/…` |
+| `bins/…` | `scripts/bin/…` |
+| `supacode.xcodeproj`, scheme and module `supacode`, target `supacodeTests` | Generated `Prowl.xcworkspace` (`make generate`), scheme and module `Prowl`, target `ProwlTests` |
+| `~/Library/Caches/supacode-spm-cache`, `build/supacode.xcarchive` | `~/Library/Caches/prowl-spm-cache`, `build/Prowl.xcarchive` |
+
 ## Index
 
 | # | Entry | Anchor | Topic |
@@ -75,14 +98,14 @@ agent-facing manual for that).
 | 013 | [prowl-cli](013-prowl-cli/000-plan.md) | 2026-03-30 | Contract-first `prowl` CLI: socket service, v1 commands, hardening, agents |
 | 014 | [terminal-layout-persistence](014-terminal-layout-persistence/000-plan.md) | 2026-03-31 | Layout snapshot save/restore; font-size persistence; launch races |
 | 015 | [repositories-feature-refactor](015-repositories-feature-refactor/000-plan.md) | 2026-04-03 | TCA decomposition of RepositoriesFeature and later code-health splits |
-| 016 | [dev-build-and-ci-workflow](016-dev-build-and-ci-workflow/000-plan.md) | 2026-04-04 | Build/test tooling, CI parallelism, Debug identity, incremental caching, Shared module boundary |
+| 016 | [dev-build-and-ci-workflow](016-dev-build-and-ci-workflow/000-plan.md) | 2026-04-04 | Build/test tooling, CI parallelism, Debug identity, incremental caching, Shared module boundary, CAS fallback and cache save scope, test hang watchdog |
 | 017 | [upstream-sync-process](017-upstream-sync-process/000-plan.md) | 2026-04-08 | Upstream review discipline, baselines, batch decisions |
 | 018 | [archived-worktrees](018-archived-worktrees/000-plan.md) | 2026-04-09 | Archived worktree discoverability and auto-delete |
 | 019 | [worktree-creation-and-lifecycle](019-worktree-creation-and-lifecycle/000-plan.md) | 2026-04-12 | Creation/merge flows, safe deletion, Add-to-Prowl redesign |
 | 020 | [observability](020-observability/000-plan.md) | 2026-04-18 | Sentry + PostHog wiring; the App-Hang enable→tune→remove arc |
 | 021 | [sparkle-update-ux](021-sparkle-update-ux/000-plan.md) | 2026-04-18 | Update badge, Sparkle 2.9.2, background downloads, confirm-install |
 | 022 | [tab-title-and-icon](022-tab-title-and-icon/000-plan.md) | 2026-04-18 | Tab titles/icons: manual, auto-detected, pinned, persisted |
-| 023 | [shelf-mode](023-shelf-mode/000-plan.md) | 2026-04-21 | Shelf stacked-book mode + jank investigation |
+| 023 | [shelf-mode](023-shelf-mode/000-plan.md) | 2026-04-21 | Shelf mode, jank investigation, and spine animation boundary |
 | 024 | [canvas-interaction-evolution](024-canvas-interaction-evolution/000-plan.md) | 2026-04-25 | Canvas v2 UX: zoom/pan, expand-in-place, spatial navigation |
 | 025 | [repo-identity-appearance](025-repo-identity-appearance/000-plan.md) | 2026-04-27 | Per-repo icon/color/title identity |
 | 026 | [sidebar-container-refactor](026-sidebar-container-refactor/000-plan.md) | 2026-05-03 | Sidebar container/presentation refactor |
@@ -126,9 +149,17 @@ agent-facing manual for that).
 | 064 | [agent-completion-signals](064-agent-completion-signals/000-plan.md) | 2026-08-22 | Layered agent signal bus (cooperative / launch-scoped hooks / transcript+process+OSC / heuristic), `prowl agents signal` + `agents wait` with source/confidence, per-runtime hook research, [T1 contract-test plan](064-agent-completion-signals/016-t1-contract-test-plan.md), [planned log/screen state decision](064-agent-completion-signals/017-agent-state-decision.md), [foreground/subagent findings](064-agent-completion-signals/018-foreground-and-subagent-findings.md), [foreground identity contract](064-agent-completion-signals/019-foreground-identity-contract.md), [selection channels/fallback](064-agent-completion-signals/020-selection-channel-research.md), [provider/state-machine design](064-agent-completion-signals/021-provider-state-machine-design.md), and [implementation/acceptance](064-agent-completion-signals/022-provider-implementation.md), and [continuity hardening](064-agent-completion-signals/023-provider-continuity-hardening.md), and [capture/emission corrections](064-agent-completion-signals/024-observation-order-and-emission.md) |
 | 065 | [bundled-agent-skills](065-bundled-agent-skills/000-plan.md) | 2026-08-22 | Bundle Prowl's official agent skills into the app, `prowl skills` install/uninstall via symlinks into agent skill folders, Agent Skills section on Settings › CLI & Skills, shared registry for 063 |
 | 066 | [agent-island](066-agent-island/000-plan.md) | 2026-09-01 | Notch-aware Active Agents island, global keyboard entry, Agents Display settings, and hover-revealed floating placement |
-| 067 | [remote-mirror](067-remote-mirror/000-plan.md) | 2026-09-09 | App-owned Host and native remote terminal mirrors; [macOS UX and viewport](067-remote-mirror/006-macos-ux.md), [Mac pane creation](067-remote-mirror/008-client-pane-launch.md) |
+| 067 | [remote-mirror](067-remote-mirror/000-plan.md) | 2026-09-09 | App-owned Host and native remote terminal mirrors; [macOS UX and viewport](067-remote-mirror/006-macos-ux.md), [Mac pane creation](067-remote-mirror/008-client-pane-launch.md), [QR pairing](067-remote-mirror/010-qr-pairing.md), [explicit scrolling](067-remote-mirror/012-scroll-controls-and-report-feedback.md) |
 | 068 | [agent-state-providers](068-agent-state-providers/000-plan.md) | 2026-09-14 | Shared [architecture](068-agent-state-providers/architecture.md), released [Codex provider](068-agent-state-providers/codex.md), and [Claude native adapter](068-agent-state-providers/claude.md); [staged acceptance](068-agent-state-providers/002-native-runtime-implementation.md), [acceptance complete](068-agent-state-providers/001-action.md); fullscreen case excluded by owner |
 | 069 | [undo-close-terminal](069-undo-close-terminal/000-plan.md) | 2026-09-16 | Undo a pane or tab close with ⌘Z within Ghostty’s `undo-timeout`: closed surfaces stay alive off-tree and restore into their original tab and split position |
 | 070 | [app-localization](070-app-localization/000-plan.md) | 2026-09-18 | Simplified Chinese UI from a String Catalog; translations sync at release time through the `sync-l10n` skill (nothing blocks everyday work); compiler-based coverage audit plus a baseline for unlocalized copy; living [glossary](070-app-localization/glossary.md); language choice stored only in the per-app `AppleLanguages` default |
 | 071 | [git-environment-recovery](071-git-environment-recovery/000-plan.md) | 2026-09-20 | Working Git selection, safe repository classification, recovery guidance, and plain-folder Shelf entry |
 | 072 | [workspace-editing](072-workspace-editing/000-plan.md) | 2026-09-25 | Edit a workspace after creation: metadata, member repositories (add, remove, reorder, roles) through one editor sheet reached from the sidebar, detail view, Settings, palette, and menu |
+| 073 | [codex-daemon-caller-identity](073-codex-daemon-caller-identity/000-plan.md) | 2026-09-29 | CLI callers under Codex's shared app-server daemon: cut the ancestry at the daemon and map `CODEX_THREAD_ID` to the driving pane through the TUI session log; `prowl list` reports the caller; the same mapping restores daemon-mode Codex log detection and [transcript resolution](073-codex-daemon-caller-identity/003-daemon-transcript-resolution.md) |
+| 074 | [project-restructure-and-tuist](074-project-restructure-and-tuist/000-plan.md) | 2026-10-03 | Tuist-generated macOS and iOS mirror projects (no `.xcodeproj` in Git), `supacode` → `Prowl` for targets, module, and types, and a root folder for each product (`App`, `CLI`, `Mirror`, `Shared`); no user-visible change |
+| 075 | [terminal-config-source](075-terminal-config-source/000-plan.md) | 2026-10-05 | Dedicated Ghostty config file for Prowl (#693) through one `GhosttyConfigSource`; CJK font fallback when the active config sets no fonts |
+| 076 | [devin-cli-support](076-devin-cli-support/000-plan.md) | 2026-10-06 | Process and native session detection, screen state, Profiles, and workflow integration |
+| 078 | [ghostty-1-4-upgrade-rehearsal](078-ghostty-1-4-upgrade-rehearsal/000-plan.md) | 2026-10-10 | Fork patch set replayed on upstream tip (Zig 0.16), Prowl adapted to the 1.4 embedded C API, launch crash fixed, live verification record |
+| 079 | [program-status-osc-7501](079-program-status-osc-7501/000-plan.md) | 2026-10-10 | OSC 7501 program status: fork action `GHOSTTY_ACTION_PROGRAM_STATUS` + Swift copy (slice 1), producer baselines for Claude Code and Pi, a root-record state provider with a delegated detection schedule, command-finished release, and a per-producer verified table (slice 2), and Claude Code and Pi flipped to verified after their baselines replayed inside Prowl (slices 3 and 4), then Oh My Pi (006) |
+| 080 | [neutral-user-settings](080-neutral-user-settings/000-plan.md) | 2026-10-10 | Neutral user settings filenames; non-destructive migration, strict error handling, and symlink preservation (#751) |
+| 081 | [canvas-layout-modes](081-canvas-layout-modes/000-plan.md) | 2026-10-12 | Canvas remembers the chosen layout (Arrange / Organize / Tile / freeform), places new cards without overlap, follows newly created cards, and exposes `prowl canvas` layout commands (#760) |

@@ -300,20 +300,26 @@ def run_preflight(row, directory, resolve, timeout):
 
 
 def source_fingerprint():
-    paths = [ROOT / "Makefile", pathlib.Path(__file__), ROOT / "supacodeTests/CodexConfigReadLiveContractTests.swift",
+    paths = [ROOT / "Makefile", pathlib.Path(__file__), ROOT / "App/Tests/CodexConfigReadLiveContractTests.swift",
              ROOT / "scripts/agent_contract_live.py", ROOT / "scripts/agent_contract_expectations.py",
-             ROOT / "scripts/agent_contract_attestation.py", ROOT / "scripts/agent_versions.py", ROOT / "supacodeTests/AgentHookContractExportTests.swift"]
-    paths += sorted((ROOT / "supacode/Domain/AgentRuntime").glob("*.swift"))
-    paths += sorted((ROOT / "supacode/Domain/AgentProfile").glob("*.swift"))
-    paths += sorted((ROOT / "supacode/CLIService/Shared").glob("*.swift"))
-    paths += sorted((ROOT / "ProwlCLI").rglob("*.swift"))
-    paths += sorted((ROOT / "Resources/agent-hooks").rglob("*"))
+             ROOT / "scripts/agent_contract_attestation.py", ROOT / "scripts/agent_versions.py", ROOT / "App/Tests/AgentHookContractExportTests.swift"]
+    # A moved source must stop the run. If the fingerprint skips it, changes to it are not detected.
+    for path in paths:
+        if not path.is_file():
+            raise EvidenceError(f"Fingerprinted file {path.name} is missing.")
+    for folder, pattern in [
+        ("App/Sources/Domain/AgentRuntime", "*.swift"), ("App/Sources/Domain/AgentProfile", "*.swift"),
+        ("Shared/Sources/ProwlCLIShared", "*.swift"), ("CLI/Sources", "**/*.swift"), ("App/Resources/agent-hooks", "**/*"),
+    ]:
+        files = sorted(path for path in (ROOT / folder).glob(pattern) if path.is_file())
+        if not files:
+            raise EvidenceError(f"Fingerprinted folder {folder} is missing or empty.")
+        paths += files
     digest = hashlib.sha256()
     for path in paths:
-        if path.is_file():
-            digest.update(str(path.relative_to(ROOT)).encode())
-            digest.update(b"\0")
-            digest.update(path.read_bytes())
+        digest.update(str(path.relative_to(ROOT)).encode())
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
     return digest.hexdigest()
 
 
@@ -410,7 +416,7 @@ def main(argv=None):
             "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "config_path": str(config), "report_path": str(directory / "report.json"),
             "source_fingerprint": source_fingerprint(), "release_ready": False,
-            "bridge_sha256": hashlib.sha256((ROOT / "Resources/prowl-cli/prowl").read_bytes()).hexdigest() if args.mode in ("live", "verify") and (ROOT / "Resources/prowl-cli/prowl").exists() else None,
+            "bridge_sha256": hashlib.sha256((ROOT / "App/Resources/prowl-cli/prowl").read_bytes()).hexdigest() if args.mode in ("live", "verify") and (ROOT / "App/Resources/prowl-cli/prowl").exists() else None,
             "inference_requested": args.mode in ("live", "verify"), "attestation_updated": False, "runtimes": rows,
         }
         report["source_stable"] = started_fingerprint == report["source_fingerprint"]
