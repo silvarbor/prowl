@@ -66,6 +66,20 @@ struct ClaudeRuntimeProviderTests {
         == nil)
   }
 
+  @Test func concurrentDecodesAgreeOnTheProcessStart() async throws {
+    let data = try record()
+    let process = AgentProcessGeneration(pid: 42, startedAt: start)
+    let sessions = await withTaskGroup(of: String?.self) { group in
+      for _ in 0..<64 {
+        group.addTask { try? ClaudeRuntimeDecoder.decode(data, process: process).sessionID }
+      }
+      var sessions: [String?] = []
+      for await session in group { sessions.append(session) }
+      return sessions
+    }
+    #expect(sessions == Array(repeating: session, count: 64))
+  }
+
   @Test func processReplacementDuringReadCannotPublishSnapshot() async throws {
     let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
