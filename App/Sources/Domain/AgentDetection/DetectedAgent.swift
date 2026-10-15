@@ -1,0 +1,46 @@
+import Foundation
+
+enum DetectedAgent: String, CaseIterable, Equatable, Identifiable, Sendable {
+  // swiftlint:disable:next identifier_name
+  case pi
+  case omp
+  case claude
+  case codex
+  case gemini
+  case cursor = "cursor-agent"
+  case cline
+  case opencode
+  case copilot
+  case kimi
+  case droid
+  case devin
+  case amp
+  case qoder = "qodercli"
+  case qwen
+  case grok
+  case antigravity
+
+  var id: String { rawValue }
+
+  nonisolated var displayName: String {
+    switch self {
+    case .cursor:
+      return "cursor"
+    default:
+      return rawValue
+    }
+  }
+
+  nonisolated var iconLookupToken: String {
+    switch self {
+    case .claude:
+      return "claude"
+    case .copilot:
+      return "copilot"
+    case .cursor:
+      return "cursor"
+    default:
+      return rawValue
+    }
+  }
+}

@@ -2,16 +2,16 @@
 """Turn a `prowl read --source detection` capture into a corpus fixture.
 
 Implements steps 3, 6, and 7 of the capture-and-promotion procedure in
-`supacodeTests/Fixtures/AgentScreenDetection/README.md`: it rejects a capture
+`App/Tests/Fixtures/AgentScreenDetection/README.md`: it rejects a capture
 that is not detector-faithful, reduces the screen to the exact slice the
 detector reads for the given agent, and applies redactions without changing
 the visible width of any line.
 
-The reduction mirrors `DetectedAgent.detectionScreenText(from:)`: `claude`
-consumes the full active screen and is passed through untrimmed, `pi` consumes a
-32-line tail, and every other agent consumes a 24-line tail. `--agent` selects
-among the three, and is required because the capture does not record which
-detector will consume it.
+The reduction mirrors `DetectedAgent.detectionScreenText(from:)`: `claude` and
+`antigravity` consume the full active screen and are passed through untrimmed,
+`pi` consumes a 32-line tail, and every other agent consumes a 24-line tail.
+`--agent` selects among the three, and is required because the capture does not
+record which detector will consume it.
 
 Width matters. A fixture exists to pin how the classifier reads a real screen,
 and the agent CLIs wrap, shorten, and truncate their rows to the terminal width.
@@ -25,7 +25,7 @@ Usage:
         --agent claude \\
         --redact /Users/me=/Users/usr \\
         --redact 'Acme Inc=<ORG_0000>' \\
-        > supacodeTests/Fixtures/AgentScreenDetection/claude/2.1.226/idle/composer.txt
+        > App/Tests/Fixtures/AgentScreenDetection/claude/2.1.226/idle/composer.txt
 
 Each `--redact OLD=NEW` is applied in order. `NEW` may differ in length from
 `OLD`: the difference is taken out of, or added to, that line's trailing spaces,
@@ -49,7 +49,7 @@ import sys
 import unicodedata
 
 # Ports of `agentDetectionRecentLineLimit` and `piAgentDetectionRecentLineLimit`
-# in `supacode/Infrastructure/AgentDetection/ScreenHeuristics.swift`.
+# in `App/Sources/Infrastructure/AgentDetection/ScreenHeuristics.swift`.
 # `test_tail_limits_match_the_swift_constants` fails when either one drifts.
 DETECTOR_TAIL_LIMIT = 24
 PI_DETECTOR_TAIL_LIMIT = 32
@@ -92,23 +92,26 @@ DETECTED_AGENTS = (
     "copilot",
     "kimi",
     "droid",
+    "devin",
     "amp",
     "qodercli",
     "qwen",
     "grok",
+    "antigravity",
 )
 
 
 def detection_screen_text(text: str, agent: str) -> str:
     """Port of `DetectedAgent.detectionScreenText(from:)`.
 
-    `claude` consumes the full active screen, `pi` a 32-line tail, and every
-    other agent a 24-line tail. Claude's case is deliberate on the Swift side:
-    trimming a Claude capture can delete the very row that reproduces a bug. Pi
-    keeps the wider tail so the pi-subagents widget holds its header and its live
-    job row in one slice.
+    `claude` and `antigravity` consume the full active screen, `pi` a 32-line
+    tail, and every other agent a 24-line tail. The full-screen cases are
+    deliberate on the Swift side: trimming a Claude capture can delete the very
+    row that reproduces a bug, and Antigravity anchors on its composer box, which
+    a long stacked status line would push out of a tail. Pi keeps the wider tail
+    so the pi-subagents widget holds its header and its live job row in one slice.
     """
-    if agent == "claude":
+    if agent in ("claude", "antigravity"):
         return text
     if agent == "pi":
         return canonical_tail(text, limit=PI_DETECTOR_TAIL_LIMIT)

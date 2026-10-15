@@ -1,0 +1,979 @@
+import Foundation
+
+nonisolated let agentDetectionRecentLineLimit = 24
+nonisolated let piAgentDetectionRecentLineLimit = 32
+
+extension DetectedAgent {
+  nonisolated func detectState(in screen: String) -> AgentRawState {
+    detectScreen(in: screen).state
+  }
+
+  /// The slice of the active screen this agent's detector consumes.
+  ///
+  /// Claude reads the full active screen: its rules are region-anchored (the
+  /// live status block is walked bottom-up from the composer by row shape,
+  /// blockers around the prompt, viewer chrome from the bottom lines), so a
+  /// bottom-measured line budget added no false-positive guard — it only cut
+  /// the live signal off when a long todo list plus a multi-line status line
+  /// pushed the spinner row past the limit and a working agent read as idle.
+  ///
+  /// Antigravity reads the full screen for the same reason: its detector anchors
+  /// on the live composer box by shape and ignores everything below the status
+  /// row, so a tail budget only let a long `stack_with_default` status script
+  /// push the composer out of the slice and turn a working pane unknown.
+  ///
+  /// Every other detector keeps a bounded tail as its guard against transcript
+  /// history. Pi retains 32 non-blank lines so pi-subagents' adaptive widget can
+  /// keep its header and live job row together; the remaining detectors keep 24.
+  /// For the legacy scanners the tail is load-bearing — they match with whole-text
+  /// scans. Codex's structured profile anchors its windows inside the tail instead;
+  /// it shares Claude's bounded-bottom exposure in principle and keeps the tail
+  /// until its regions are bounded by shape the same way.
+  nonisolated func detectionScreenText(from screen: String) -> String {
+    switch self {
+    case .claude, .antigravity:
+      screen
+    case .pi:
+      agentDetectionRecentLines(screen, limit: piAgentDetectionRecentLineLimit)
+    default:
+      agentDetectionRecentText(screen)
+    }
+  }
+
+  /// The one production entry point for building a profile snapshot. State
+  /// detection and blocker extraction must read the same slice; going through
+  /// this keeps a call site from pairing a profile with the wrong one.
+  nonisolated func detectionSnapshot(from screen: String) -> AgentScreenSnapshot {
+    AgentScreenSnapshot(text: detectionScreenText(from: screen))
+  }
+
+  nonisolated func detectScreen(in screen: String) -> AgentScreenDetection {
+    let text = detectionScreenText(from: screen)
+    switch self {
+    case .claude:
+      return ClaudeScreenProfile.detect(in: AgentScreenSnapshot(text: text))
+    case .codex:
+      return CodexScreenProfile.detect(in: AgentScreenSnapshot(text: text))
+    case .devin:
+      return DevinScreenProfile.detect(in: AgentScreenSnapshot(text: text))
+    default:
+      return AgentScreenDetection(state: detectLegacyScreen(text), reason: .legacyDetector)
+    }
+  }
+
+  private nonisolated func detectLegacyScreen(_ text: String) -> AgentRawState {
+    switch self {
+    case .pi: detectPi(text)
+    case .omp: detectOMP(text)
+    case .gemini: detectGemini(text)
+    case .cursor: detectCursor(text)
+    case .cline: detectCline(text)
+    case .opencode: detectOpenCode(text)
+    case .copilot: detectCopilot(text)
+    case .kimi: detectKimi(text)
+    case .droid: detectDroid(text)
+    case .amp: detectAmp(text)
+    case .qoder: detectQoder(text)
+    case .qwen: detectQwen(text)
+    case .grok: detectGrok(text)
+    case .antigravity: detectAntigravity(text)
+    case .claude, .codex, .devin: .unknown
+    }
+  }
+}
+
+nonisolated func agentDetectionRecentText(_ content: String) -> String {
+  agentDetectionRecentLines(content, limit: agentDetectionRecentLineLimit)
+}
+
+nonisolated func agentDetectionRecentLines(_ content: String, limit: Int) -> String {
+  let lines = content.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+  var remainingNonBlankLines = limit
+  var startIndex = lines.startIndex
+
+  for index in lines.indices.reversed() {
+    guard !lines[index].trimmingCharacters(in: .whitespaces).isEmpty else {
+      continue
+    }
+    remainingNonBlankLines -= 1
+    if remainingNonBlankLines == 0 {
+      startIndex = index
+      break
+    }
+  }
+
+  return lines[startIndex...].joined(separator: "\n")
+}
+
+nonisolated private func detectPi(_ content: String) -> AgentRawState {
+  let lines = content.split(separator: "\n", omittingEmptySubsequences: false).map {
+    $0.trimmingCharacters(in: .whitespaces)
+  }
+  let liveFooterLines = lines.filter { !$0.isEmpty }.suffix(5)
+  return lines.contains(where: isPiWorkingText)
+    || liveFooterLines.contains(where: isPiFramedWorkingFooter)
+    || hasPiRunningAsyncSubagentCard(lines)
+    ? .working
+    : .idle
+}
+
+nonisolated private func hasPiRunningAsyncSubagentCard(_ lines: [String]) -> Bool {
+  if lines.contains(where: isPiAdaptiveAsyncSubagentRunningLine) {
+    return true
+  }
+  guard lines.count >= 2 else { return false }
+
+  return lines.indices.dropLast().contains { index in
+    guard let headerName = piAsyncSubagentName(from: lines[index]) else { return false }
+    return isPiAsyncSubagentJobLine(lines[index + 1], matching: headerName)
+  }
+}
+
+nonisolated private func piAsyncSubagentName(from header: String) -> (name: String, isPrefix: Bool)? {
+  let prefix = "async subagent "
+  let suffix = " · background"
+  guard header.hasPrefix(prefix) else { return nil }
+
+  let title: Substring
+  let isPrefix: Bool
+  if header.hasSuffix(suffix) {
+    title = header.dropFirst(prefix.count).dropLast(suffix.count)
+    isPrefix = false
+  } else {
+    guard header.hasSuffix("…") else { return nil }
+    let truncatedTitle = header.dropFirst(prefix.count).dropLast()
+    if let separator = truncatedTitle.range(of: " ·") {
+      title = truncatedTitle[..<separator.lowerBound]
+      isPrefix = false
+    } else {
+      title = truncatedTitle
+      isPrefix = true
+    }
+  }
+
+  let components = title.split(separator: " ")
+  let countToken = components.last
+  let completeCount = countToken?.dropFirst().dropLast()
+  let hasCompleteCount =
+    countToken?.first == "("
+    && countToken?.last == ")"
+    && completeCount?.isEmpty == false
+    && completeCount?.allSatisfy(\.isNumber) == true
+  let partialCount = countToken?.dropFirst()
+  let hasTruncatedCount =
+    isPrefix
+    && countToken?.first == "("
+    && countToken?.last != ")"
+    && partialCount?.allSatisfy(\.isNumber) == true
+  let hasTrailingCount = hasCompleteCount || hasTruncatedCount
+  let name = hasTrailingCount ? components.dropLast().joined(separator: " ") : String(title)
+  let nameIsPrefix = isPrefix && !hasTrailingCount
+  return name.contains(where: \.isLetter) ? (name, nameIsPrefix) : nil
+}
+
+nonisolated private func isPiAsyncSubagentJobLine(
+  _ line: String,
+  matching headerName: (name: String, isPrefix: Bool)
+) -> Bool {
+  guard let content = labeledBrailleSpinnerContent(line), content.hasPrefix(headerName.name) else { return false }
+  if headerName.isPrefix {
+    return true
+  }
+
+  let remainder = content.dropFirst(headerName.name.count)
+  if remainder.isEmpty || remainder.hasPrefix(" ·") {
+    return true
+  }
+  return [" [fresh]", " [fork]", " [mixed]"].contains { badge in
+    remainder == badge || remainder.hasPrefix("\(badge) ·")
+  }
+}
+
+nonisolated private func isPiAdaptiveAsyncSubagentRunningLine(_ line: String) -> Bool {
+  guard let content = labeledBrailleSpinnerContent(line) else { return false }
+  if content.hasSuffix("…") {
+    let visiblePrefix = content.dropLast()
+    if visiblePrefix.hasPrefix("subagents (") || visiblePrefix.hasPrefix("Async agents · ") {
+      return true
+    }
+  }
+  if content == "Async agents · background" {
+    return true
+  }
+  if content.hasPrefix("Async agents · ") {
+    return isPiProgressiveAsyncSummary(String(content.dropFirst("Async agents · ".count)))
+  }
+  return isPiSingleLineAsyncSummary(content)
+}
+
+nonisolated private func isPiProgressiveAsyncSummary(_ summary: String) -> Bool {
+  let components = summary.split(separator: " ", maxSplits: 2)
+  guard components.count == 3,
+    let count = Int(components[0]),
+    count > 0,
+    components[1] == (count == 1 ? "agent" : "agents")
+  else {
+    return false
+  }
+
+  let state = components[2]
+  if state == "running" {
+    return true
+  }
+  guard state.hasPrefix("running, ") else { return false }
+  return isPiAsyncCountStatus(state.dropFirst("running, ".count), expected: "queued")
+}
+
+nonisolated private func isPiSingleLineAsyncSummary(_ content: String) -> Bool {
+  let prefix = "subagents ("
+  guard content.hasPrefix(prefix), content.hasSuffix(")") else { return false }
+
+  let summary = content.dropFirst(prefix.count).dropLast()
+  let components = summary.split(separator: ",", omittingEmptySubsequences: false)
+  guard let runningSummary = components.first else { return false }
+  let running = runningSummary.split(separator: " ")
+  guard running.count == 2, running[1] == "running" else { return false }
+
+  let counts = running[0].split(separator: "/", omittingEmptySubsequences: false)
+  guard counts.count == 2,
+    let activeCount = Int(counts[0]),
+    let totalCount = Int(counts[1]),
+    activeCount > 0,
+    totalCount >= activeCount
+  else {
+    return false
+  }
+
+  let terminalStates = ["queued", "failed", "stopped", "paused"]
+  return components.dropFirst().allSatisfy { component in
+    terminalStates.contains { state in
+      isPiAsyncCountStatus(component.drop(while: \.isWhitespace), expected: state)
+    }
+  }
+}
+
+nonisolated private func isPiAsyncCountStatus(_ summary: Substring, expected: String) -> Bool {
+  let components = summary.split(separator: " ")
+  return components.count == 2
+    && Int(components[0]).map { $0 > 0 } == true
+    && components[1] == Substring(expected)
+}
+
+nonisolated private func detectOMP(_ content: String) -> AgentRawState {
+  if hasOMPAskPrompt(content) {
+    return .blocked
+  }
+  return hasOMPWorkingLine(content) ? .working : .idle
+}
+
+nonisolated private func hasOMPAskPrompt(_ content: String) -> Bool {
+  let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
+  return lines.contains { line in
+    let trimmed = line.trimmingCharacters(in: .whitespaces)
+    return trimmed.contains("Enter select") && trimmed.contains("Esc cancel")
+  }
+}
+
+nonisolated private func hasOMPWorkingLine(_ content: String) -> Bool {
+  let lines = content.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+    .filter { !$0.isEmpty }
+  if lines.contains(where: { isPiWorkingText($0) || hasOMPInterruptHint($0) || hasLabeledBrailleSpinner($0) }) {
+    return true
+  }
+  let composerHeaderIndex = ompLiveBoxComposerHeaderIndex(lines)
+  if let composerHeaderIndex, ompBoxComposerHeaderHasSpinner(lines[composerHeaderIndex]) {
+    return true
+  }
+  return ompLoaderCandidateRows(lines, composerHeaderIndex: composerHeaderIndex).contains(where: isOMPLoaderRow)
+}
+
+/// OMP's loader row leads with the theme's Esc glyph (the interrupt key) and shows the
+/// model's self-reported intent: `Working…` before the first token, then free text such as
+/// `Running requested command` or `等待命令完成` while a tool runs. The vocabulary is
+/// unbounded, so any label counts; the row is only read near the composer.
+nonisolated private func isOMPLoaderRow(_ line: String) -> Bool {
+  let parts = line.split(maxSplits: 1, whereSeparator: \.isWhitespace)
+  guard parts.count == 2, ompEscapeGlyphs.contains(String(parts[0])) else { return false }
+  return parts[1].contains(where: \.isLetter)
+}
+
+nonisolated private let ompEscapeGlyphs: Set<String> = ["󱊷", "⎋", "esc"]
+
+/// The rows that can hold the live loader: the bottom of the screen, plus the rows directly
+/// above the live `box` composer, whose queued draft can grow to 18 rows and push the loader
+/// out of a bottom-anchored window.
+nonisolated private func ompLoaderCandidateRows(_ lines: [String], composerHeaderIndex: Int?) -> [String] {
+  var rows = Array(lines.suffix(5))
+  if let composerHeaderIndex {
+    rows += lines[..<composerHeaderIndex].suffix(5)
+  }
+  return rows
+}
+
+/// The live `box` composer is the last `╭` row that closes the screen: every row after it is
+/// a `│` input row and the final row is the `╰` bottom row. That shape covers a one-line
+/// prompt (`╭ … ╮` over `╰─ … ─╯`), a multiline draft, and the IME-safe layout that moves the
+/// bottom border to its own row. Transcript text after a `╰` row marks a tool box or a quoted
+/// frame instead, so an older frame never speaks for a newer composer.
+nonisolated private func ompLiveBoxComposerHeaderIndex(_ lines: [String]) -> Int? {
+  guard let headerIndex = lines.lastIndex(where: { $0.hasPrefix("╭") }),
+    let bottom = lines.last, bottom.hasPrefix("╰"), headerIndex < lines.count - 1
+  else { return nil }
+  let inputRows = lines[(headerIndex + 1)...].dropLast()
+  return inputRows.allSatisfy { $0.hasPrefix("│") } ? headerIndex : nil
+}
+
+/// While a turn runs, OMP's status line replaces its brand glyph with a braille spinner and
+/// a turn timer (`⠋ 9s`). The `box` composer embeds that status line in its top border,
+/// right after the `╭──` run; the other composer shapes start a status row with it, which the
+/// leading-spinner rule already reads.
+nonisolated private func ompBoxComposerHeaderHasSpinner(_ header: String) -> Bool {
+  let status = header.drop(while: { $0 == "╭" || $0 == "─" || $0 == " " })
+  return labeledBrailleSpinnerContent(String(status)) != nil
+}
+
+nonisolated private let piWorkingMessages: Set<String> = ["Working...", "Working…", "Interrupting…"]
+
+nonisolated private func isPiWorkingText(_ line: String) -> Bool {
+  if piWorkingMessages.contains(line) {
+    return true
+  }
+
+  guard let spinner = line.unicodeScalars.first,
+    (0x2800...0x28FF).contains(Int(spinner.value))
+  else {
+    return false
+  }
+  let message = String(line.unicodeScalars.dropFirst()).trimmingCharacters(in: .whitespaces)
+  return piWorkingMessages.contains(message)
+}
+
+nonisolated private func isPiFramedWorkingFooter(_ line: String) -> Bool {
+  guard line.hasPrefix("── "), line.hasSuffix("──") else { return false }
+  let content = line.trimmingCharacters(in: CharacterSet(charactersIn: "─ "))
+  return labeledBrailleSpinnerContent(content) == "Working"
+}
+
+nonisolated private func hasOMPInterruptHint(_ line: String) -> Bool {
+  let interruptHints = ["⟦esc⟧", "⟨esc⟩", "[esc]"]
+  return interruptHints.contains { hint in
+    guard line.hasSuffix(hint) else { return false }
+    return !line.dropLast(hint.count).trimmingCharacters(in: .whitespaces).isEmpty
+  }
+}
+
+nonisolated private func hasLabeledBrailleSpinner(_ line: String) -> Bool {
+  labeledBrailleSpinnerContent(line) != nil
+}
+
+nonisolated private func labeledBrailleSpinnerContent(_ line: String) -> String? {
+  guard let first = line.unicodeScalars.first,
+    (0x2800...0x28FF).contains(Int(first.value))
+  else {
+    return nil
+  }
+
+  let rest = String(line.unicodeScalars.dropFirst())
+  guard rest.hasPrefix(" ") else { return nil }
+  let content = rest.dropFirst().trimmingCharacters(in: .whitespaces)
+  return content.contains(where: \.isLetter) ? content : nil
+}
+
+nonisolated private func detectGemini(_ content: String) -> AgentRawState {
+  let lower = content.lowercased()
+  if lower.contains("waiting for user confirmation")
+    || content.contains("│ Apply this change")
+    || content.contains("│ Allow execution")
+    || content.contains("│ Do you want to proceed")
+    || hasConfirmationPrompt(lower)
+  {
+    return .blocked
+  }
+  if lower.contains("esc to cancel") {
+    return .working
+  }
+  return .idle
+}
+
+nonisolated private func detectCursor(_ content: String) -> AgentRawState {
+  let lower = content.lowercased()
+  if lower.contains("workspace trust required")
+    || lower.contains("trust this workspace")
+    || hasCursorPermissionPrompt(content: content, lower: lower)
+  {
+    return .blocked
+  }
+  if lower.contains("trusting workspace") || lower.contains("ctrl+c to stop") || hasCursorSpinner(content) {
+    return .working
+  }
+  return .idle
+}
+
+nonisolated private func detectCline(_ content: String) -> AgentRawState {
+  let lower = content.lowercased()
+  if lower.contains("let cline use this tool")
+    || ((lower.contains("[act mode]") || lower.contains("[plan mode]")) && lower.contains("yes"))
+    || hasClineNumberedChoicePrompt(content)
+  {
+    return .blocked
+  }
+  if hasInterruptPattern(lower) {
+    return .working
+  }
+  return .idle
+}
+
+nonisolated private func detectOpenCode(_ content: String) -> AgentRawState {
+  if content.contains("△ Permission required")
+    || hasOpenCodeQuestionPrompt(content)
+  {
+    return .blocked
+  }
+  if hasInterruptPattern(content.lowercased()) {
+    return .working
+  }
+  return .idle
+}
+
+nonisolated private func detectCopilot(_ content: String) -> AgentRawState {
+  let lower = content.lowercased()
+  let lines = lower.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+    .filter { !$0.isEmpty }
+  if hasCopilotSelectionPrompt(lines)
+    || lower.contains("│ do you want")
+    || (lower.contains("confirm with") && lower.contains("enter"))
+  {
+    return .blocked
+  }
+  let hasWorkingFooter = lines.suffix(5).contains(where: isCopilotWorkingFooter)
+  if hasWorkingFooter || lower.contains("esc to cancel") {
+    return .working
+  }
+  return .idle
+}
+
+nonisolated private func isCopilotWorkingFooter(_ line: String) -> Bool {
+  // Copilot 1.0.83 uses these frames in its normal and alternate-screen animations.
+  // Streaming response size is optional and appears before the interrupt shortcut.
+  let pattern = #"^[∙∘○◎◉]\s+working(?:\s+·\s+\d+(?:\.\d+)?\s+[kmgt]?i?b)?\s+esc\s+interrupt(?:\s|$)"#
+  return line.range(of: pattern, options: .regularExpression) != nil
+}
+
+nonisolated private func hasCopilotSelectionPrompt(_ lines: [String]) -> Bool {
+  // The trust/permission picker shares "esc to cancel" with the legacy working footer.
+  // Require live dialog chrome so a completed choice in transcript history does not block.
+  guard lines.last?.hasPrefix("╰") == true,
+    lines.suffix(3).contains(where: { $0.contains("enter to select") && $0.contains("esc to cancel") })
+  else { return false }
+  return lines.suffix(16).contains { line in
+    line.range(of: #"^│\s*❯\s*\d+\."#, options: .regularExpression) != nil
+  }
+}
+
+nonisolated private func detectKimi(_ content: String) -> AgentRawState {
+  let lower = content.lowercased()
+  let blockedPatterns = [
+    "allow?", "confirm?", "approve?", "proceed?", "[y/n]", "(y/n)",
+  ]
+  if blockedPatterns.contains(where: lower.contains)
+    || hasConfirmationPrompt(lower)
+    || hasKimiApprovalPanel(content: content, lower: lower)
+  {
+    return .blocked
+  }
+
+  let workingPatterns = [
+    "thinking", "processing", "generating", "waiting for response", "ctrl+c to cancel", "ctrl-c to cancel",
+  ]
+  if workingPatterns.contains(where: lower.contains)
+    || hasKimiMoonSpinner(content)
+    || hasKimiToolSpinner(content: content, lower: lower)
+  {
+    return .working
+  }
+  return .idle
+}
+
+nonisolated private func detectDroid(_ content: String) -> AgentRawState {
+  let lower = content.lowercased()
+  let hasExecute = content.contains("EXECUTE")
+  let hasSelectionChrome =
+    lower.contains("enter to select")
+    || lower.contains("↑↓ to navigate")
+    || lower.contains("esc to cancel")
+  let hasSelectionOptions =
+    lower.contains("> yes, allow")
+    || lower.contains("> no, cancel")
+
+  if hasExecute && (hasSelectionChrome || hasSelectionOptions) {
+    return .blocked
+  }
+  if hasSelectionChrome && hasSelectionOptions {
+    return .blocked
+  }
+  if hasDroidSpinner(content) || lower.contains("esc to stop") {
+    return .working
+  }
+  return .idle
+}
+
+// Amp (0.0.1791547250) is a full-screen TUI whose composer box owns the bottom
+// rows: `╭───… ─ <mode> ─╮`, `│ … │` rows, and a bottom border
+// `╰ <spinner> <status> ───… <path> (<branch>) ─╯`. The status is the thread
+// client's live state — `Connecting`, `Sending`, `Waiting`, `Thinking`,
+// `Streaming`, `Streaming 45 tok`, `Running Tools`, … — behind a spinner that
+// cycles `∼`, `≈`, `≋`; an idle composer leaves the border bare. Any status is
+// Working: the label set is open (a token counter trails `Streaming`, a
+// half-painted frame reads `Streami Too`), while the bare border is the only
+// idle shape, so an allowlist flaps on every frame it misses. `Disconnected` and
+// `Amp Is Redeploying` (the two labels in Amp's table that are not turn
+// progress) retain the prior state. Approval and feedback dialogs render as a
+// separate box directly above the composer — `╭─ Approval Required ─…─╮` with
+// `‣`-marked option rows, `╭─ Tell Amp what to do differently ─…─╮` with a `>`
+// input row — while the border keeps `Running Tools`, so the dialog read runs
+// first; the `Out of Credits` dialog puts its `‣` rows inside the composer
+// itself. A screen without a complete composer (startup, a viewer, a redraw
+// caught mid-frame) is unknown so the state machine keeps the prior state;
+// there is no older Amp UI to fall back to, because the service refuses to
+// start threads from a stale CLI.
+nonisolated private func detectAmp(_ content: String) -> AgentRawState {
+  // Blank rows carry nothing here (every box row has borders), and dropping
+  // them also discards trailing whitespace-only screen rows below the footer.
+  let lines = content.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+    .filter { !$0.isEmpty }
+  let isTop = { (line: String) -> Bool in line.hasPrefix("╭─") && line.hasSuffix("╮") }
+  let isBottom = { (line: String) -> Bool in line.hasPrefix("╰") && line.hasSuffix("╯") }
+  let isInterior = { (line: String) -> Bool in line.hasPrefix("│") && line.hasSuffix("│") }
+  let isSelection = { (line: String) -> Bool in line.hasPrefix("│ ‣ ") }
+
+  guard let footer = lines.indices.last, isBottom(lines[footer]) else { return .unknown }
+  var composerTop = footer - 1
+  while composerTop >= 0, isInterior(lines[composerTop]) {
+    composerTop -= 1
+  }
+  guard composerTop >= 0, isTop(lines[composerTop]), composerTop < footer - 1 else { return .unknown }
+
+  if lines[(composerTop + 1)..<footer].contains(where: isSelection) {
+    return .blocked
+  }
+
+  // A box whose bottom border touches the composer's top border is a dialog
+  // when it is titled as one or carries a selection row; a long command can
+  // push the title above the detection window, so the rows alone suffice.
+  if composerTop > 0, isBottom(lines[composerTop - 1]) {
+    var dialogTop = composerTop - 2
+    var hasSelection = false
+    while dialogTop >= 0, isInterior(lines[dialogTop]) {
+      hasSelection = hasSelection || isSelection(lines[dialogTop])
+      dialogTop -= 1
+    }
+    let dialogTitles = ["╭─ Approval Required ", "╭─ Tell Amp what to do differently "]
+    let title = dialogTop >= 0 && isTop(lines[dialogTop]) ? lines[dialogTop] : ""
+    if hasSelection || dialogTitles.contains(where: { title.hasPrefix($0) }) {
+      return .blocked
+    }
+  }
+
+  let status = lines[footer].dropFirst().prefix { $0 != "─" }
+    .trimmingCharacters(in: CharacterSet(charactersIn: " ∼≈≋"))
+  if status.isEmpty {
+    return .idle
+  }
+  if status == "Disconnected" || status == "Amp Is Redeploying" {
+    return .unknown
+  }
+  return .working
+}
+
+nonisolated func isNumberedChoice(_ option: String) -> Bool {
+  guard let firstToken = option.split(whereSeparator: { $0.isWhitespace }).first,
+    firstToken.last == "."
+  else {
+    return false
+  }
+  let number = firstToken.dropLast()
+  return !number.isEmpty && number.allSatisfy(\.isNumber)
+}
+
+nonisolated private func hasCursorPermissionPrompt(content: String, lower: String) -> Bool {
+  if lower.contains("(y) (enter)") {
+    return true
+  }
+
+  let hasPermissionHeader =
+    lower.contains("run this command?")
+    || lower.contains("run command?")
+    || lower.contains("not in allowlist")
+    || lower.contains("to allowlist?")
+    || lower.contains("allow execution")
+  guard hasPermissionHeader else { return false }
+
+  let hasConfirmAction = content.split(separator: "\n", omittingEmptySubsequences: false).contains { line in
+    let trimmed = line.trimmingCharacters(in: .whitespaces).lowercased()
+    guard trimmed.contains("(y)") else { return false }
+    return trimmed.contains("run") || trimmed.contains("allow")
+  }
+  let hasCancelAction =
+    lower.contains("skip (esc or n)")
+    || lower.contains("keep (n)")
+
+  return hasConfirmAction || hasCancelAction
+}
+
+nonisolated private func hasClineNumberedChoicePrompt(_ content: String) -> Bool {
+  content.split(separator: "\n", omittingEmptySubsequences: false).contains { line in
+    guard let suffix = line.range(of: " or type)") else { return false }
+    let prefix = line[..<suffix.lowerBound]
+    guard let openParen = prefix.lastIndex(of: "(") else { return false }
+    let between = prefix[prefix.index(after: openParen)...]
+    return between.contains("-") && between.allSatisfy { $0.isNumber || $0 == "-" }
+  }
+}
+
+nonisolated private func hasKimiApprovalPanel(content: String, lower: String) -> Bool {
+  lower.contains("requesting approval")
+    || (lower.contains("approve once") && lower.contains("approve for this session") && lower.contains("reject"))
+    || (content.contains("─ approval") && content.contains("↵ confirm"))
+}
+
+nonisolated private func hasKimiMoonSpinner(_ content: String) -> Bool {
+  let moonSpinners: Set<Character> = ["🌑", "🌒", "🌓", "🌔", "🌕", "🌖", "🌗", "🌘"]
+  return content.contains { moonSpinners.contains($0) }
+}
+
+nonisolated private func hasKimiToolSpinner(content: String, lower: String) -> Bool {
+  guard lower.contains("using ") else { return false }
+  return content.split(separator: "\n").contains { line in
+    let trimmed = line.trimmingCharacters(in: .whitespaces)
+    guard let first = trimmed.unicodeScalars.first else { return false }
+    return (0x2800...0x28FF).contains(Int(first.value))
+  }
+}
+
+nonisolated func hasConfirmationPrompt(_ lower: String) -> Bool {
+  guard
+    let range = lower.range(of: "do you want") ?? lower.range(of: "would you like")
+  else {
+    return false
+  }
+  let after = lower[range.lowerBound...]
+  return after.contains("yes") || after.contains("❯")
+}
+
+nonisolated private func hasInterruptPattern(_ lower: String) -> Bool {
+  lower.contains("esc to interrupt")
+    || lower.contains("ctrl+c to interrupt")
+    || (lower.contains("esc") && lower.contains("interrupt"))
+}
+
+private nonisolated let agentSpinnerScalars: Set<UnicodeScalar> = [
+  "·", "✱", "✲", "✳", "✴", "✵", "✶", "✷", "✸", "✹", "✺", "✻", "✼", "✽", "✾", "✿",
+  "❀", "❁", "❂", "❃", "❇", "❈", "❉", "❊", "❋", "✢", "✣", "✤", "✥", "✦", "✧", "✨",
+  "⊛", "⊕", "⊙", "◉", "◎", "◍", "⁂", "⁕", "※", "⍟", "☼", "★", "☆",
+]
+
+nonisolated func isAgentSpinnerScalar(_ scalar: UnicodeScalar) -> Bool {
+  agentSpinnerScalars.contains(scalar)
+}
+
+nonisolated func hasSpinnerActivity(_ content: String) -> Bool {
+  content.split(separator: "\n").contains { line in
+    let trimmed = line.trimmingCharacters(in: .whitespaces)
+    guard let first = trimmed.unicodeScalars.first else { return false }
+    let rest = String(trimmed.unicodeScalars.dropFirst())
+    return isAgentSpinnerScalar(first)
+      && rest.hasPrefix(" ")
+      && rest.contains("…")
+      && rest.contains(where: \.isLetter)
+  }
+}
+
+nonisolated private func hasCursorSpinner(_ content: String) -> Bool {
+  content.split(separator: "\n").contains { line in
+    let trimmed = line.trimmingCharacters(in: .whitespaces).lowercased()
+    return (trimmed.hasPrefix("⬡") || trimmed.hasPrefix("⬢")) && trimmed.contains("ing")
+  }
+}
+
+nonisolated private func hasDroidSpinner(_ content: String) -> Bool {
+  content.split(separator: "\n").contains { line in
+    let trimmed = line.trimmingCharacters(in: .whitespaces).lowercased()
+    guard let first = trimmed.unicodeScalars.first else { return false }
+    return (0x2800...0x28FF).contains(Int(first.value)) && trimmed.contains("esc to stop")
+  }
+}
+
+nonisolated private func hasOpenCodeQuestionPrompt(_ content: String) -> Bool {
+  let lower = content.lowercased()
+  let hasEnterAction =
+    lower.contains("enter confirm")
+    || lower.contains("enter submit")
+    || lower.contains("enter toggle")
+  let hasQuestionNavigation =
+    content.contains("↑↓ select")
+    || content.contains("⇆ tab")
+
+  return lower.contains("esc dismiss") && hasEnterAction && hasQuestionNavigation
+}
+
+nonisolated private func detectQwen(_ content: String) -> AgentRawState {
+  let lower = content.lowercased()
+  if lower.contains("waiting for user confirmation")
+    || lower.contains("do you want to proceed?")
+    || hasConfirmationPrompt(lower)
+  {
+    return .blocked
+  }
+  if lower.contains("esc to cancel")
+    || lower.contains("ctrl+c to cancel")
+    || hasBrailleSpinner(content)
+  {
+    return .working
+  }
+  return .idle
+}
+
+// Qoder CLI (verified 1.0.48, live session): blocked dialogs are ephemeral
+// overlays that vanish once answered, so full-window matching is safe.
+// Permission menus always pair "Allow once" with "Reject and type something"
+// (the second row varies by tool: "Allow for this session" for edits,
+// "Always allow \"<cmd>\" for future sessions" for exec/MCP). Ask-user
+// questions render an "Asking User" header with a fixed "Type Something"
+// row; the plan-ready dialog pairs "Yes, start executing" with "Reject
+// plan". An active turn shows a braille spinner footer ending in
+// "(esc to cancel, <elapsed>)". Multi-token matches only — single labels
+// like "Allow once" or "No" can appear in transcript text.
+nonisolated private func detectQoder(_ content: String) -> AgentRawState {
+  let lower = content.lowercased()
+  if hasQoderPermissionMenu(lower) || hasQoderQuestionPrompt(lower) || hasQoderPlanReadyPrompt(lower) {
+    return .blocked
+  }
+  if hasQoderWorkingFooter(content) {
+    return .working
+  }
+  return .idle
+}
+
+nonisolated private func hasQoderPermissionMenu(_ lower: String) -> Bool {
+  lower.contains("allow once") && lower.contains("reject and type something")
+}
+
+nonisolated private func hasQoderQuestionPrompt(_ lower: String) -> Bool {
+  lower.contains("asking user") && lower.contains("type something")
+}
+
+nonisolated private func hasQoderPlanReadyPrompt(_ lower: String) -> Bool {
+  lower.contains("yes, start executing") && lower.contains("reject plan")
+}
+
+nonisolated private func hasQoderWorkingFooter(_ content: String) -> Bool {
+  content.split(separator: "\n", omittingEmptySubsequences: false).contains { line in
+    let trimmed = line.trimmingCharacters(in: .whitespaces)
+    guard let first = trimmed.unicodeScalars.first else { return false }
+    return (0x2800...0x28FF).contains(Int(first.value))
+      && trimmed.lowercased().contains("(esc to cancel,")
+  }
+}
+
+// Grok Build (verified 0.2.101): cancel mid-turn is Ctrl+C (Esc is a no-op).
+// Approval dialogs pair numbered yes-rows ("Yes, proceed", "Yes, allow all
+// edits during this session") with a reject row ("No, reject (type to add
+// feedback)") above a "Ctrl+o:always-approve" footer; ask-user dialogs render
+// "Waiting on answers for …" with a "Type your answer here" row. Working
+// turns show a braille spinner line ("⠧ Thinking… 0.2s"). Multi-token matches
+// only — single words like "approve" or "loading" appear in transcript text.
+nonisolated private func detectGrok(_ content: String) -> AgentRawState {
+  if hasGrokPermissionPrompt(content) || hasGrokQuestionPrompt(content) {
+    return .blocked
+  }
+  if hasGrokWorkingSignal(content) {
+    return .working
+  }
+  return .idle
+}
+
+nonisolated private func hasGrokPermissionPrompt(_ content: String) -> Bool {
+  let lower = content.lowercased()
+  // Tool approval dialog (verified on-screen, 0.2.101): a yes-row and a
+  // reject-row are always rendered together. Requiring the pair keeps
+  // transcript prose containing one of the phrases from matching.
+  let hasApprovalYesRow =
+    lower.contains("yes, proceed")
+    || lower.contains("yes, allow")
+    || lower.contains("yes, always allow")
+    || lower.contains("(always-approve mode)")
+  let hasApprovalNoRow =
+    lower.contains("no, reject")
+    || lower.contains("no, and tell grok")
+  if hasApprovalYesRow && hasApprovalNoRow {
+    return true
+  }
+  // Footer rendered only while an approval dialog is pending.
+  if lower.contains("ctrl+o:always-approve") {
+    return true
+  }
+  let hasAllowOnce = lower.contains("allow once")
+  let hasAlwaysAllow =
+    lower.contains("always allow this command")
+    || lower.contains("always allow on all sessions")
+    || lower.contains("always allow this exact command")
+  let hasReject = lower.contains("reject")
+  if hasAllowOnce && (hasAlwaysAllow || hasReject) {
+    return true
+  }
+  if hasAlwaysAllow && hasReject {
+    return true
+  }
+  if lower.contains("yes, and always allow this exact command")
+    || lower.contains("yes, allow all edits")
+  {
+    return true
+  }
+  return false
+}
+
+nonisolated private func hasGrokQuestionPrompt(_ content: String) -> Bool {
+  let lower = content.lowercased()
+  // Ask-user dialog (verified on-screen, 0.2.101): "◆ Waiting on answers for
+  // <question>" header plus a free-form "z (○) Type your answer here" row.
+  return lower.contains("waiting on answers for")
+    || lower.contains("type your answer here")
+    || lower.contains("pending: question")
+    || lower.contains("pending: other (type your own answer")
+    || (lower.contains("awaiting your input")
+      && (lower.contains("?") || lower.contains("select") || lower.contains("enter")))
+}
+
+nonisolated private func hasGrokWorkingSignal(_ content: String) -> Bool {
+  let lower = content.lowercased()
+  if lower.contains("tool calls in flight")
+    || lower.contains("working tools")
+    || lower.contains("still running:")
+  {
+    return true
+  }
+  // Status flag rendered while a turn is in progress (distinct from the
+  // idle "Awaiting input" / "Awaiting your input" flags).
+  if content.split(separator: "\n", omittingEmptySubsequences: false).contains(where: { line in
+    let trimmed = line.trimmingCharacters(in: .whitespaces)
+    return trimmed == "Loading" || trimmed.hasPrefix("Loading…") || trimmed.hasPrefix("Loading...")
+  }) {
+    return true
+  }
+  if hasBrailleSpinner(content) || hasSpinnerActivity(content) {
+    return true
+  }
+  return false
+}
+
+nonisolated private func hasBrailleSpinner(_ content: String) -> Bool {
+  content.split(separator: "\n", omittingEmptySubsequences: false).contains { line in
+    let trimmed = line.trimmingCharacters(in: .whitespaces)
+    guard let first = trimmed.unicodeScalars.first else { return false }
+    return (0x2800...0x28FF).contains(Int(first.value))
+      && trimmed.contains(where: \.isLetter)
+  }
+}
+
+// Antigravity CLI (`agy`, verified live on 1.3.2): the live region is the
+// composer — a full-width `─` border, a column-0 `>` prompt row (wrapped input
+// continues on indented rows), and a full-width `─` bottom border — and the
+// built-in status row renders directly below it: `esc to cancel` /
+// `esc to interrupt` while a turn runs, `? for shortcuts` when idle, padded away
+// from a right-aligned model label (`Gemini 3.8 Flash · high`,
+// `Claude Sonnet 4.6 (Thinking)`, or nothing until the label resolves). The
+// `stack_with_default` setting renders a user's status script verbatim below
+// that row, so nothing below the status row is evidence. A typed draft hides
+// the signature (the status row keeps only the model label), which reads
+// unknown and retains the prior state. Permission, ask-user,
+// and workspace-trust dialogs replace the composer with option rows (`> ` marks
+// the selection) above a `↑/↓ Navigate …` hint; a permission dialog keeps
+// `esc to cancel`, so the dialog read runs first and is never vetoed by what
+// renders below the hint. Full width is the longest
+// `─`-only column-0 row on screen: the echoed prompt's rule is narrower, agent
+// responses render indented, and a stacked script would have to draw a
+// terminal-wide `─`/`>`/`─` box of its own to forge a composer (documented
+// residual; it fails toward `.unknown`). A screen with neither a live dialog
+// nor a composer followed by a status row is `.unknown`, never affirmative
+// idle — screen heuristics are this runtime's only evidence channel.
+nonisolated private func detectAntigravity(_ content: String) -> AgentRawState {
+  // Trimmed `text` carries the signatures; `raw` keeps the column so typed or
+  // wrapped input (always indented inside the box) cannot pose as chrome.
+  let rows = content.split(separator: "\n", omittingEmptySubsequences: false)
+    .map { (raw: String($0), text: $0.trimmingCharacters(in: .whitespaces)) }
+    .filter { !$0.text.isEmpty }
+  let lines = rows.map(\.text)
+  let isColumnZero = { (index: Int) -> Bool in !rows[index].raw.hasPrefix(" ") }
+  let isRule = { (index: Int) -> Bool in isColumnZero(index) && lines[index].allSatisfy { $0 == "─" } }
+  let fullWidth = rows.indices.filter(isRule).map { lines[$0].count }.max() ?? 0
+  let isBorder = { (index: Int) -> Bool in isRule(index) && lines[index].count == fullWidth }
+  let isPrompt = { (index: Int) -> Bool in
+    isColumnZero(index) && (lines[index] == ">" || lines[index].hasPrefix("> "))
+  }
+
+  // Composer boxes in screen order. A bottom border may double as the next
+  // box's top border, so the scan resumes on it.
+  var composers: [(top: Int, bottom: Int)] = []
+  var index = rows.startIndex
+  while index < rows.endIndex {
+    guard isBorder(index), index + 1 < rows.endIndex, isPrompt(index + 1) else {
+      index += 1
+      continue
+    }
+    var bottom = index + 2
+    while bottom < rows.endIndex, !isColumnZero(bottom) {
+      bottom += 1
+    }
+    guard bottom < rows.endIndex, isBorder(bottom) else {
+      index += 1
+      continue
+    }
+    composers.append((top: index, bottom: bottom))
+    index = bottom
+  }
+
+  // The status row is the signature alone or the signature padded (two or more
+  // spaces) away from the model label. A custom row that continues the
+  // signature with a single space (`? for shortcuts custom help`) is not one.
+  let statusState = { (index: Int) -> AgentRawState? in
+    guard index < lines.endIndex, isColumnZero(index) else { return nil }
+    let signatures: [(String, AgentRawState)] = [
+      ("esc to cancel", .working), ("esc to interrupt", .working), ("? for shortcuts", .idle),
+    ]
+    return signatures.first { lines[index] == $0.0 || lines[index].hasPrefix($0.0 + "  ") }?.1
+  }
+
+  // Dialog chrome is terminal. A `↑/↓ Navigate` hint with a column-0 `> `
+  // selection within eight rows above it (long permission menus) is Blocked,
+  // whatever follows: agent responses render indented, so column-0 chrome is
+  // either the live dialog or the user's own echoed text, and a quoted dialog
+  // that reads Blocked until it scrolls off costs a delay where a vetoed live
+  // dialog would cost a dispatch into a modal prompt. A bare hint — selection
+  // cropped, or residue — denies the composer evidence below it instead.
+  let isHint = { (line: String) -> Bool in
+    line.hasPrefix("↑/↓ Navigate") || line.hasPrefix("↑↓ Navigate")
+  }
+  if let hint = lines.lastIndex(where: isHint) {
+    // The slash-command autocomplete popup (`> /` draft, option rows, the same
+    // hint shape) renders below a live composer box and rewrites the status
+    // row to `esc to cancel` whatever the turn state, so it is unknown: the
+    // state machine keeps the state from before the user started typing.
+    // Dialogs replace the composer, so no box sits above their hint.
+    if let composer = composers.last, composer.bottom < hint {
+      return .unknown
+    }
+    let selected = rows.indices[..<hint].suffix(8).contains { isColumnZero($0) && lines[$0].hasPrefix("> ") }
+    return selected ? .blocked : .unknown
+  }
+  // Option shape alone (a column-0 `> ` row over an indented sibling) is not
+  // dialog evidence: a slash command echoes exactly that way with no `─` rule
+  // above it, an answered question echoes its choice the same way, and so
+  // does any echoed prompt whose rule scrolled off the top of the screen.
+  // Every live dialog carries the hint, so a dialog with unrecognized hint
+  // copy falls through to the composer read and fails toward unknown.
+
+  // The last composer is the live one; a redraw caught without its status row,
+  // or a screen without a composer at all, is unknown rather than idle.
+  guard let composer = composers.last else { return .unknown }
+  return statusState(composer.bottom + 1) ?? .unknown
+}

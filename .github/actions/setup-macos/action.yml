@@ -1,11 +1,12 @@
 name: Setup macOS build deps
-description: Install + cache mise tools and GhosttyKit build outputs
+description: Install mise tools and restore the build caches. Run save-macos-caches at the end of the job to save them.
 
 runs:
   using: composite
   steps:
     - name: Mise cache
-      uses: actions/cache@v4
+      id: mise_cache
+      uses: actions/cache/restore@v4
       with:
         path: |
           ~/.local/share/mise
@@ -17,6 +18,22 @@ runs:
       shell: bash
     - run: mise install
       shell: bash
+    # swift-format ships inside the Xcode toolchain, not in a standard bin directory, and the
+    # Makefile calls it unqualified. Taking it from the selected Xcode keeps CI on the same
+    # swift-format as local builds instead of pinning a second copy. Link only swift-format:
+    # adding the toolchain bin directory would also put its swift and clang ahead of the
+    # /usr/bin shims for every later step.
+    - name: Put swift-format on PATH
+      shell: bash
+      run: |
+        set -euo pipefail
+        SWIFT_FORMAT="$(xcrun --find swift-format)"
+        SWIFT_FORMAT_VERSION="$("$SWIFT_FORMAT" --version)"
+        bin_dir="$RUNNER_TEMP/swift-format-bin"
+        mkdir -p "$bin_dir"
+        ln -sf "$SWIFT_FORMAT" "$bin_dir/swift-format"
+        echo "$bin_dir" >> "$GITHUB_PATH"
+        echo "swift-format $SWIFT_FORMAT_VERSION at $SWIFT_FORMAT"
 
     - name: Xcode cache identity
       shell: bash
@@ -31,13 +48,16 @@ runs:
         echo "Xcode cache identity: $XCODE_CACHE_ID"
 
     - name: CLI SwiftPM build cache
-      uses: actions/cache@v4
+      id: cli_cache
+      uses: actions/cache/restore@v4
       with:
-        path: .build
-        key: ${{ runner.os }}-${{ runner.arch }}-cli-spm-v2-${{ env.XCODE_CACHE_ID }}-${{ hashFiles('Package.swift', 'Package.resolved', 'supacode/CLIService/Shared/Package.swift', 'Makefile', 'supacode.xcodeproj/project.pbxproj', '.github/actions/setup-macos/action.yml', '.github/workflows/test.yml', 'scripts/ci-source-mtimes.py') }}-${{ hashFiles('ProwlCLI/**/*.swift', 'ProwlCLITests/**', 'ProwlCLIContracts/**', 'supacode/CLIService/Shared/**/*.swift') }}
+        path: |
+          CLI/.build
+          Mirror/Relay/.build
+        key: ${{ runner.os }}-${{ runner.arch }}-cli-spm-v3-${{ env.XCODE_CACHE_ID }}-${{ hashFiles('CLI/Package.swift', 'CLI/Package.resolved', 'Shared/Package.swift', 'Mirror/Relay/Package.swift', 'Makefile', 'App/Config/Version.xcconfig', '.github/actions/setup-macos/action.yml', '.github/workflows/test.yml', 'scripts/ci-source-mtimes.py') }}-${{ hashFiles('CLI/Sources/**', 'CLI/Tests/**', 'Shared/Sources/**/*.swift', 'Mirror/Relay/Sources/**/*.swift', 'Mirror/Relay/Tests/**/*.swift') }}
         restore-keys: |
-          ${{ runner.os }}-${{ runner.arch }}-cli-spm-v2-${{ env.XCODE_CACHE_ID }}-${{ hashFiles('Package.swift', 'Package.resolved', 'supacode/CLIService/Shared/Package.swift', 'Makefile', 'supacode.xcodeproj/project.pbxproj', '.github/actions/setup-macos/action.yml', '.github/workflows/test.yml', 'scripts/ci-source-mtimes.py') }}-
-          ${{ runner.os }}-${{ runner.arch }}-cli-spm-v2-${{ env.XCODE_CACHE_ID }}-
+          ${{ runner.os }}-${{ runner.arch }}-cli-spm-v3-${{ env.XCODE_CACHE_ID }}-${{ hashFiles('CLI/Package.swift', 'CLI/Package.resolved', 'Shared/Package.swift', 'Mirror/Relay/Package.swift', 'Makefile', 'App/Config/Version.xcconfig', '.github/actions/setup-macos/action.yml', '.github/workflows/test.yml', 'scripts/ci-source-mtimes.py') }}-
+          ${{ runner.os }}-${{ runner.arch }}-cli-spm-v3-${{ env.XCODE_CACHE_ID }}-
 
     - name: Restore unchanged CLI source times
       shell: bash
@@ -51,15 +71,15 @@ runs:
         printf '%s\n' "GHOSTTY_SHA=$GHOSTTY_SHA" >> "$GITHUB_ENV"
     - name: Ghostty cache
       id: ghostty_cache
-      uses: actions/cache@v4
+      uses: actions/cache/restore@v4
       with:
         path: |
-          Frameworks/GhosttyKit.xcframework
-          Resources/ghostty
-          Resources/terminfo
+          App/Frameworks/GhosttyKit.xcframework
+          App/Resources/ghostty
+          App/Resources/terminfo
           .ghostty_hash
           .ghostty_build_stamp
-        key: ${{ runner.os }}-${{ runner.arch }}-ghostty-v1-${{ env.GHOSTTY_SHA }}
+        key: ${{ runner.os }}-${{ runner.arch }}-ghostty-v2-${{ env.GHOSTTY_SHA }}
     - name: Ensure ghostty
       if: steps.ghostty_cache.outputs.cache-hit != 'true'
       shell: bash
@@ -74,43 +94,69 @@ runs:
         touch .ghostty_build_stamp
 
     - name: SPM cache
-      uses: actions/cache@v4
+      id: spm_cache
+      uses: actions/cache/restore@v4
       with:
-        path: ~/Library/Caches/supacode-spm-cache/SourcePackages
-        key: ${{ runner.os }}-${{ runner.arch }}-spm-v0-${{ hashFiles('supacode.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+        path: ~/Library/Caches/prowl-spm-cache/SourcePackages
+        key: ${{ runner.os }}-${{ runner.arch }}-spm-v1-${{ hashFiles('.package.resolved') }}
         restore-keys: |
-          ${{ runner.os }}-${{ runner.arch }}-spm-v0-
-
-    - name: Xcode compilation cache
-      uses: actions/cache@v4
-      with:
-        path: ~/Library/Developer/Xcode/DerivedData/CompilationCache.noindex
-        # GitHub cache entries are immutable. A source-state suffix guarantees that a
-        # successful changed build saves newly compiled objects; restore-keys select the
-        # newest compatible CAS. Never restore across Xcode builds because compiler cache
-        # keys and storage formats are toolchain-specific.
-        key: ${{ runner.os }}-${{ runner.arch }}-xcode-compilation-cache-v2-${{ env.XCODE_CACHE_ID }}-${{ hashFiles('supacode.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'supacode.xcodeproj/project.pbxproj', 'supacode.xcodeproj/xcshareddata/xcschemes/**', 'Makefile', '.github/actions/setup-macos/action.yml', '.github/workflows/test.yml') }}-${{ hashFiles('supacode/**/*.swift', 'supacodeTests/**/*.swift') }}
-        restore-keys: |
-          ${{ runner.os }}-${{ runner.arch }}-xcode-compilation-cache-v2-${{ env.XCODE_CACHE_ID }}-${{ hashFiles('supacode.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'supacode.xcodeproj/project.pbxproj', 'supacode.xcodeproj/xcshareddata/xcschemes/**', 'Makefile', '.github/actions/setup-macos/action.yml', '.github/workflows/test.yml') }}-
-          ${{ runner.os }}-${{ runner.arch }}-xcode-compilation-cache-v2-${{ env.XCODE_CACHE_ID }}-
+          ${{ runner.os }}-${{ runner.arch }}-spm-v1-
 
     - name: App incremental cache identity
       shell: bash
       run: |
         set -euo pipefail
         # A changed file roster starts a fresh build to exclude stale source/resource outputs.
-        APP_INPUT_PATHS_ID="$(git ls-files -z -- supacode supacodeTests Resources docs skills | shasum -a 256 | cut -d ' ' -f 1)"
+        APP_INPUT_PATHS_ID="$(git ls-files -z -- App Shared Mirror/Shared Mirror/Relay/Sources docs skills ThirdParty/git-wt | shasum -a 256 | cut -d ' ' -f 1)"
         APP_WORKSPACE_ID="$(pwd -P | shasum -a 256 | cut -d ' ' -f 1)"
         printf '%s\n' "APP_INPUT_PATHS_ID=$APP_INPUT_PATHS_ID" "APP_WORKSPACE_ID=$APP_WORKSPACE_ID" >> "$GITHUB_ENV"
     - name: App incremental build cache
-      uses: actions/cache@v4
+      id: app_cache
+      uses: actions/cache/restore@v4
       with:
         path: ${{ env.PROWL_DERIVED_DATA_PATH }}
         # Incremental state needs a stricter boundary than the content-addressed cache.
         # Reuse across source edits, but not changed paths, build settings or toolchains.
-        key: ${{ runner.os }}-${{ runner.arch }}-app-incremental-v1-${{ env.XCODE_CACHE_ID }}-${{ env.APP_WORKSPACE_ID }}-${{ env.GHOSTTY_SHA }}-${{ env.APP_INPUT_PATHS_ID }}-${{ hashFiles('Package.swift', 'Package.resolved', 'supacode/CLIService/Shared/Package.swift', 'supacode.xcodeproj/**', 'Makefile', '.github/actions/setup-macos/action.yml', '.github/workflows/test.yml', 'scripts/ci-source-mtimes.py') }}-${{ hashFiles('supacode/**/*.swift', 'supacodeTests/**/*.swift') }}
+        key: ${{ runner.os }}-${{ runner.arch }}-app-incremental-v2-${{ env.XCODE_CACHE_ID }}-${{ env.APP_WORKSPACE_ID }}-${{ env.GHOSTTY_SHA }}-${{ env.APP_INPUT_PATHS_ID }}-${{ hashFiles('CLI/Package.swift', 'CLI/Package.resolved', 'Shared/Package.swift', 'Mirror/Relay/Package.swift', '.package.resolved', 'Tuist.swift', 'Workspace.swift', 'App/Project.swift', 'App/Config/**', 'mise.toml', 'Makefile', '.github/actions/setup-macos/action.yml', '.github/workflows/test.yml', 'scripts/ci-source-mtimes.py') }}-${{ hashFiles('App/**/*.swift', 'Shared/Sources/**/*.swift', 'Mirror/Shared/*.swift', 'Mirror/Relay/Sources/**/*.swift') }}
         restore-keys: |
-          ${{ runner.os }}-${{ runner.arch }}-app-incremental-v1-${{ env.XCODE_CACHE_ID }}-${{ env.APP_WORKSPACE_ID }}-${{ env.GHOSTTY_SHA }}-${{ env.APP_INPUT_PATHS_ID }}-${{ hashFiles('Package.swift', 'Package.resolved', 'supacode/CLIService/Shared/Package.swift', 'supacode.xcodeproj/**', 'Makefile', '.github/actions/setup-macos/action.yml', '.github/workflows/test.yml', 'scripts/ci-source-mtimes.py') }}-
+          ${{ runner.os }}-${{ runner.arch }}-app-incremental-v2-${{ env.XCODE_CACHE_ID }}-${{ env.APP_WORKSPACE_ID }}-${{ env.GHOSTTY_SHA }}-${{ env.APP_INPUT_PATHS_ID }}-${{ hashFiles('CLI/Package.swift', 'CLI/Package.resolved', 'Shared/Package.swift', 'Mirror/Relay/Package.swift', '.package.resolved', 'Tuist.swift', 'Workspace.swift', 'App/Project.swift', 'App/Config/**', 'mise.toml', 'Makefile', '.github/actions/setup-macos/action.yml', '.github/workflows/test.yml', 'scripts/ci-source-mtimes.py') }}-
+    # Xcode keeps the compilation cache (CAS) in the DerivedData folder, so the App incremental
+    # cache carries it. When no compatible incremental state exists (changed file roster or build
+    # configuration), keep only the CAS of the newest App build for this Xcode. The build is then
+    # clean, but it replays compiler outputs from the content-addressed cache.
+    - name: Compilation cache of an earlier App build
+      id: app_cas
+      if: steps.app_cache.outputs.cache-matched-key == ''
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ env.PROWL_DERIVED_DATA_PATH }}
+        key: ${{ runner.os }}-${{ runner.arch }}-app-incremental-v2-${{ env.XCODE_CACHE_ID }}-${{ env.APP_WORKSPACE_ID }}-
+        restore-keys: |
+          ${{ runner.os }}-${{ runner.arch }}-app-incremental-v2-${{ env.XCODE_CACHE_ID }}-${{ env.APP_WORKSPACE_ID }}-
+    - name: Keep only the compilation cache
+      if: steps.app_cas.outputs.cache-matched-key != ''
+      shell: bash
+      run: |
+        set -euo pipefail
+        find "$PROWL_DERIVED_DATA_PATH" -mindepth 1 -maxdepth 1 ! -name CompilationCache.noindex -exec rm -rf {} +
+        du -sh "$PROWL_DERIVED_DATA_PATH/CompilationCache.noindex" 2>/dev/null || echo "No compilation cache in the restored state"
     - name: Restore unchanged App source times
       shell: bash
       run: python3 scripts/ci-source-mtimes.py restore --scope app --manifest "$PROWL_DERIVED_DATA_PATH/source-times.json"
+
+    - name: Cache keys for save-macos-caches
+      shell: bash
+      run: |
+        set -euo pipefail
+        {
+          echo "PROWL_MISE_CACHE_KEY=${{ steps.mise_cache.outputs.cache-primary-key }}"
+          echo "PROWL_MISE_CACHE_HIT=${{ steps.mise_cache.outputs.cache-hit }}"
+          echo "PROWL_CLI_CACHE_KEY=${{ steps.cli_cache.outputs.cache-primary-key }}"
+          echo "PROWL_CLI_CACHE_HIT=${{ steps.cli_cache.outputs.cache-hit }}"
+          echo "PROWL_GHOSTTY_CACHE_KEY=${{ steps.ghostty_cache.outputs.cache-primary-key }}"
+          echo "PROWL_GHOSTTY_CACHE_HIT=${{ steps.ghostty_cache.outputs.cache-hit }}"
+          echo "PROWL_SPM_CACHE_KEY=${{ steps.spm_cache.outputs.cache-primary-key }}"
+          echo "PROWL_SPM_CACHE_HIT=${{ steps.spm_cache.outputs.cache-hit }}"
+          echo "PROWL_APP_CACHE_KEY=${{ steps.app_cache.outputs.cache-primary-key }}"
+          echo "PROWL_APP_CACHE_HIT=${{ steps.app_cache.outputs.cache-hit }}"
+        } >> "$GITHUB_ENV"

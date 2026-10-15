@@ -113,6 +113,9 @@ active tab); no book reordering on the shelf; no spines for never-opened worktre
 
 ## Amendments
 
+- Updated 2026-10-11: repeatable book-switch measurements and a spine animation
+  boundary — see [004-book-switch-performance.md](004-book-switch-performance.md).
+
 - Updated 2026-04-29: book-switch jank investigation and retained performance fixes
   (#246) — see [002-book-switch-jank.md](002-book-switch-jank.md) and the verbatim trace
   record [jank-investigation.md](jank-investigation.md)

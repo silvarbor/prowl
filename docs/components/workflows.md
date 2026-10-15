@@ -16,6 +16,10 @@
 
 **Related:** [cli](cli.md) · [agent-profiles](agent-profiles.md) · [command-palette](command-palette.md) · [active-agents](active-agents.md) · [settings](settings.md) · [notifications](notifications.md)
 
+Devin Profiles support launch roles and explicit delivery through the same workflow
+protocol. Use runtime token `devin` when a role specifically requires Devin.
+Antigravity Profiles work the same way under runtime token `antigravity`.
+
 ## What it is
 
 A workflow bundle scripts several live agents: who takes part and what happens in
@@ -27,7 +31,15 @@ reviewer reports findings with a verdict, and the two loop until the verdict is
 `clean` or the round cap is hit.
 
 A `.pwlworkflow` directory contains `workflow.yaml` with `schema: prowl.workflow/v1`,
-and optional local script actions and assets. Workflow definitions are loaded from bundle directories. Roles have a `source`:
+and optional local script actions and assets. Workflow definitions are loaded from bundle directories.
+
+Prowl registers `.pwlworkflow` as a macOS document package (`com.onevcat.prowl.workflow`).
+Finder shows a bundle as one item with a Prowl workflow icon; use **Show Package
+Contents** to browse its files. A bundle is still an ordinary directory for the CLI,
+editors, and Git. Prowl does not open a bundle from Finder: a double-click reports
+that no application is set to open it. Open or run workflows from Prowl.
+
+Roles have a `source`:
 
 | `source` | Meaning | How it is chosen |
 |---|---|---|
@@ -304,6 +316,14 @@ Agents retrieve assigned prompts and explicit input resources with
 persistence; deliver text or JSON through `prowl workflow deliver -` on stdin. Run
 paths are temporary artifact locations, not durable downstream references.
 
+A typed task line puts the step's `PROWL_WORKFLOW_TOKEN=<token>` in front of both the
+`read` and the `deliver` command. When Prowl can place the calling process in a pane, the
+pane identifies the task and the token only correlates it. When it cannot — for example, a
+command that Codex's shared daemon runs and Prowl cannot map to a pane (see
+[CLI](cli.md)) — the token of the waiting step identifies the task instead, so `read` and
+`deliver` still work. A launched agent gets the token in its environment. Skip, Cancel, and
+Relaunch revoke the token.
+
 ## Settings → Agents → Workflows
 
 The global page is a compact index of **Built-in** and **Your Workflows**
@@ -325,7 +345,7 @@ The detail page owns these controls and explanations:
 | **Roles** | every `current`, `pick`, and `launch` role with a plain-language behavior summary. Only a `launch` role has a **Preferred Agent Profile** menu; **Choose Automatically** forgets the preference and lets Prowl resolve a qualifying profile at start. Unqualified profiles remain visible with the reason but cannot be selected. **Manage Agent Profiles…** appears once per page. |
 | **Run Setup** | **Follow Workflow**, **Always Review Before Running**, or **Run Directly When Possible**. The last choice starts immediately only when profiles, required role choices, inputs, and validation are already resolved; otherwise the review sheet still opens. |
 | **Validation** | every diagnostic as message, source location, and stable code. Saving the YAML revalidates automatically; there is no separate Validate button. |
-| **Source File** | **Open Workflow** uses the default YAML app; the folder button reveals it in Finder. **Delete Workflow…** asks for confirmation, then moves a personal or repository workflow to Trash and returns to the list. Failed deletions keep the detail open with an error. Built-ins are read-only and cannot be deleted. YAML remains the source of truth—Settings does not embed an editor. |
+| **Source File** | **Open Workflow** opens `workflow.yaml` in the default YAML app; the folder button selects the bundle in Finder, where **Show Package Contents** exposes its files. **Delete Workflow…** asks for confirmation, then moves a personal or repository workflow to Trash and returns to the list. Failed deletions keep the detail open with an error. Built-ins are read-only and cannot be deleted. YAML remains the source of truth—Settings does not embed an editor. |
 
 Starting from Settings keeps the review panel in the Settings window. Cancelling
 returns to the same detail without bringing the main window or terminal forward.

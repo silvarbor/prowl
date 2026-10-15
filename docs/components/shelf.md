@@ -17,6 +17,9 @@ small colored marker.
 Books near the open one are brighter; distant ones fade — so you always know where
 you are in the stack.
 
+Book changes keep a short sliding motion. Spine colors and bottom controls update
+immediately; hover feedback still animates.
+
 **Toggle Shelf:** `⌘⇧↩` (`toggle_shelf`). Requires at least one available worktree
 or plain folder. A plain folder can open Shelf even if no Git repository is loaded;
 entering Shelf opens its terminal if necessary.

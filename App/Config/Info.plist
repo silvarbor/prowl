@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>A program running within Prowl would like to use AppleScript.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>A program running within Prowl would like to use Bluetooth.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>A program running within Prowl would like to access your Calendar.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>A program running within Prowl would like to use the camera.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>A program running within Prowl would like to access your Contacts.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>A program running within Prowl would like to access the local network.</string>
+	<key>NSLocationUsageDescription</key>
+	<string>A program running within Prowl would like to access your location information.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>A program running within Prowl would like to use your microphone.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>A program running within Prowl would like to access motion data.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>A program running within Prowl would like to access your Photo Library.</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>A program running within Prowl would like to access your reminders.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>A program running within Prowl would like to use speech recognition.</string>
+	<key>NSSystemAdministrationUsageDescription</key>
+	<string>A program running within Prowl requires elevated privileges.</string>
+	<key>SUFeedURL</key>
+	<string>https://github.com/onevcat/Prowl/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>S5MT6SPxcuaERBJU7MZ9tSZ+RsEj2PqB7i9DowY3OQ4=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<false/>
+	<key>SUAutomaticallyUpdate</key>
+	<false/>
+	<key>ProwlSentryDSN</key>
+	<string>$(PROWL_SENTRY_DSN)</string>
+	<key>ProwlPostHogAPIKey</key>
+	<string>$(PROWL_POSTHOG_API_KEY)</string>
+	<key>ProwlPostHogHost</key>
+	<string>$(PROWL_POSTHOG_HOST)</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Prowl Workflow</string>
+			<key>CFBundleTypeRole</key>
+			<string>None</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSTypeIsPackage</key>
+			<true/>
+			<key>CFBundleTypeIconSystemGenerated</key>
+			<true/>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.onevcat.prowl.workflow</string>
+			</array>
+		</dict>
+	</array>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.onevcat.prowl.workflow</string>
+			<key>UTTypeDescription</key>
+			<string>Prowl Workflow</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>com.apple.package</string>
+			</array>
+			<key>UTTypeIcons</key>
+			<dict>
+				<key>UTTypeIconText</key>
+				<string>Workflow</string>
+			</dict>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>pwlworkflow</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.onevcat.prowl.ghosttySurfaceId</string>
+			<key>UTTypeDescription</key>
+			<string>Prowl Ghostty Surface Identifier</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

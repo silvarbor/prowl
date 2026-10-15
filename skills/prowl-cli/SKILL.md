@@ -19,7 +19,7 @@ ls "$prowl_docs/components/"   # cli.md, agent-detection.md, workflows.md, …
 
 Other `docs/components/*.md` references below live in that same folder.
 
-This skill ships inside the app: `prowl skills install prowl-cli` links it into every detected agent skill folder (`~/.claude/skills`, `~/.codex/skills`, `~/.agents/skills` — whichever parent directories exist; add `--target <claude|codex|agents>` to pick or create specific ones) so it stays current across app updates. `prowl skills list` shows per-target status; the command is local and needs no running app.
+This skill ships inside the app: `prowl skills install prowl-cli` links it into every detected agent skill folder (`~/.claude/skills`, `~/.codex/skills`, `~/.agents/skills`, `~/.config/devin/skills`, `~/.gemini/antigravity-cli/skills` — whichever parent directories exist; add `--target <claude|codex|agents|devin|antigravity>` to pick or create specific ones) so it stays current across app updates. `prowl skills list` shows per-target status; the command is local and needs no running app.
 
 ## Who You Are
 
@@ -28,12 +28,17 @@ Every Prowl pane exports its own identity to the processes inside it:
 - `PROWL_PANE_ID` — this pane's UUID, identical to `pane.id` in `prowl list --json`.
 - `PROWL_WORKTREE_PATH`, `PROWL_ROOT_PATH` — this pane's worktree directory and repository root.
 
-Use `$PROWL_PANE_ID` as your own selector and as the guard against operating on yourself; resolve your tab and worktree from it when you need them:
+Use it as your own selector (`$self` below) and as the guard against operating on yourself; resolve your tab and worktree from it when you need them. Inside Codex (`CODEX_THREAD_ID` is set) take your pane from the server instead — see the note after the guard:
 
 ```bash
-me="$(prowl list --json | jq -c --arg p "$PROWL_PANE_ID" '.data.items[] | select(.pane.id == $p)')"
+if [ -n "${CODEX_THREAD_ID:-}" ]; then
+  self="$(prowl list --json | jq -r '.data.caller.pane.id // empty')"
+else
+  self="$PROWL_PANE_ID"
+fi
+me="$(prowl list --json | jq -c --arg p "$self" '.data.items[] | select(.pane.id == $p)')"
 if [ -z "$me" ]; then
-  echo "no pane matches PROWL_PANE_ID=[$PROWL_PANE_ID] — unset, or prowl reached another Prowl instance; stop, do not guess" >&2
+  echo "no pane matches self=[$self] — unresolved, or prowl reached another Prowl instance; stop, do not guess" >&2
 else
   printf '%s\n' "$me" | jq -r '.tab.id, .worktree.id, .worktree.name, .worktree.path'
 fi
@@ -42,7 +47,7 @@ fi
 Gate every action on a target behind that lookup result (`$me`), never behind the bare variable — a stale id that points at another instance would otherwise pass — and keep the dependent commands inside the branch, because a bare predicate line does not stop an interactive shell:
 
 ```bash
-if [ -z "$me" ] || [ "$pane" = "$PROWL_PANE_ID" ]; then
+if [ -z "$me" ] || [ "$pane" = "$self" ]; then
   echo "refusing: self identity is unverified, or \$pane is me" >&2
 else
   prowl send --pane "$pane" 'git status --short' --capture --timeout 30 --json
@@ -50,6 +55,8 @@ fi
 ```
 
 The variable is inherited, not verified: it is missing after `sudo`/`ssh`/containers and can name the wrong pane inside a tmux/screen session attached from elsewhere. A set value that matches no `pane.id` usually means `prowl` is talking to a different Prowl instance than the one hosting your pane (two apps running; see `PROWL_CLI_SOCKET` under Pitfalls). A match only proves that pane exists, not that you are running in it: trust the value only when your process ancestry reaches the pane's shell (no tmux/screen server or detached wrapper in between); under tmux/screen or a detached wrapper, identify your pane by other means — `prowl agents --json` for the pane hosting your own agent session, or a unique `pane.cwd` — and pass it explicitly. If it is unset or matches nothing, stop rather than guess: `pane.cwd` only narrows the candidates — several panes usually share one cwd — and may stand in for you only when the match is unique. Never assume the focused pane is you — `open` and `focus` move focus, and the user may be looking anywhere.
+
+Inside Codex, do not trust `PROWL_PANE_ID`. Codex 0.157+ runs the commands of a `codex` typed by hand in a shared background daemon that keeps the environment of whichever terminal last started it, so `PROWL_PANE_ID`, `PROWL_WORKTREE_PATH`, and `PROWL_ROOT_PATH` there can name another live pane or a closed one. `prowl list --json` reports `.data.caller` — the pane Prowl resolved from your `CODEX_THREAD_ID` — and omits it when your pane cannot be mapped yet (for example before your first message in that Codex session): then stop. Caller-scoped commands (`agents signal`, `agents dispatch-complete`, `workflow deliver`) resolve the same way on the server, so they need nothing from you.
 
 ## Safe Default Workflow
 
@@ -82,7 +89,7 @@ The app attributes the socket peer PID through process ancestry. `turn-ended` me
 Open a split beside yourself (or any positively identified anchor) and capture the new pane:
 
 ```bash
-pane="$(prowl create pane "$PROWL_PANE_ID" --direction right --json | jq -r '.data.target.pane.id')"
+pane="$(prowl create pane "$self" --direction right --json | jq -r '.data.target.pane.id')"
 ```
 
 Directions are `right`, `left`, `up`, `down`; the anchor must be a pane UUID or current `pN`, and `.data.anchor.pane.id` echoes it. The new pane inherits the anchor's working directory, becomes focused, and Prowl selects its worktree and tab (as `create tab` does). Without `--profile` there is no `--background`, so the split always takes focus and keystrokes a person is typing at that moment land in it — while someone is working in the app, prefer a Profile launch with `--background`. Run input afterwards with an explicit `prowl send --pane "$pane" …`.
@@ -90,7 +97,7 @@ Directions are `right`, `left`, `up`, `down`; the anchor must be a pane UUID or 
 Launch a reviewer beside yourself after the identity guard in **Who You Are** has verified `$me`:
 
 ```bash
-launch="$(prowl create pane "$PROWL_PANE_ID" --direction right --profile Reviewer --prompt - --json <<'EOF'
+launch="$(prowl create pane "$self" --direction right --profile Reviewer --prompt - --json <<'EOF'
 Review the current branch against its base. Report only actionable findings with file and line references.
 EOF
 )"
@@ -121,7 +128,7 @@ then hand each later round to the same pane with `agents dispatch`, which keeps 
 context and still returns an exact receipt per round.
 
 ```bash
-launch="$(prowl create pane "$PROWL_PANE_ID" --direction right --profile Reviewer --prompt - --json <<'EOF'
+launch="$(prowl create pane "$self" --direction right --profile Reviewer --prompt - --json <<'EOF'
 Round 1: review the current branch against main. Write findings to /tmp/review-1.md.
 EOF
 )"
@@ -237,6 +244,7 @@ Key fields by command:
 - `send` → `.data.input`, `.data.wait.{exit_code,duration_ms}` when waiting, `.data.capture.{text,line_count,truncated}` with `--capture`.
 - `create tab` / `open` → `.data.target.{pane,tab,worktree}`; `create pane` → `.data.anchor`, `.data.direction`, `.data.target`; Profile launches also include `.data.launch.{profile_id,profile_name,agent}`, prompted launches require `.data.dispatch.{id,state,created_at}`, and a safe managed-signal fallback may add `.data.warnings[]` with `code=managed_hook_degraded`.
 - `profiles list` → `.data.profiles[]` with `.id`, `.name`, `.enabled`, `.runtime`, `.availability.{status,reason}`.
+- `canvas show|hide|layout|fit|status` → `.data.{action,showing,card_count}` and `.data.layout` (`arrange`|`organize`|`tile`|`freeform`, absent until Canvas laid out cards). After creating several agent tabs for a person to watch, `prowl canvas layout tile --show` tiles them; Canvas keeps tiling as tabs come and go. `layout`/`fit` without `--show` fail with `CANVAS_NOT_SHOWING` while Canvas is hidden — do not switch views the person did not ask for.
 
 `detection_reason` explains the final status; `screen_reason` explains the screen classifier.
 Log decisions can suppress a retained prompt. Only treat `status: blocked` as a current
@@ -333,4 +341,4 @@ the required briefing through the workflow protocol. See `components/handoff.md`
 
 ## Command Set
 
-`list`, `agents`, `agents read`, `agents signal`, `agents dispatch`, `agents dispatch-complete`, `agents dispatch-abandon`, `agents wait`, `profiles list`, `skills list|install|uninstall|path` (local-only), `workflow list|run|status|deliver|cancel` (`workflow validate|schema` local-only), `read`, `send`, `key`, `focus`, `create tab`, `create pane`, `close`, and `open` (default). There is no CLI `quit`; close temporary tabs or panes with an explicit `close`. `tab create`, `tab close`, and `pane close` remain deprecated aliases for one release; `handoff` remains for one release as a non-executing `HANDOFF_RETIRED` stub.
+`list`, `agents`, `agents read`, `agents signal`, `agents dispatch`, `agents dispatch-complete`, `agents dispatch-abandon`, `agents wait`, `profiles list`, `skills list|install|uninstall|path` (local-only), `workflow list|run|status|deliver|cancel` (`workflow validate|schema` local-only), `read`, `send`, `key`, `focus`, `canvas show|hide|layout|fit|status`, `create tab`, `create pane`, `close`, and `open` (default). There is no CLI `quit`; close temporary tabs or panes with an explicit `close`. `tab create`, `tab close`, and `pane close` remain deprecated aliases for one release; `handoff` remains for one release as a non-executing `HANDOFF_RETIRED` stub.

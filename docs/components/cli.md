@@ -4,7 +4,7 @@
 > an agent) can list panes, read their screens, run commands and capture output,
 > send keystrokes, focus, and open/close tabs and panes programmatically.
 
-**Keywords:** prowl cli, command line, prowl list, prowl agents, prowl agents read, prowl agents signal, prowl agents dispatch, prowl agents wait, prowl profiles list, prowl skills, skills install, agent skills, prowl workflow, workflow status center, workflow run panel, workflow attention, prowl read, prowl send, prowl key, prowl focus, prowl create, prowl close, prowl open, pane id, agent, profile, automation, json, capture, socket
+**Keywords:** prowl cli, command line, prowl list, prowl agents, prowl agents read, prowl agents signal, prowl agents dispatch, prowl agents wait, prowl profiles list, prowl skills, skills install, agent skills, prowl workflow, workflow status center, workflow run panel, workflow attention, prowl read, prowl send, prowl key, prowl focus, prowl canvas, canvas layout, tile, prowl create, prowl close, prowl open, pane id, agent, profile, automation, json, capture, socket
 
 **Related:** [terminal](terminal.md) · [concepts](../concepts.md) · [active-agents](active-agents.md) · [agent-detection](agent-detection.md) · the bundled **`prowl-cli`** (`skills/prowl-cli/SKILL.md`) and **`prowl-workflow`** (`skills/prowl-workflow/SKILL.md`) skills
 
@@ -87,12 +87,18 @@ process launched inside it (agents, their tools, scripts):
 - `PROWL_WORKTREE_PATH`, `PROWL_ROOT_PATH` — the worktree directory and repository root
   (see [custom-actions](custom-actions.md)).
 
-Resolve your own tab and worktree from it:
+Resolve your own pane, tab, and worktree. Inside Codex (`CODEX_THREAD_ID` is set), take the
+pane from `.data.caller` instead of the variable (see below):
 
 ```bash
-me="$(prowl list --json | jq -c --arg p "$PROWL_PANE_ID" '.data.items[] | select(.pane.id == $p)')"
+if [ -n "${CODEX_THREAD_ID:-}" ]; then
+  self="$(prowl list --json | jq -r '.data.caller.pane.id // empty')"
+else
+  self="$PROWL_PANE_ID"
+fi
+me="$(prowl list --json | jq -c --arg p "$self" '.data.items[] | select(.pane.id == $p)')"
 if [ -z "$me" ]; then
-  echo "no pane matches PROWL_PANE_ID=[$PROWL_PANE_ID] — unset, or prowl reached another Prowl instance; stop, do not guess" >&2
+  echo "no pane matches self=[$self] — unresolved, or prowl reached another Prowl instance; stop, do not guess" >&2
 else
   printf '%s\n' "$me" | jq -r '.tab.id, .worktree.id, .worktree.name, .worktree.path'
 fi
@@ -114,6 +120,27 @@ assume the *focused* pane is you. Prowl itself never trusts the variable for
 attribution; commands that need the calling pane (`agents signal`) resolve it
 from the caller's process ancestry.
 
+**Codex's shared daemon.** Codex 0.157+ runs the commands of a `codex` typed by hand in a
+shared background process (`codex app-server --managed-daemon`). That process keeps the
+environment of whichever terminal last started it, so inside Codex `PROWL_PANE_ID`,
+`PROWL_WORKTREE_PATH`, and `PROWL_ROOT_PATH` can name another pane or one that has closed.
+Only `CODEX_THREAD_ID` is per thread. Prowl stops the process-ancestry walk at that daemon
+and instead maps `CODEX_THREAD_ID` to the pane whose Codex TUI submitted to that thread
+(or to its parent, for a subagent). To make that possible, every pane sets
+`CODEX_TUI_RECORD_SESSION=1` and a pane-owned `CODEX_TUI_SESSION_LOG_PATH`. Codex writes
+the submitted prompts there (mode 0600); Prowl deletes the file once the pane's close can no
+longer be undone. A pane whose Codex has not submitted anything yet, or whose shell
+overrides those variables, cannot be mapped, and caller-scoped commands fail with
+`SOURCE_REQUIRED`.
+Session logs larger than 64 MiB are not mapped. Restarting Codex in the pane resets its
+session log; its first indexed submit can establish the mapping again.
+Codex launched from an Agent Profile, or with `--no-daemon`, runs commands inside the pane
+and is not affected. For Codex 0.156 and later, Prowl adds `--no-daemon` to every
+interactive profile launch, also when it cannot prepare its managed notifier; it skips the
+flag only when the login shell or `codex --version` does not answer within one second.
+`prowl workflow read` and `deliver` accept the step token in place of a mapped pane (see
+[Workflows](workflows.md)).
+
 ## Commands
 
 ### `prowl list`
@@ -125,14 +152,22 @@ prowl list --json
 Each item contains:
 - `worktree`: `id`, `name`, `path`, `root_path`, `kind` (`git`|`plain`|`workspace`)
 - `tab`: `id`, `title`, `selected`
-- `pane`: `id`, `title`, `cwd`, `focused`, `agent`
+- `pane`: `id`, `title`, `cwd`, `focused`, `visible`, `agent`
 - `task`: `status` (`running` | `idle` | null)
+
+The response also carries `caller` — `{"pane": {"id"}, "worktree": {"id"}}` — the pane
+Prowl resolved for the process that ran `prowl list`, or no `caller` key when it has
+none. It is the reliable "which pane am I" inside Codex (see
+[Identity](#identity-which-pane-am-i)).
 
 `pane.agent` is the coding agent detected in that pane — a stable machine token
 (`claude`, `codex`, `gemini`, `cursor-agent`, …) or `null` when none is detected.
 It comes from the same agent detection described in
 [agent-detection](agent-detection.md) and is useful for coordinating who is who
 (for example before an agent workflow run).
+
+`pane.visible` is true when the surface intersects a visible viewport in an on-screen,
+unminimized window. It includes visible background split panes and does not require focus.
 
 These are JSON fields, so `tab.id` and `pane.id` remain UUIDs. Plain `prowl list`
 instead shows `tN` for each tab and `pN` for each pane; pass either handle back
@@ -151,11 +186,11 @@ Claude running a background **workflow**); otherwise **idle**. See the
 good for coordination but lags a screen by ~2–3 s and can flip to idle **before** a
 TUI finishes painting — confirm with `read --wait-stable`.
 
-Your own pane is `$PROWL_PANE_ID` (see [Identity](#identity-which-pane-am-i)); gate
+Your own pane is `$self` (see [Identity](#identity-which-pane-am-i)); gate
 every action on a target behind the identity lookup result `me` from that section —
 not the bare variable, which could be stale — so the check fails closed:
 ```bash
-[ -n "$me" ] && [ "$pane" != "$PROWL_PANE_ID" ] && prowl send --pane "$pane" '…' --json
+[ -n "$me" ] && [ "$pane" != "$self" ] && prowl send --pane "$pane" '…' --json
 ```
 
 ### `prowl agents`
@@ -173,11 +208,17 @@ Each agent contains:
   `working`, `done`, `idle`; `raw_state` is the lower-level detector state.
 - `detection_reason`: optional explanation of the final state decision, shared with
   `agents read`. Log evidence reports `log.openWork` or `log.turnEnded`; Claude native
-  evidence reports `native.working`, `native.blocked`, or `native.idle`; fallback
+  evidence reports `native.working`, `native.blocked`, or `native.idle`; a verified
+  OSC 7501 producer's root record reports `osc.working`, `osc.idle`, `osc.done`,
+  `osc.error`, `osc.blocked.<permission|question|auth|unspecified>`, or
+  `osc.childBlocked.<kind>` (see
+  [agent detection](agent-detection.md#program-status-osc-7501)); fallback
   decisions report `screen.*`. Screen-only decisions report the profile rule ID,
   `fallback.noRuleMatched`, or `legacy.detector`.
 - `screen_reason`: optional rule ID for the current screen classification, including
-  when log or native evidence controls the final state. Both reason fields omit screen text.
+  when log or native evidence controls the final state. While an `osc.*` decision
+  holds, the screen is not read and `screen_reason` is `screen.delegated`; `raw_state`
+  is then the last screen scan before delegation. Both reason fields omit screen text.
 - `last_changed_at`: ISO-8601 timestamp for the most recent state change.
 - `project`: display-oriented `name`, `branch`, `path` resolved from the
   agent's working directory.
@@ -207,6 +248,20 @@ Immediate, read-only semantic snapshot for a currently active **Codex** or
 **Claude Code** pane. It requires an explicit `pN` handle or UUID from `agents`;
 it never guesses from focus, accepts no worktree/tab selector, and has no wait or
 timeout mode.
+
+For a Codex TUI attached to the managed daemon, Prowl first correlates the pane's
+submitted message IDs with the daemon's rollouts and validates the root transcript.
+This reports `process_log` / `exact` without matching terminal text. A new or switched
+thread needs an indexed submit before this evidence is available. After a known
+selection change, unresolved identity suppresses text matching even if a local
+file-handle scan is incomplete, so copied history cannot select the previous thread. Otherwise the existing fallback and confidence
+requirements still apply. An embedded TUI with a complete local rollout inventory
+keeps its normal local session resolution, even when the same home has a daemon.
+A known pending selection also clears retained background identity on the first
+poll, including the session shown by `agents` and included in handoff context.
+This fence survives transient log read failures. Once the new selection binds,
+transient binding misses use the normal two-fresh-miss background grace period;
+fresh transcript reads stay unresolved until current binding evidence returns.
 
 Default text output always reports current `Status`, decision `Reason`, last
 state-change time, and a result state. A blocked snapshot includes the raw current
@@ -253,9 +308,10 @@ Optional `--session` and claimed `--origin` are limited to 256 UTF-8 bytes; `--d
 carries a short result/reason up to 32768 UTF-8 bytes. Values must be non-empty and control-free.
 
 The command accepts no target: Prowl attributes the kernel socket peer PID through process
-ancestry to a live pane. It never uses UI focus or `PROWL_PANE_ID`; external terminals,
-tmux/detached ancestry, and already-closed panes fail with `SOURCE_REQUIRED` or
-`AGENT_GONE`. Public signals report `source=cooperative_cli`, `confidence=exact`; exact
+ancestry to a live pane, or, for a command that Codex's shared daemon runs, through its
+`CODEX_THREAD_ID` (see [Identity](#identity-which-pane-am-i)). It never uses UI focus or
+`PROWL_PANE_ID`; external terminals, tmux/detached ancestry, unmapped Codex daemon
+threads, and already-closed panes fail with `SOURCE_REQUIRED` or `AGENT_GONE`. Public signals report `source=cooperative_cli`, `confidence=exact`; exact
 means explicit channel and caller-pane attribution, not verified business completion.
 Claimed origin never upgrades trust. JSON uses `prowl.cli.agents.signal.v1`.
 
@@ -439,7 +495,9 @@ directory exists:
 |---|---|---|---|
 | `claude` | `~/.claude/skills` | `<repo>/.claude/skills` | Claude Code |
 | `codex` | `~/.codex/skills` | `<repo>/.codex/skills` | Codex |
-| `agents` | `~/.agents/skills` | `<repo>/.agents/skills` | Codex, Gemini CLI, Cursor Agent, OpenCode, Copilot CLI, Kimi CLI, Droid, Amp, Qoder CLI, Pi, Oh My Pi, Grok Build |
+| `agents` | `~/.agents/skills` | `<repo>/.agents/skills` | Codex, Gemini CLI, Cursor Agent, OpenCode, Copilot CLI, Kimi CLI, Droid, Amp, Qoder CLI, Pi, Oh My Pi, Grok Build, Devin, Antigravity |
+| `devin` | `~/.config/devin/skills` | `<repo>/.devin/skills` | Devin |
+| `antigravity` | `~/.gemini/antigravity-cli/skills` | `<repo>/.agents/skills` | Antigravity |
 
 - A bare `prowl skills install` links every user-installable bundled skill into every
   detected target; repeat `--target` to pick targets explicitly (an explicit target's
@@ -678,7 +736,7 @@ extract the JSON string without adding a newline:
 ```bash
 # Run from the Prowl source checkout so the private staging path is ignored.
 repo_root="$(git rev-parse --show-toplevel)"
-test -f "$repo_root/supacode.xcodeproj/project.pbxproj"
+test -f "$repo_root/Tuist.swift"
 staging="$repo_root/.local/agent-screen-captures"
 mkdir -p "$staging"
 capture="$(prowl read --pane "$pane" --source detection --json)"
@@ -735,6 +793,29 @@ prowl focus --pane "$pane" --json
 prowl focus --worktree MyApp --json
 ```
 
+### `prowl canvas`
+Switch to Canvas, lay out its cards, and read its state — for example, after creating
+several agent tabs, tile them so all of them are visible at once:
+
+```bash
+for profile in Reviewer Tester; do prowl create tab "$wt" --profile "$profile" --json >/dev/null; done
+prowl canvas layout tile --show
+prowl canvas status --json | jq -r '.data.layout'
+```
+
+| Command | Effect |
+| --- | --- |
+| `prowl canvas show` / `hide` | Switch to Canvas / back to the normal view (no-op when already there). |
+| `prowl canvas layout <arrange\|organize\|tile> [--show]` | Apply an automatic layout and keep it: Canvas re-applies it as cards are added or closed, until a card is moved by hand. The view refits. |
+| `prowl canvas fit [--show]` | Zoom and pan so every card is visible; the layout mode is unchanged. |
+| `prowl canvas status` | Report the state only. |
+
+`layout` and `fit` act on the Canvas view: while Canvas is hidden they fail with
+`CANVAS_NOT_SHOWING` unless `--show` switches to it first. Every action returns the state
+after it ran — `.data.showing`, `.data.layout` (`arrange`, `organize`, `tile`, or `freeform`;
+absent until Canvas has laid out cards), and `.data.card_count`. See
+[canvas](canvas.md) for how the layouts behave.
+
 ### `prowl create tab`
 Create a new terminal tab (deterministic — unlike `open`). A worktree is required,
 either positionally or with `--worktree`; `--path` must remain inside it.
@@ -745,7 +826,9 @@ pane="$(prowl create tab "$wt" --json | jq -r '.data.target.pane.id')"
 
 Without `--background`, the new tab takes focus, so keystrokes a person is typing
 at that moment land in the new shell. Use `--background` to preserve the current
-selection and focus for both Shell and Agent Profile tabs.
+selection and focus for both Shell and Agent Profile tabs. While Canvas is showing,
+Prowl stays in Canvas: the new card is placed next to the focused card, takes focus,
+and is scrolled into view.
 
 Add `--profile <name|uuid>` to launch an enabled Agent Profile instead of a shell. An
 optional kickoff prompt uses the sole stdin spelling `--prompt -`:
@@ -899,6 +982,8 @@ Follow the returned self-initiated delivery instruction to submit the briefing.
 | `OUTPUT_INVALID` / `OUTPUT_TOO_LARGE` / `VERDICT_REQUIRED` | `workflow deliver`: empty body (or, for a `strict` step, missing sections / bad format / bad verdict), body above the step's size cap, or a strict step that declares verdicts got none. Non-strict issues are accepted as `delivery.state = provisional` instead. |
 | `WORKFLOW_DELIVERY_REQUIRED` | `agents dispatch-complete` ran in a pane whose pending dispatch is a workflow activation; the message carries the exact `prowl workflow deliver` command to run instead. |
 | `REQUEST_CANCELLED` | The CLI disconnected before an in-app workflow request completed; the run itself was not affected. |
+| `CANVAS_NOT_SHOWING` | `canvas layout` or `canvas fit` while Canvas is hidden; add `--show`. |
+| `CANVAS_UNAVAILABLE` | Canvas cannot open because no worktree or folder is open; open one first. |
 | `NO_ACTIVE_PANE` | No pane for focused-target; pass an explicit `--pane`. |
 | `EMPTY_INPUT` | `send` got neither argv nor stdin (or both). |
 | `INVALID_ARGUMENT` | Bad flag/combo (e.g. `--capture --no-wait`) or out-of-range value. |
@@ -908,22 +993,25 @@ Follow the returned self-initiated delivery instruction to submit the briefing.
 | `PATH_NOT_FOUND` / `PATH_NOT_DIRECTORY` / `PATH_NOT_ALLOWED` | Fix the `open`/`create tab` path, or the `skills --scope project` start point (`--path` and the current directory must lie inside a Git repository). |
 | `LAUNCH_FAILED` | App launch or socket wait failed; the message includes the last socket diagnostic when available. |
 | `TRANSPORT_FAILED` | Socket transport failed for a reason other than app availability or permission, such as `ENOTSOCK` or an invalid `PROWL_CLI_SOCKET` path. |
-| `*_FAILED` (`LIST_FAILED`, `AGENTS_FAILED`, `PROFILES_FAILED`, `SKILLS_FAILED`, `FOCUS_FAILED`, `SEND_FAILED`, `READ_FAILED`, `CREATE_FAILED`, `CLOSE_FAILED`, `TAB_FAILED`, `PANE_FAILED`, `OPEN_FAILED`, `WORKFLOW_FAILED`) | The action itself failed. |
+| `*_FAILED` (`LIST_FAILED`, `AGENTS_FAILED`, `PROFILES_FAILED`, `SKILLS_FAILED`, `FOCUS_FAILED`, `SEND_FAILED`, `READ_FAILED`, `CREATE_FAILED`, `CLOSE_FAILED`, `TAB_FAILED`, `PANE_FAILED`, `OPEN_FAILED`, `WORKFLOW_FAILED`, `CANVAS_FAILED`) | The action itself failed. |
 
 ## Safety & self-targeting
 
-- If your shell runs **inside a Prowl pane**, `$PROWL_PANE_ID` is *you*. Compare
-  every target against it so you don't `key enter` into your own session; the
-  focused pane is not a reliable stand-in (`open` and `focus` move it).
+- If your shell runs **inside a Prowl pane**, `$PROWL_PANE_ID` is *you* — except inside
+  Codex, where you are `.data.caller.pane.id` from `prowl list --json` (see
+  [Identity](#identity-which-pane-am-i)). Compare every target against it so you don't
+  `key enter` into your own session; the focused pane is not a reliable stand-in (`open`
+  and `focus` move it).
 - Close commands require explicit targets and may prompt for GUI confirmation on
   protected work; `--force` bypasses the prompt.
 
 ## A complete loop (run, read, clean up)
 
 ```bash
-me="$(prowl list --json | jq -c --arg p "$PROWL_PANE_ID" '.data.items[] | select(.pane.id == $p)')"
+# $self as resolved in "Identity: which pane am I?"
+me="$(prowl list --json | jq -c --arg p "$self" '.data.items[] | select(.pane.id == $p)')"
 pane="$(prowl create tab MyApp --json | jq -r '.data.target.pane.id')"
-if [ -z "$me" ] || [ "$pane" = "$PROWL_PANE_ID" ]; then
+if [ -z "$me" ] || [ "$pane" = "$self" ]; then
   echo "refusing: self identity is unverified, or \$pane is me" >&2
 else
   prowl send --pane "$pane" 'swift build' --capture --timeout 300 --json
@@ -936,8 +1024,8 @@ fi
 
 - Resolve a UUID `pane.id` or current text `pN` before `read`/`send`/`key`/
   `focus`/close — never trust tab titles.
-- You are `$PROWL_PANE_ID`, not "the focused pane"; look up your tab/worktree
-  from it when you need them.
+- You are `$PROWL_PANE_ID` (inside Codex: `prowl list --json` → `.data.caller.pane.id`),
+  not "the focused pane"; look up your tab/worktree from it when you need them.
 - Use `prowl agents --json` for discovery, then `prowl agents read <pN|uuid>` for
   a supported agent's status, blocker, and trustworthy result state; use `prowl list --json`
   when you need all panes, including ordinary shells.

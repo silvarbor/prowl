@@ -44,10 +44,10 @@ import sys
 
 
 ROOT = Path(__file__).resolve().parent.parent
-CATALOG = ROOT / "supacode" / "Localizable.xcstrings"
+CATALOG = ROOT / "App" / "Sources" / "Localizable.xcstrings"
 BASELINE = ROOT / "scripts" / "localization_baseline.json"
-SOURCES = "supacode"
-TARGET = "supacode"
+SOURCES = "App/Sources"
+TARGET = "Prowl"
 TABLE = "Localizable"
 EXEMPT_CATEGORIES = ("identifier", "product-name", "log", "agent-prompt", "protocol", "developer", "other")
 
@@ -226,7 +226,7 @@ def prune(catalog: dict, extracted: dict[str, set[str]]) -> list[str]:
 
 
 def build_settings_command(environment: dict[str, str]) -> list[str]:
-    command = ["xcodebuild", "-project", str(ROOT / "supacode.xcodeproj"), "-scheme", TARGET]
+    command = ["xcodebuild", "-workspace", str(ROOT / "Prowl.xcworkspace"), "-scheme", TARGET]
     command += ["-configuration", "Debug", "-showBuildSettings", "-json"]
     # `make test-app` builds into this directory when the variable is set (CI does that).
     derived_data = environment.get("PROWL_DERIVED_DATA_PATH")
