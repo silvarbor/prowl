@@ -9,12 +9,10 @@ extension CanvasView {
     switch request.command {
     case .toggleExpand:
       toggleExpandFocusedCard()
-    case .arrange:
-      arrangeCardsWithFit()
-    case .organize:
-      organizeCardsWithFit()
-    case .tile:
-      tileCardsWithFit()
+    case .layout(let kind):
+      applyLayout(kind)
+    case .fit:
+      animateFitToView()
     case .selectAll:
       selectAllCards()
     case .navigate(let direction):
@@ -31,7 +29,7 @@ extension CanvasView {
   /// was, behind a dimming scrim.
   func expandCard(_ tabID: TerminalTabID, states: [WorktreeTerminalState]) {
     guard viewportSize.width > 0, viewportSize.height > 0,
-      layoutStore.cardLayouts[tabID.rawValue.uuidString] != nil
+      layoutStore.cardLayouts[tabID.canvasCardKey] != nil
     else { return }
     focusSingleCard(tabID, states: states)
     withAnimation(expandAnimation) {
@@ -45,10 +43,11 @@ extension CanvasView {
     withAnimation(expandAnimation) {
       expandedTabID = nil
     }
+    relayoutIfDeferred()
   }
 
-  /// Drop expand state without animation — used right before a relayout
-  /// (Arrange/Organize) takes over the canvas.
+  /// Drop expand state without animation — used right before a relayout takes
+  /// over the canvas, or when the expanded card closed.
   func cancelExpandForRelayout() {
     expandedTabID = nil
   }
@@ -60,19 +59,23 @@ extension CanvasView {
     guard let request else { return }
     let tabID = CanvasFocusResolver.resolve(
       request: request,
-      candidates: collectFocusCandidates(from: states),
+      candidates: canvasCards(in: states),
       currentPrimaryTabID: selectionState.primaryTabID
     )
     guard let tabID else { return }
     focusSingleCard(tabID, states: states)
-    focusViewport(on: tabID)
+    switch request.viewport {
+    case .center:
+      focusViewport(on: tabID)
+    case .reveal:
+      revealCard(tabID, allowsZoomOut: true)
+    }
     onFocusRequestConsumed(request.id)
   }
 
   func focusViewport(on tabID: TerminalTabID) {
     guard viewportSize.width > 0, viewportSize.height > 0 else { return }
-    let cardKey = tabID.rawValue.uuidString
-    guard let layout = layoutStore.cardLayouts[cardKey] else { return }
+    guard let layout = layoutStore.cardLayouts[tabID.canvasCardKey] else { return }
 
     let horizontalPadding: CGFloat = 80
     let verticalPadding: CGFloat = 80 + bottomToolbarReserve
@@ -92,14 +95,33 @@ extension CanvasView {
       width: viewportSize.width / 2 - layout.position.x * targetScale,
       height: (viewportSize.height - bottomToolbarReserve) / 2 - layout.position.y * targetScale
     )
-    let start = CanvasViewportAnimator.Snapshot(offset: canvasOffset, scale: canvasScale)
-    let end = CanvasViewportAnimator.Snapshot(offset: targetOffset, scale: targetScale)
-    viewportAnimator.animate(from: start, to: end) { [self] snapshot in
-      canvasOffset = snapshot.offset
-      lastCanvasOffset = snapshot.offset
-      canvasScale = snapshot.scale
-      lastCanvasScale = snapshot.scale
-    }
+    animateViewport(to: CanvasViewportAnimator.Snapshot(offset: targetOffset, scale: targetScale))
+  }
+
+  /// Bring a card into view with the least change: pan if it fits at the
+  /// current zoom. A card that does not fit is zoomed out to fit when
+  /// `allowsZoomOut` (new cards); otherwise the zoom the user chose is kept
+  /// (spatial navigation).
+  func revealCard(_ tabID: TerminalTabID, allowsZoomOut: Bool) {
+    // Reveal relative to where a running viewport animation (e.g. a refit) is
+    // heading, so a card the refit already shows does not cancel it.
+    let base =
+      viewportAnimator.activeTarget
+      ?? CanvasViewportAnimator.Snapshot(offset: canvasOffset, scale: canvasScale)
+    guard let layout = layoutStore.cardLayouts[tabID.canvasCardKey],
+      let target = CanvasViewportMath.reveal(
+        cardFrame: layout.frame(titleBarHeight: titleBarHeight),
+        in: CanvasViewportMath.Viewport(
+          size: viewportSize,
+          scale: base.scale,
+          offset: base.offset,
+          bottomReserve: bottomToolbarReserve
+        ),
+        margin: revealMargin,
+        allowsZoomOut: allowsZoomOut
+      )
+    else { return }
+    animateViewport(to: CanvasViewportAnimator.Snapshot(offset: target.offset, scale: target.scale))
   }
 
   func handleSelectionShieldTap(
@@ -142,7 +164,7 @@ extension CanvasView {
   ) {
     let previousPrimaryTabID = selectionState.primaryTabID
     mutation(&selectionState)
-    selectionState.prune(to: Set(collectVisibleTabIDs(from: states)))
+    selectionState.prune(to: Set(canvasCards(in: states).map(\.tabID)))
     syncPrimaryFocus(from: previousPrimaryTabID, to: selectionState.primaryTabID, states: states)
     syncBroadcastCallbacks(states: states)
   }
@@ -165,7 +187,7 @@ extension CanvasView {
       return
     }
 
-    layoutStore.moveToFront(newTabID.rawValue.uuidString)
+    layoutStore.moveToFront(newTabID.canvasCardKey)
     ownerState.tabManager.selectTab(newTabID)
     terminalManager.canvasFocusedWorktreeID = ownerState.worktreeID
     onFocusedWorktreeChanged(ownerState.worktreeID)
@@ -226,6 +248,10 @@ extension CanvasView {
     cleanStaleLayouts()
 
     let activeStates = terminalManager.activeWorktreeStates
+    // Tabs created before Canvas showed are not new cards to follow.
+    for state in activeStates {
+      state.lastForegroundCreatedTabID = nil
+    }
 
     // Mark all states as canvas-managed so that tree updates (e.g. split
     // creation) don't trigger applySurfaceActivity with stale normal-mode
@@ -260,6 +286,9 @@ extension CanvasView {
   }
 
   func deactivateCanvas() {
+    if let commandRequest {
+      onCommandDropped(commandRequest.id)
+    }
     viewportAnimator.cancel()
     expandedTabID = nil
     let activeStates = terminalManager.activeWorktreeStates

@@ -9,7 +9,7 @@ and the executable [schema bundle](schema.md).
 ```text
 prowl [path]
 prowl open [path]
-prowl list | agents [read|signal|dispatch|dispatch-complete|dispatch-abandon|wait] | profiles | skills | focus | read | send | key | handoff | create | close
+prowl list | agents [read|signal|dispatch|dispatch-complete|dispatch-abandon|wait] | profiles | skills | focus | canvas | read | send | key | handoff | create | close
 ```
 
 Bare path forms (`/`, `./`, `../`, `~/`, `file://`, `.`, `..`) enter `open`.
@@ -101,6 +101,17 @@ stdin up to 256 KiB, CRLF-normalized, trailing newlines dropped, non-empty, and 
 control characters other than newline and tab. `dispatch-complete` takes no id; it forwards
 a launch-scoped `PROWL_DISPATCH_ID` only when present. See [agents-wait.md](agents-wait.md).
 
+## Canvas grammar
+
+```text
+prowl canvas show | hide | status
+prowl canvas layout <arrange|organize|tile> [--show]
+prowl canvas fit [--show]
+```
+
+`layout` takes exactly one positional layout name. `--show` is accepted only by `layout` and
+`fit`. See [canvas.md](canvas.md).
+
 ## Command-specific exceptions
 
 - `agents read <pN|pane-uuid>` is a pane-only semantic snapshot, no selectors or
@@ -110,6 +121,7 @@ a launch-scoped `PROWL_DISPATCH_ID` only when present. See [agents-wait.md](agen
   socket peer process ancestry, never UI focus or `PROWL_PANE_ID`.
 - `handoff` defaults to the calling pane, not UI focus.
 - `list`, `agents`, and `profiles list` are global discovery commands with no target selector.
+- `canvas` accepts no target selector: Canvas shows every open tab.
 - `skills` accepts no target selector and never contacts the app; it acts on the local
   filesystem only.
 - `open` consumes a path rather than a target.

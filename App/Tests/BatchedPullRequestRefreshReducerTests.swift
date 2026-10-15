@@ -46,6 +46,7 @@ struct BatchedPullRequestRefreshReducerTests {
       $0.inFlightPullRequestRefreshRepositoryIDs = [context.repository.id]
     }
     await store.receive(\.githubIntegration.pullRequestRefreshBatchCountResolved) {
+      $0.githubHostsByRepositoryID[context.repository.id] = ["github.com"]
       $0.prRefreshBatchCountsByRepositoryID[context.repository.id] = 1
       $0.prRefreshRemotePrioritiesByRepositoryID[context.repository.id] = [
         "github.com/khoi/alpha": 0,
@@ -566,6 +567,7 @@ struct BatchedPullRequestRefreshReducerTests {
       $0.inFlightPullRequestRefreshRepositoryIDs = [context.repository.id]
     }
     await store.receive(\.githubIntegration.pullRequestRefreshBatchCountResolved) {
+      $0.githubHostsByRepositoryID[context.repository.id] = ["github.com", "ghe.example"]
       $0.prRefreshBatchCountsByRepositoryID[context.repository.id] = 2
       $0.prRefreshRemotePrioritiesByRepositoryID[context.repository.id] = [
         "ghe.example/khoi/alpha": 1,
@@ -665,6 +667,7 @@ struct BatchedPullRequestRefreshReducerTests {
       $0.inFlightPullRequestRefreshRepositoryIDs = [context.repository.id]
     }
     await store.receive(\.githubIntegration.pullRequestRefreshBatchCountResolved) {
+      $0.githubHostsByRepositoryID[context.repository.id] = ["github.com", "github.enterprise.test"]
       $0.prRefreshBatchCountsByRepositoryID[context.repository.id] = 2
       $0.prRefreshRemotePrioritiesByRepositoryID[context.repository.id] = [
         "github.com/khoi/alpha": 0,
@@ -759,6 +762,7 @@ struct BatchedPullRequestRefreshReducerTests {
       $0.inFlightPullRequestRefreshRepositoryIDs = [context.repository.id]
     }
     await store.receive(\.githubIntegration.pullRequestRefreshBatchCountResolved) {
+      $0.githubHostsByRepositoryID[context.repository.id] = ["github.com"]
       $0.prRefreshBatchCountsByRepositoryID[context.repository.id] = 1
       $0.prRefreshRemotePrioritiesByRepositoryID[context.repository.id] = [
         "github.com/khoi/alpha": 0
@@ -872,31 +876,31 @@ struct BatchedPullRequestRefreshReducerTests {
     await store.finish()
   }
 
-  @Test func rateLimitRetryTimeFollowsTheGate() async {
+  @Test func rateLimitBlocksFollowTheGate() async {
     let context = makeContext()
-    let retryAt = Date(timeIntervalSince1970: 1_000_060)
+    let blocks = [GithubRateLimitBlockFixture.graphQL(host: "github.com")]
     let store = TestStore(initialState: context.state) {
       RepositoriesFeature()
     }
 
-    await store.send(.githubIntegration(.rateLimitRetryTimeChanged(retryAt))) {
-      $0.githubRateLimitedUntil = retryAt
+    await store.send(.githubIntegration(.rateLimitBlocksChanged(blocks))) {
+      $0.githubRateLimitBlocks = blocks
     }
-    await store.send(.githubIntegration(.rateLimitRetryTimeChanged(nil))) {
-      $0.githubRateLimitedUntil = nil
+    await store.send(.githubIntegration(.rateLimitBlocksChanged([]))) {
+      $0.githubRateLimitBlocks = []
     }
   }
 
-  @Test func taskForwardsTheGateRetryTimes() async {
+  @Test func taskForwardsTheGateBlocks() async {
     let context = makeContext()
-    let retryAt = Date(timeIntervalSince1970: 1_000_060)
+    let blocks = [GithubRateLimitBlockFixture.graphQL(host: "github.com")]
     let store = TestStore(initialState: context.state) {
       RepositoriesFeature()
     } withDependencies: {
-      $0.githubCLI.rateLimitRetryTimes = {
+      $0.githubCLI.rateLimitBlocks = {
         AsyncStream { continuation in
-          continuation.yield(retryAt)
-          continuation.yield(nil)
+          continuation.yield(blocks)
+          continuation.yield([])
           continuation.finish()
         }
       }
@@ -904,12 +908,32 @@ struct BatchedPullRequestRefreshReducerTests {
 
     store.exhaustivity = .off
     await store.send(.task)
-    await store.receive(\.githubIntegration.rateLimitRetryTimeChanged) {
-      $0.githubRateLimitedUntil = retryAt
+    await store.receive(\.githubIntegration.rateLimitBlocksChanged) {
+      $0.githubRateLimitBlocks = blocks
     }
-    await store.receive(\.githubIntegration.rateLimitRetryTimeChanged) {
-      $0.githubRateLimitedUntil = nil
+    await store.receive(\.githubIntegration.rateLimitBlocksChanged) {
+      $0.githubRateLimitBlocks = []
     }
+  }
+
+  @Test func retryNowReleasesTheGateAndRefreshesTheSelectedWorktree() async {
+    let context = makeContext()
+    var initialState = context.state
+    initialState.selection = .worktree(context.featureWorktree.id)
+    let retried = LockIsolated(0)
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.githubCLI.retryRateLimitedRequests = { retried.withValue { $0 += 1 } }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.githubIntegration(.retryRateLimitedRequests)) {
+      $0.pullRequestRefreshForcedWorktreeIDs = [context.featureWorktree.id]
+    }
+    await store.receive(\.worktreeInfoEvent)
+
+    #expect(retried.value == 1)
   }
 
   @Test func coordinatorOutcomeConfirmedNoPrClearsStalePullRequest() async {

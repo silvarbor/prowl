@@ -244,6 +244,7 @@ Key fields by command:
 - `send` → `.data.input`, `.data.wait.{exit_code,duration_ms}` when waiting, `.data.capture.{text,line_count,truncated}` with `--capture`.
 - `create tab` / `open` → `.data.target.{pane,tab,worktree}`; `create pane` → `.data.anchor`, `.data.direction`, `.data.target`; Profile launches also include `.data.launch.{profile_id,profile_name,agent}`, prompted launches require `.data.dispatch.{id,state,created_at}`, and a safe managed-signal fallback may add `.data.warnings[]` with `code=managed_hook_degraded`.
 - `profiles list` → `.data.profiles[]` with `.id`, `.name`, `.enabled`, `.runtime`, `.availability.{status,reason}`.
+- `canvas show|hide|layout|fit|status` → `.data.{action,showing,card_count}` and `.data.layout` (`arrange`|`organize`|`tile`|`freeform`, absent until Canvas laid out cards). After creating several agent tabs for a person to watch, `prowl canvas layout tile --show` tiles them; Canvas keeps tiling as tabs come and go. `layout`/`fit` without `--show` fail with `CANVAS_NOT_SHOWING` while Canvas is hidden — do not switch views the person did not ask for.
 
 `detection_reason` explains the final status; `screen_reason` explains the screen classifier.
 Log decisions can suppress a retained prompt. Only treat `status: blocked` as a current
@@ -340,4 +341,4 @@ the required briefing through the workflow protocol. See `components/handoff.md`
 
 ## Command Set
 
-`list`, `agents`, `agents read`, `agents signal`, `agents dispatch`, `agents dispatch-complete`, `agents dispatch-abandon`, `agents wait`, `profiles list`, `skills list|install|uninstall|path` (local-only), `workflow list|run|status|deliver|cancel` (`workflow validate|schema` local-only), `read`, `send`, `key`, `focus`, `create tab`, `create pane`, `close`, and `open` (default). There is no CLI `quit`; close temporary tabs or panes with an explicit `close`. `tab create`, `tab close`, and `pane close` remain deprecated aliases for one release; `handoff` remains for one release as a non-executing `HANDOFF_RETIRED` stub.
+`list`, `agents`, `agents read`, `agents signal`, `agents dispatch`, `agents dispatch-complete`, `agents dispatch-abandon`, `agents wait`, `profiles list`, `skills list|install|uninstall|path` (local-only), `workflow list|run|status|deliver|cancel` (`workflow validate|schema` local-only), `read`, `send`, `key`, `focus`, `canvas show|hide|layout|fit|status`, `create tab`, `create pane`, `close`, and `open` (default). There is no CLI `quit`; close temporary tabs or panes with an explicit `close`. `tab create`, `tab close`, and `pane close` remain deprecated aliases for one release; `handoff` remains for one release as a non-executing `HANDOFF_RETIRED` stub.

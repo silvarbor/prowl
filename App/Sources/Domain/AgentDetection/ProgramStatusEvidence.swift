@@ -11,11 +11,11 @@ nonisolated enum ProgramStatusSupport: Equatable, Sendable {
   case verified
 
   /// A producer is flipped once its baseline has replayed inside Prowl: Claude Code
-  /// (2.1.295 and later, docs-ai 079.004) in slice 3 and Pi (1.1.0 and later,
-  /// docs-ai 079.005) in slice 4.
+  /// (2.1.295 and later, docs-ai 079.004) in slice 3, Pi (1.1.0 and later,
+  /// docs-ai 079.005) in slice 4, and Oh My Pi (18.8.7 and later, docs-ai 079.006).
   static func level(for agent: DetectedAgent) -> ProgramStatusSupport {
     switch agent {
-    case .claude, .pi: .verified
+    case .claude, .pi, .omp: .verified
     default: .unverified
     }
   }
@@ -29,6 +29,7 @@ extension DetectedAgent {
     switch self {
     case .claude: "claude-code"
     case .pi: "pi"
+    case .omp: "omp"
     default: nil
     }
   }

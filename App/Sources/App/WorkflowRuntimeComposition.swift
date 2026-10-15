@@ -380,8 +380,13 @@ extension ProwlApp {
       }
     }
     if !request.background {
-      selectCLIWorktreeContext(
-        worktreeID: worktree.id, appStore: appStore, terminalManager: terminalManager)
+      if case .tab = request.placement {
+        selectCLIWorktreeContextForNewTab(
+          worktreeID: worktree.id, appStore: appStore, terminalManager: terminalManager)
+      } else {
+        selectCLIWorktreeContext(
+          worktreeID: worktree.id, appStore: appStore, terminalManager: terminalManager)
+      }
       terminalManager.state(for: worktree).selectTab(launched.tabID)
     }
     let snapshot = TargetResolutionSnapshotBuilder.makeSnapshot(

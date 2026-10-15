@@ -76,11 +76,11 @@ struct AgentCoordinatorProgramStatusTests {
     #expect(lines.count == 2)
   }
 
-  /// The production table (docs-ai 079 slices 3 and 4): Claude Code and Pi are verified;
-  /// every other agent stays unverified until its own baseline replays inside Prowl.
-  @Test func defaultTableVerifiesClaudeCodeAndPi() async {
+  /// The production table (docs-ai 079 slices 3 and 4, 079.006): Claude Code, Pi, and Oh My Pi
+  /// are verified; every other agent stays unverified until its own baseline replays inside Prowl.
+  @Test func defaultTableVerifiesClaudeCodePiAndOMP() async {
     for agent in DetectedAgent.allCases {
-      let expected: ProgramStatusSupport = [.claude, .pi].contains(agent) ? .verified : .unverified
+      let expected: ProgramStatusSupport = [.claude, .pi, .omp].contains(agent) ? .verified : .unverified
       #expect(ProgramStatusSupport.level(for: agent) == expected, "\(agent)")
     }
     // With the default table a Claude root decides on the tick that sees it, the
@@ -106,6 +106,17 @@ struct AgentCoordinatorProgramStatusTests {
     #expect(piDecision?.reason.identifier == "osc.idle")
     #expect(piDecision?.screenReason == .delegated)
     #expect(piCoordinator.isDelegated)
+    // An Oh My Pi root decides under its own `app`; like Pi it has no provider to sample.
+    let ompCoordinator = AgentDetectionCoordinator(sample: { _, _ in
+      Issue.record("Oh My Pi has no provider to sample")
+      return [.unavailable]
+    })
+    let ompDecision = await ompCoordinator.observe(
+      agent: .omp, process: generation, screen: legacyWorking, configRoot: nil,
+      programStatus: store([(report(.idle, app: "omp"), 1)]))
+    #expect(ompDecision?.reason.identifier == "osc.idle")
+    #expect(ompDecision?.screenReason == .delegated)
+    #expect(ompCoordinator.isDelegated)
     // Every other agent keeps its legacy path: a record changes nothing it publishes.
     let codex = AgentDetectionCoordinator(sample: { _, _ in [.unavailable] })
     let codexDecision = await codex.observe(

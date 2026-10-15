@@ -32,7 +32,8 @@ during a turn is `error`: the pane reads Idle with `osc.error`, badge-eligible, 
 the next report. Pi's own selectors (`/model`, `/settings`) send nothing, so the previous
 root state stands while they are open (no regression: Pi never had Blocked). The managed
 `-e prowl-hooks.ts` extension of Agent Profile launches is untouched and remains the exact
-path; Oh My Pi is a separate agent whose `app` is unknown and stays unverified.
+path; Oh My Pi is a separate agent with its own `app=omp` record, verified since 079.006
+(see [omp.md](omp.md)).
 
 The root-only rule applies: a `pi-subagents` card still running after the root is `done`
 leaves the pane Idle; the fallback rule `hasPiRunningAsyncSubagentCard` keeps Working only

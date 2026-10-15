@@ -38,6 +38,21 @@ struct ProwlAppCLITests {
     #expect(readResponse.error?.code != "NOT_IMPLEMENTED")
   }
 
+  @Test func cliRouterWiresTheCanvasHandler() async throws {
+    let store = Store(initialState: AppFeature.State()) {
+      AppFeature()
+    }
+    let terminalManager = WorktreeTerminalManager(runtime: GhosttyRuntime())
+    let router = ProwlApp.makeCLICommandRouter(appStore: store, terminalManager: terminalManager)
+
+    let response = await router.route(CommandEnvelope(output: .json, command: .canvas(CanvasInput(action: .status))))
+
+    #expect(response.ok)
+    let payload = try #require(response.data).decode(as: CanvasCommandPayload.self)
+    #expect(payload.showing == false)
+    #expect(payload.cardCount == 0)
+  }
+
   @Test func cliRouterWiresCallerAttributedAgentSignalIntoTerminalObserver() async throws {
     let store = Store(initialState: AppFeature.State()) {
       AppFeature()

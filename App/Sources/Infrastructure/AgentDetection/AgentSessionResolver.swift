@@ -655,7 +655,7 @@ actor AgentSessionResolver {
     now: Date,
     visitLimit: Int = 20_000
   ) -> (candidates: [AgentSessionCandidate], usedWideScan: Bool) {
-    let cwdVariants = workingDirectoryVariants(workingDirectory)
+    let cwdVariants = Self.workingDirectoryVariants(workingDirectory)
     let threshold = processStartedAt.addingTimeInterval(-2)
     // Under a relocated config root the rooted layout is used exclusively:
     // scanning the default home would misattribute another account's
@@ -711,12 +711,37 @@ actor AgentSessionResolver {
     return (fallback ?? [], true)
   }
 
-  /// The pane reports the shell's logical `$PWD` while agents usually record
-  /// the physical path (`/tmp` vs `/private/tmp`); try both encodings.
-  private func workingDirectoryVariants(_ cwd: URL?) -> [URL?] {
+  /// The pane reports the shell's logical `$PWD`, while most agents key their
+  /// sessions on `getcwd()`, the physical path (`/tmp/x` → `/private/tmp/x`),
+  /// and a few (Go's `os.Getwd`) on `$PWD`; try each encoding once.
+  ///
+  /// `URL.resolvingSymlinksInPath()` cannot produce the physical path: it
+  /// strips `/private` again (fine for `GitClient.canonicalWorktreePath`, which
+  /// only compares two paths normalized the same way), so the
+  /// physical variant comes from `realpath(3)`, which is what Node, Python and
+  /// Rust report. A missing directory keeps the logical path alone.
+  nonisolated static func workingDirectoryVariants(_ cwd: URL?) -> [URL?] {
     guard let cwd else { return [nil] }
-    let resolved = cwd.resolvingSymlinksInPath()
-    return resolved.path == cwd.path ? [cwd] : [cwd, resolved]
+    var variants = [cwd]
+    func append(_ path: String) {
+      guard !variants.contains(where: { $0.path == path }) else { return }
+      variants.append(URL(fileURLWithPath: path, isDirectory: true))
+    }
+    guard let physical = realPath(cwd.path) else { return variants }
+    append(physical)
+    // The `/private`-stripped form only when it names the same directory, so
+    // an unrelated `/foo` is never scanned for `/private/foo`.
+    if physical.hasPrefix("/private/") {
+      let stripped = String(physical.dropFirst("/private".count))
+      if realPath(stripped) == physical { append(stripped) }
+    }
+    return variants
+  }
+
+  nonisolated private static func realPath(_ path: String) -> String? {
+    guard let resolved = realpath(path, nil) else { return nil }
+    defer { free(resolved) }
+    return String(cString: resolved)
   }
 
   /// Scans `roots` for session files modified during the process lifetime.

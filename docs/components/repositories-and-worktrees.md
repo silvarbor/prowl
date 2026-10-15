@@ -154,7 +154,9 @@ Archiving hides a worktree from the main list without deleting it.
   return to the previous worktree), grouped by repo, with **Unarchive** and
   **Delete Selected** (`⌘⇧⌫`) buttons.
 - **Auto-delete:** if `archivedAutoDeletePeriod` is set, archived worktrees older
-  than the period are deleted automatically.
+  than the period are deleted automatically. When you pick a period in Settings →
+  Worktree that would delete existing archived worktrees right away, Prowl lists
+  them and asks first; Cancel keeps the previous period and the worktrees.
 
 The **main worktree cannot be archived.**
 

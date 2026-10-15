@@ -467,6 +467,16 @@
         }
       }
     },
+    "%@ · %@ · until %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ · %2$@ · 直到 %3$@"
+          }
+        }
+      }
+    },
     "%@ – %@" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2277,6 +2287,16 @@
         }
       }
     },
+    "Arranging: cards re-arrange as they are added or closed" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "排列中：添加或关闭卡片时会重新排列"
+          }
+        }
+      }
+    },
     "Ask Again" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3187,6 +3207,16 @@
         }
       }
     },
+    "Change and Delete" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更改并删除"
+          }
+        }
+      }
+    },
     "Changes requested" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3213,6 +3243,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "更改…"
+          }
+        }
+      }
+    },
+    "Changing auto-delete to “%@” permanently deletes these archived worktrees right away. This cannot be undone." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将自动删除改为“%@”会立即永久删除这些已归档的 worktree。此操作无法撤销。"
           }
         }
       }
@@ -5827,6 +5867,16 @@
         }
       }
     },
+    "Default host" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "默认主机"
+          }
+        }
+      }
+    },
     "Default strategy when merging PRs from the command palette." : {
       "localizations" : {
         "zh-Hans" : {
@@ -5907,6 +5957,16 @@
         }
       }
     },
+    "Delete %lld archived worktrees now?" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "立即删除 %lld 个已归档的 worktree？"
+          }
+        }
+      }
+    },
     "Delete %lld worktrees?" : {
       "localizations" : {
         "zh-Hans" : {
@@ -5923,6 +5983,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "删除 %lld 个 worktree？其 worktree 目录将被移除。"
+          }
+        }
+      }
+    },
+    "Delete 1 archived worktree now?" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "立即删除 1 个已归档的 worktree？"
           }
         }
       }
@@ -8069,6 +8139,16 @@
         }
       }
     },
+    "GitHub Rate Limit" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GitHub 速率限额"
+          }
+        }
+      }
+    },
     "GitHub identity" : {
       "localizations" : {
         "zh-Hans" : {
@@ -8119,22 +8199,32 @@
         }
       }
     },
-    "GitHub refused requests for this account's rate limit. Prowl sends none until the retry time, so other tools on the account keep working." : {
+    "GitHub refused a request for its rate limit. Prowl sends nothing more to these hosts and APIs until the retry time, so that other tools on the account keep working." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "GitHub 因该账户的速率限额拒绝了请求。Prowl 在重试时间之前不会再发送任何请求，这样该账户上的其他工具可以继续工作。"
+            "value" : "GitHub 因速率限额拒绝了一个请求。在重试时间之前，Prowl 不会再向这些主机和 API 发送任何请求，这样该账户上的其他工具可以继续工作。"
           }
         }
       }
     },
-    "GitHub refused requests for this account's rate limit. Prowl sends none until the retry time." : {
+    "GitHub refused requests for its rate limit. Click to see the cause or to retry now." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "GitHub 因该账户的速率限额拒绝了请求。Prowl 在重试时间之前不会再发送任何请求。"
+            "value" : "GitHub 因速率限额拒绝了请求。点击查看原因或立即重试。"
+          }
+        }
+      }
+    },
+    "GitHub refused requests for this account's rate limit. Prowl sends nothing more to these hosts and APIs until the retry time, so other tools on the account keep working." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GitHub 因该账户的速率限额拒绝了请求。在重试时间之前，Prowl 不会再向这些主机和 API 发送任何请求，这样该账户上的其他工具可以继续工作。"
           }
         }
       }
@@ -9175,6 +9265,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "继续等待"
+          }
+        }
+      }
+    },
+    "Keep a layout" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保持布局"
           }
         }
       }
@@ -11892,6 +11992,16 @@
         }
       }
     },
+    "Organizing: cards keep the grid as they are added or closed" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "整理中：添加或关闭卡片时保持网格"
+          }
+        }
+      }
+    },
     "Original Size" : {
       "localizations" : {
         "zh-Hans" : {
@@ -14514,6 +14624,16 @@
         }
       }
     },
+    "Retry Now" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "立即重试"
+          }
+        }
+      }
+    },
     "Retry loading repository" : {
       "localizations" : {
         "zh-Hans" : {
@@ -16072,6 +16192,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "工作流启动时选择一个现有的 Agent 窗格。"
+          }
+        }
+      }
+    },
+    "Send the next request to GitHub now instead of at the retry time" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "立即向 GitHub 发送下一个请求，而不是等到重试时间"
           }
         }
       }
@@ -17897,6 +18027,16 @@
         }
       }
     },
+    "The highlighted layout button stays on as cards are added or closed. Drag or resize a card to place cards freely." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加或关闭卡片时，高亮的布局按钮保持开启。拖动卡片或调整其大小即可自由摆放卡片。"
+          }
+        }
+      }
+    },
     "The language will switch on next launch." : {
       "localizations" : {
         "zh-Hans" : {
@@ -18584,6 +18724,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "平铺卡片以填满画布"
+          }
+        }
+      }
+    },
+    "Tiling: cards re-tile as they are added or closed" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "平铺中：添加或关闭卡片时会重新平铺"
           }
         }
       }
@@ -20427,6 +20577,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "工作中"
+          }
+        }
+      }
+    },
+    "and %lld more" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "以及另外 %lld 个"
           }
         }
       }

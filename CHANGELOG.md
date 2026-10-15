@@ -1,5 +1,25 @@
 # Changelog
 
+## [2026.10.15](https://github.com/onevcat/Prowl/releases/tag/v2026.10.15)
+
+### New
+
+- Canvas remembers your chosen layout and places new cards without overlap. Run `prowl canvas layout tile --show` to open Canvas and tile your tabs; it keeps tiling as tabs come and go.
+
+### Improved
+
+- Switching Shelf books uses less CPU, with selection highlights and bottom controls updating immediately.
+- Oh My Pi now reports working, approval, question, and error states directly to Prowl, including ongoing background jobs. Agent sessions are also detected correctly in temporary directories such as `/tmp` and through directory symlinks.
+
+### Fixed
+
+- Changing **Settings → Worktree → Auto-delete archived worktrees** now asks for confirmation if the new period would immediately delete archived worktrees. Cancel keeps both the previous setting and your worktrees.
+- Terminal layouts and your default Shelf or Canvas view now restore even when a repository fails to load, skipping unavailable worktrees.
+- GitHub rate limits now pause requests by host and API, so a primary limit no longer blocks unrelated requests. Click the toolbar’s rate-limit status or open **Settings → GitHub** to see the cause and select **Retry Now**.
+- Codex workflows can now read tasks and deliver results when caller-pane detection fails. Supported Codex profile launches also stay independent of the shared daemon to preserve their pane context.
+- On-device branch name suggestions now use the prefix your repository's branches already use, such as `feat/`, including remote-only branches, instead of falling back to `worktree/`.
+- Settings edits no longer overwrite newly detected repository icons, pinned **Open in** choices, or agent and workflow settings saved elsewhere. Imported repository icons also finish saving if you switch Settings panes.
+
 ## [2026.10.11](https://github.com/onevcat/Prowl/releases/tag/v2026.10.11)
 
 Agents can now report their status to Prowl directly through OSC 7501, starting with Claude Code and Pi. Split panes also get a close button.

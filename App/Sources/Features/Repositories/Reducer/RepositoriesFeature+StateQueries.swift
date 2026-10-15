@@ -161,6 +161,17 @@ extension RepositoriesFeature.State {
     worktreeInfoByID[worktreeID]
   }
 
+  // The rate limit that keeps the worktree's pull request status from refreshing, if any.
+  func githubRateLimitStatus(forWorktreeID worktreeID: Worktree.ID?) -> GithubRateLimitStatus? {
+    guard let worktreeID, let repositoryID = repositoryID(containing: worktreeID) else {
+      return nil
+    }
+    return GithubRateLimitStatus(
+      blocks: githubRateLimitBlocks,
+      hosts: githubHostsByRepositoryID[repositoryID] ?? []
+    )
+  }
+
   func codeHost(for repositoryID: Repository.ID) -> CodeHost {
     codeHostByRepositoryID[repositoryID] ?? .unknown
   }
@@ -301,6 +312,28 @@ extension RepositoriesFeature.State {
       }
     }
     return groups
+  }
+
+  struct ExpiredArchivedWorktree: Equatable {
+    var worktree: Worktree
+    var repository: Repository
+  }
+
+  /// Archived worktrees an auto-delete pass with `period` would remove at `now`. Settings uses
+  /// this to warn before a new period applies, so it must stay in sync with the deletion pass.
+  func expiredArchivedWorktrees(for period: AutoDeletePeriod, now: Date) -> [ExpiredArchivedWorktree] {
+    let cutoff = now.addingTimeInterval(-Double(period.rawValue) * secondsPerDay)
+    return archivedWorktrees.compactMap { entry in
+      guard
+        entry.archivedAt <= cutoff,
+        let (worktree, repository) = findWorktreeAndRepository(worktreeID: entry.id, state: self),
+        !isMainWorktree(worktree),
+        !deletingWorktreeIDs.contains(entry.id)
+      else {
+        return nil
+      }
+      return ExpiredArchivedWorktree(worktree: worktree, repository: repository)
+    }
   }
 
   var canCreateWorktree: Bool {
@@ -669,4 +702,10 @@ extension RepositoriesFeature.State {
   var canEnterShelf: Bool {
     repositories.contains(where: { $0.kind == .plain }) || !orderedWorktreeRows().isEmpty
   }
+}
+
+/// Identities accepted by the archived-worktree cleanup confirmation.
+struct ArchivedAutoDeleteTarget: Equatable, Hashable, Sendable {
+  var worktreeID: Worktree.ID
+  var repositoryID: Repository.ID
 }

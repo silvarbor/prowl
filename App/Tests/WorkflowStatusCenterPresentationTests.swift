@@ -373,14 +373,17 @@ struct WorkflowStatusCenterPresentationTests {
       selectedWorktreeID: "selected",
       now: Self.now
     )
-    let retryAt = Self.now.addingTimeInterval(60)
+    let rateLimit = GithubRateLimitStatus(
+      blocks: [GithubRateLimitBlockFixture.graphQL(host: "github.com", retryAt: Self.now.addingTimeInterval(60))],
+      hosts: ["github.com"]
+    )!
 
     #expect(
-      ToolbarStatusSelection(toast: nil, workflow: idle, pullRequest: nil, githubRateLimitedUntil: retryAt)
-        == .githubRateLimited(retryAt)
+      ToolbarStatusSelection(toast: nil, workflow: idle, pullRequest: nil, githubRateLimit: rateLimit)
+        == .githubRateLimited(rateLimit)
     )
     #expect(
-      ToolbarStatusSelection(toast: nil, workflow: workflow, pullRequest: nil, githubRateLimitedUntil: retryAt)
+      ToolbarStatusSelection(toast: nil, workflow: workflow, pullRequest: nil, githubRateLimit: rateLimit)
         == .workflow(workflow)
     )
     #expect(
@@ -388,7 +391,7 @@ struct WorkflowStatusCenterPresentationTests {
         toast: .success("Saved"),
         workflow: idle,
         pullRequest: nil,
-        githubRateLimitedUntil: retryAt
+        githubRateLimit: rateLimit
       ) == .toast(.success("Saved"))
     )
   }

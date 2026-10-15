@@ -200,6 +200,29 @@ nonisolated struct AgentProfileLaunchPlan: Equatable, Sendable {
     )
   }
 
+  /// The same plan with a runtime-adjusted invocation that keeps the prompt as the last argument
+  /// (a degraded managed hook's `fallbackInvocation`). Argument carriers are argv indexes, so a
+  /// plan that already has them keeps its invocation.
+  func replacingInvocation(_ replacement: AgentInvocation) -> AgentProfileLaunchPlan {
+    guard argumentCarriers.isEmpty else { return self }
+    return AgentProfileLaunchPlan(
+      profileID: profileID,
+      profileName: profileName,
+      runtime: runtime,
+      invocation: replacement,
+      argumentCarriers: argumentCarriers,
+      environmentCarriers: environmentCarriers,
+      hookRegistration: hookRegistration,
+      commandEnvironmentTokens: commandEnvironmentTokens,
+      placement: placement,
+      splitDirection: splitDirection,
+      surfaceEnvironment: surfaceEnvironment,
+      profileEnvironmentOverrides: profileEnvironmentOverrides,
+      dedicatedHome: dedicatedHome,
+      sessionConfigRoot: sessionConfigRoot
+    )
+  }
+
   /// A workflow `launch` role (docs-ai 063 B3, decision W6): replaces the placeholder prompt the
   /// frozen plan was compiled with by the rendered kickoff prompt (its own protocol block, not
   /// S2's dispatch protocol) and attaches the `PROWL_WORKFLOW_*` values as child-only carriers,
@@ -333,6 +356,23 @@ nonisolated struct FrozenAgentProfileLaunchContext: Equatable, Sendable {
     self.anchorSurfaceID = anchorSurfaceID
     self.tracksFocusedAnchor = tracksFocusedAnchor
     self.tracksInheritedCWD = tracksInheritedCWD
+  }
+
+  /// The same frozen target with another execution plan.
+  func replacingPlan(_ plan: AgentProfileLaunchPlan) -> FrozenAgentProfileLaunchContext {
+    FrozenAgentProfileLaunchContext(
+      request: AgentProfileLaunchRequest(
+        plan: plan,
+        placement: request.placement,
+        workingDirectoryOverride: request.workingDirectoryOverride,
+        inheritanceAnchor: request.inheritanceAnchor,
+        title: request.title
+      ),
+      inheritedCWD: inheritedCWD,
+      anchorSurfaceID: anchorSurfaceID,
+      tracksFocusedAnchor: tracksFocusedAnchor,
+      tracksInheritedCWD: tracksInheritedCWD
+    )
   }
 }
 

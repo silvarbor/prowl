@@ -188,6 +188,10 @@ final class WorktreeTerminalState {
 
   var surfaceAgentStates: [UUID: PaneAgentState] = [:]
   @ObservationIgnored var agentDetectionCoordinators: [UUID: AgentDetectionCoordinator] = [:]
+  /// The most recent tab created in the foreground (focused), until Canvas
+  /// claims it to focus and reveal the new card. Background creations, layout
+  /// restore, and undo never set it.
+  @ObservationIgnored var lastForegroundCreatedTabID: TerminalTabID?
   /// Launch identity recorded at surface creation for Prowl-launched agent
   /// profiles (docs-ai 053). Never rewritten: recommendation or designation
   /// edits must not relabel a live pane. Detected-but-not-launched agents
@@ -957,6 +961,9 @@ final class WorktreeTerminalState {
     tabIsRunningById[tabId] = false
     if creation.focusing, let surface = tree.root?.leftmostLeaf() {
       focusSurface(surface, in: tabId)
+    }
+    if creation.focusing {
+      lastForegroundCreatedTabID = tabId
     }
     onTabCreated?()
     return tabId

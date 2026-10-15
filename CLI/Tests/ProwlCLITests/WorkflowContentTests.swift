@@ -31,4 +31,21 @@ struct WorkflowContentTests {
     let command = try WorkflowCommand.parseAsRoot(["read", "resource-1", "--run", UUID().uuidString, "--invocation", "3", "--json"])
     #expect(command is WorkflowReadCommand)
   }
+
+  @Test func readCommandAcceptsTheStepToken() throws {
+    let command = try WorkflowCommand.parseAsRoot([
+      "read", "--run", UUID().uuidString, "--invocation", "3", "--token", "TOKEN-1",
+    ])
+    #expect((command as? WorkflowReadCommand)?.token == "TOKEN-1")
+  }
+
+  @Test func typedGuidanceSpellsTheTokenAndLaunchGuidanceDoesNot() {
+    let runID = UUID()
+    let content = WorkflowTaskContent(runID: runID, invocation: 2, text: "Task", resources: [:], skill: nil)
+    let command = "prowl workflow read --run \(runID.uuidString) --invocation 2"
+    #expect(content.readCommand == command)
+    #expect(content.readCommand(token: "TOKEN-1") == "PROWL_WORKFLOW_TOKEN=TOKEN-1 " + command)
+    #expect(content.guidance(token: "TOKEN-1").contains("`PROWL_WORKFLOW_TOKEN=TOKEN-1 \(command) <resource-id>`"))
+    #expect(!content.guidance.contains("PROWL_WORKFLOW_TOKEN"))
+  }
 }

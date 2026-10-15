@@ -73,7 +73,7 @@ reads have no scheduled removal date.
 | `archivedAutoDeletePeriod` | enum? (days) | `nil` | Auto-delete archived worktrees after N days; `nil` = never. |
 | `keybindingUserOverrides` | object | empty | User keyboard-shortcut remappings. |
 | `defaultViewMode` | enum (`normal`/`shelf`/`canvas`) | `normal` | View mode on launch. |
-| `canvasDefaultLayout` | enum (`uniform`/`tile`) | `tile` | Initial Canvas layout: `uniform` packs same-size cards, `tile` resizes cards to fill the screen. |
+| `canvasDefaultLayout` | enum (`uniform`/`tile`) | `tile` | Layout a fresh Canvas starts in: `uniform` packs same-size cards (Arrange), `tile` resizes cards to fill the screen. Canvas then keeps the layout you last chose. |
 | `dimUnfocusedSplits` | Bool | `true` | Dim panes that aren't focused. |
 | `autoShowActiveAgentsPanel` | Bool | `false` | Auto-open the Active Agents panel on a new agent. |
 | `showActiveAgentTabTitles` | Bool | `false` | Show pane titles (surface title, falling back to the tab title; vs. branch) in the agents panel. |

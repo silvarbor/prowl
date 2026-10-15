@@ -71,7 +71,7 @@ struct CanvasCardView: View {
     }
   }
 
-  private let titleBarHeight: CGFloat = 28
+  private let titleBarHeight = CanvasLayoutMetrics.standard.titleBarHeight
   private let cornerRadius: CGFloat = 8
 
   // Gesture-driven drag state: does NOT trigger body re-evaluation

@@ -26,11 +26,22 @@ nonisolated public struct WorkflowTaskContent: Equatable, Sendable {
     return Self(runID: task.runID, invocation: task.invocation, text: rendered, resources: resources, skill: skill)
   }
 
-  public var readCommand: String { "prowl workflow read --run \(runID.uuidString) --invocation \(invocation)" }
+  public var readCommand: String { readCommand(token: nil) }
 
-  public var guidance: String {
-    "Read the assigned task with `\(readCommand)`. "
-      + "Use `\(readCommand) <resource-id>` for its listed resources. "
+  /// A typed line spells the step's delivery token, so the read also works where Prowl cannot
+  /// place the calling process in a pane (issue #911). A launch carries it in the environment.
+  public func readCommand(token: String?) -> String {
+    let command = "prowl workflow read --run \(runID.uuidString) --invocation \(invocation)"
+    guard let token else { return command }
+    return "\(WorkflowSchema.tokenEnvironmentKey)=\(token) \(command)"
+  }
+
+  public var guidance: String { guidance(token: nil) }
+
+  public func guidance(token: String?) -> String {
+    let command = readCommand(token: token)
+    return "Read the assigned task with `\(command)`. "
+      + "Use `\(command) <resource-id>` for its listed resources. "
       + "Content is returned by Prowl; do not open workflow-resource references as file paths."
   }
 }

@@ -11,6 +11,18 @@ import Testing
 struct RepositorySettingsAppearanceTests {
   // MARK: - Helpers
 
+  private func makeState(repositoryID: Repository.ID = "repo-1") -> RepositorySettingsFeature.State {
+    RepositorySettingsFeature.State(
+      rootURL: URL(fileURLWithPath: "/tmp/\(repositoryID)"),
+      repositoryID: repositoryID,
+      repositoryKind: .plain,
+      settings: .default,
+      userSettings: .default
+    )
+  }
+
+  /// Seeds the shared appearances store before the pane is built, the
+  /// way a previously saved appearance is on disk when Settings opens.
   private func makeStore(
     repositoryID: Repository.ID = "repo-1",
     initialAppearance: RepositoryAppearance = .empty,
@@ -18,21 +30,18 @@ struct RepositorySettingsAppearanceTests {
     appearancesURL: URL = URL(fileURLWithPath: "/tmp/appearances-\(UUID().uuidString).json"),
     settingsStorage: SettingsTestStorage = SettingsTestStorage()
   ) -> TestStore<RepositorySettingsFeature.State, RepositorySettingsFeature.Action> {
-    TestStore(
-      initialState: RepositorySettingsFeature.State(
-        rootURL: URL(fileURLWithPath: "/tmp/\(repositoryID)"),
-        repositoryID: repositoryID,
-        repositoryKind: .plain,
-        settings: .default,
-        userSettings: .default,
-        appearance: initialAppearance
-      )
-    ) {
-      RepositorySettingsFeature()
-    } withDependencies: {
+    withDependencies {
       $0.settingsFileStorage = settingsStorage.storage
       $0.repositoryAppearancesFileURL = appearancesURL
       $0.repositoryIconAssetStore = iconAssetStore
+    } operation: {
+      if !initialAppearance.isEmpty {
+        @Shared(.repositoryAppearances) var appearances
+        $appearances.withLock { $0[repositoryID] = initialAppearance }
+      }
+      return TestStore(initialState: makeState(repositoryID: repositoryID)) {
+        RepositorySettingsFeature()
+      }
     }
   }
 
@@ -44,7 +53,7 @@ struct RepositorySettingsAppearanceTests {
     let store = makeStore(appearancesURL: appearancesURL, settingsStorage: settingsStorage)
 
     await store.send(.setAppearanceColor(.blue)) {
-      $0.appearance.color = .blue
+      $0.$appearances.withLock { $0["repo-1"] = RepositoryAppearance(color: .blue) }
     }
     await store.finish()
 
@@ -68,7 +77,7 @@ struct RepositorySettingsAppearanceTests {
     )
 
     await store.send(.setAppearanceColor(nil)) {
-      $0.appearance.color = nil
+      $0.$appearances.withLock { $0["repo-1"] = nil }
     }
     await store.finish()
 
@@ -84,7 +93,7 @@ struct RepositorySettingsAppearanceTests {
     let store = makeStore(appearancesURL: appearancesURL, settingsStorage: settingsStorage)
 
     await store.send(.setAppearanceIcon(.sfSymbol("folder.fill"))) {
-      $0.appearance.icon = .sfSymbol("folder.fill")
+      $0.$appearances.withLock { $0["repo-1"] = RepositoryAppearance(icon: .sfSymbol("folder.fill")) }
     }
     await store.finish()
 
@@ -102,8 +111,9 @@ struct RepositorySettingsAppearanceTests {
     )
 
     await store.send(.setAppearanceIcon(nil)) {
-      $0.appearance.icon = nil
-      $0.appearance.iconDetectionSuppressed = true
+      $0.$appearances.withLock {
+        $0["repo-1"] = RepositoryAppearance(color: .blue, iconDetectionSuppressed: true)
+      }
     }
     await store.finish()
 
@@ -125,8 +135,7 @@ struct RepositorySettingsAppearanceTests {
     )
 
     await store.send(.setAppearanceIcon(nil)) {
-      $0.appearance.icon = nil
-      $0.appearance.iconDetectionSuppressed = true
+      $0.$appearances.withLock { $0["repo-1"] = RepositoryAppearance(iconDetectionSuppressed: true) }
     }
     await store.finish()
 
@@ -147,7 +156,7 @@ struct RepositorySettingsAppearanceTests {
     )
 
     await store.send(.setAppearanceIcon(.sfSymbol("folder"))) {
-      $0.appearance.icon = .sfSymbol("folder")
+      $0.$appearances.withLock { $0["repo-1"] = RepositoryAppearance(icon: .sfSymbol("folder")) }
     }
     await store.finish()
 
@@ -164,7 +173,7 @@ struct RepositorySettingsAppearanceTests {
     )
 
     await store.send(.setAppearanceIcon(.sfSymbol("folder"))) {
-      $0.appearance.icon = .sfSymbol("folder")
+      $0.$appearances.withLock { $0["repo-1"] = RepositoryAppearance(icon: .sfSymbol("folder")) }
     }
     await store.finish()
 
@@ -180,7 +189,7 @@ struct RepositorySettingsAppearanceTests {
     )
 
     await store.send(.setAppearanceIcon(.userImage(filename: "new.png"))) {
-      $0.appearance.icon = .userImage(filename: "new.png")
+      $0.$appearances.withLock { $0["repo-1"] = RepositoryAppearance(icon: .userImage(filename: "new.png")) }
     }
     await store.finish()
 
@@ -204,7 +213,7 @@ struct RepositorySettingsAppearanceTests {
 
   // MARK: - Import
 
-  @Test func importUserImageDispatchesImportedAction() async throws {
+  @Test func importUserImageCommitsImportedIcon() async throws {
     let store = makeStore(
       iconAssetStore: RepositoryIconAssetStore(
         importImage: { _, _ in "abc.svg" },
@@ -213,14 +222,12 @@ struct RepositorySettingsAppearanceTests {
       )
     )
 
+    // The effect commits into the shared store itself; no action comes back.
+    store.exhaustivity = .off
     await store.send(.importUserImage(URL(fileURLWithPath: "/tmp/source.svg")))
-    await store.receive(\.userImageImported) { _ in
-      // payload check below
-    }
-    await store.receive(\.setAppearanceIcon) {
-      $0.appearance.icon = .userImage(filename: "abc.svg")
-    }
     await store.finish()
+
+    #expect(store.state.appearance == RepositoryAppearance(icon: .userImage(filename: "abc.svg")))
   }
 
   @Test func importGenericErrorSurfacesLocalizedDescription() async throws {
@@ -268,7 +275,7 @@ struct RepositorySettingsAppearanceTests {
 
     await store.send(.resetAppearance) {
       // Reset removed an icon, so it records suppression like Clear.
-      $0.appearance = RepositoryAppearance(iconDetectionSuppressed: true)
+      $0.$appearances.withLock { $0["repo-1"] = RepositoryAppearance(iconDetectionSuppressed: true) }
     }
     await store.finish()
 
@@ -289,7 +296,7 @@ struct RepositorySettingsAppearanceTests {
     )
 
     await store.send(.resetAppearance) {
-      $0.appearance = .empty
+      $0.$appearances.withLock { $0["repo-1"] = nil }
     }
     await store.finish()
 
@@ -305,33 +312,24 @@ struct RepositorySettingsAppearanceTests {
     #expect(removed.value.isEmpty)
   }
 
-  // MARK: - appearanceLoaded
-
-  @Test func appearanceLoadedReplacesState() async throws {
-    let store = makeStore()
-    let loaded = RepositoryAppearance(icon: .sfSymbol("hammer"), color: .purple)
-    await store.send(.appearanceLoaded(loaded)) {
-      $0.appearance = loaded
-    }
-  }
-
   // MARK: - Regression
 
   @Test func pickingColorKeepsExistingIcon() async throws {
     // Regression: appearance used to be loaded via `.task` async, which
     // raced with the first click after reopening Settings — picking a
     // color before `.task` finished would write `{icon: nil, color: x}`
-    // and wipe the previously-saved icon. The fix seeds appearance
-    // synchronously when the State is built, so the user's first click
-    // sees the right baseline. This test pins the new behavior: with
-    // an icon pre-set in initial state, setting a color must preserve
-    // the icon.
+    // and wipe the previously-saved icon. The pane now reads the shared
+    // store directly, so the user's first click sees the right baseline.
+    // This test pins that: with an icon already saved, setting a color
+    // must preserve the icon.
     let store = makeStore(
       initialAppearance: RepositoryAppearance(icon: .sfSymbol("hammer.fill"), color: nil)
     )
 
     await store.send(.setAppearanceColor(.blue)) {
-      $0.appearance.color = .blue
+      $0.$appearances.withLock {
+        $0["repo-1"] = RepositoryAppearance(icon: .sfSymbol("hammer.fill"), color: .blue)
+      }
     }
 
     #expect(store.state.appearance.icon == .sfSymbol("hammer.fill"))
@@ -345,11 +343,160 @@ struct RepositorySettingsAppearanceTests {
     )
 
     await store.send(.setAppearanceIcon(.sfSymbol("folder.fill"))) {
-      $0.appearance.icon = .sfSymbol("folder.fill")
+      $0.$appearances.withLock {
+        $0["repo-1"] = RepositoryAppearance(icon: .sfSymbol("folder.fill"), color: .red)
+      }
     }
 
     #expect(store.state.appearance.color == .red)
     #expect(store.state.appearance.icon == .sfSymbol("folder.fill"))
+  }
+
+  // MARK: - Concurrent writers (#624)
+
+  /// Simulates automatic icon detection committing into the shared
+  /// store after the Settings pane was built.
+  private func landConcurrently(
+    _ appearance: RepositoryAppearance,
+    in store: TestStore<some Any, some Any>,
+    for repositoryID: Repository.ID = "repo-1"
+  ) {
+    withDependencies {
+      $0 = store.dependencies
+    } operation: {
+      @Shared(.repositoryAppearances) var appearances
+      $appearances.withLock { $0[repositoryID] = appearance }
+    }
+  }
+
+  private func storedAppearances(in store: TestStore<some Any, some Any>) -> [Repository.ID: RepositoryAppearance] {
+    withDependencies {
+      $0 = store.dependencies
+    } operation: {
+      @Shared(.repositoryAppearances) var appearances
+      return appearances
+    }
+  }
+
+  private func storedAppearances() -> [Repository.ID: RepositoryAppearance] {
+    @Shared(.repositoryAppearances) var appearances
+    return appearances
+  }
+
+  @Test(.dependencies) func colorChangeKeepsIconDetectedWhilePaneWasOpen() async throws {
+    let removed = LockIsolated<[(String, URL)]>([])
+    let appearancesURL = URL(fileURLWithPath: "/tmp/appearances-\(UUID().uuidString).json")
+    let settingsStorage = SettingsTestStorage()
+    let store = makeStore(
+      iconAssetStore: .testRecording(removed: removed),
+      appearancesURL: appearancesURL,
+      settingsStorage: settingsStorage
+    )
+    store.exhaustivity = .off
+    landConcurrently(RepositoryAppearance(icon: .detectedImage(filename: "detected.png")), in: store)
+
+    await store.send(.setAppearanceColor(.blue))
+    await store.finish()
+
+    let expected = RepositoryAppearance(icon: .detectedImage(filename: "detected.png"), color: .blue)
+    #expect(storedAppearances(in: store)["repo-1"] == expected)
+    #expect(readAppearances(at: appearancesURL, storage: settingsStorage)["repo-1"] == expected)
+    #expect(removed.value.isEmpty)
+  }
+
+  @Test(.dependencies) func colorChangeKeepsStoredDetectionSuppression() async throws {
+    let store = makeStore()
+    store.exhaustivity = .off
+    landConcurrently(RepositoryAppearance(iconDetectionSuppressed: true), in: store)
+
+    await store.send(.setAppearanceColor(.green))
+    await store.finish()
+
+    #expect(
+      storedAppearances(in: store)["repo-1"] == RepositoryAppearance(color: .green, iconDetectionSuppressed: true))
+  }
+
+  @Test(.dependencies) func iconChangeRemovesIconDetectedWhilePaneWasOpen() async throws {
+    let removed = LockIsolated<[(String, URL)]>([])
+    let store = makeStore(iconAssetStore: .testRecording(removed: removed))
+    store.exhaustivity = .off
+    landConcurrently(RepositoryAppearance(icon: .detectedImage(filename: "detected.png"), color: .red), in: store)
+
+    await store.send(.setAppearanceIcon(.sfSymbol("folder")))
+    await store.finish()
+
+    #expect(storedAppearances(in: store)["repo-1"] == RepositoryAppearance(icon: .sfSymbol("folder"), color: .red))
+    #expect(removed.value.map(\.0) == ["detected.png"])
+  }
+
+  @Test(.dependencies) func resetRemovesIconDetectedWhilePaneWasOpen() async throws {
+    let removed = LockIsolated<[(String, URL)]>([])
+    let store = makeStore(iconAssetStore: .testRecording(removed: removed))
+    store.exhaustivity = .off
+    landConcurrently(RepositoryAppearance(icon: .detectedImage(filename: "detected.png")), in: store)
+
+    await store.send(.resetAppearance)
+    await store.finish()
+
+    #expect(storedAppearances(in: store)["repo-1"] == RepositoryAppearance(iconDetectionSuppressed: true))
+    #expect(removed.value.map(\.0) == ["detected.png"])
+  }
+
+  // MARK: - Synchronous persistence (#622)
+
+  @Test(.dependencies) func appearanceEditsPersistInsideTheReducer() throws {
+    // Reduce without running the returned effect: the shared write must
+    // already be visible, so tearing the pane down (which may cancel or
+    // orphan its effects) can never drop it.
+    let settingsStorage = SettingsTestStorage()
+    let appearancesURL = URL(fileURLWithPath: "/tmp/appearances-\(UUID().uuidString).json")
+    withDependencies {
+      $0.settingsFileStorage = settingsStorage.storage
+      $0.repositoryAppearancesFileURL = appearancesURL
+      $0.repositoryIconAssetStore = .testNoOp
+    } operation: {
+      var state = makeState()
+      let feature = RepositorySettingsFeature()
+      _ = feature._reduce(into: &state, action: .setAppearanceColor(.blue))
+      #expect(storedAppearances()["repo-1"] == RepositoryAppearance(color: .blue))
+      _ = feature._reduce(into: &state, action: .setAppearanceIcon(.sfSymbol("folder")))
+      #expect(storedAppearances()["repo-1"] == RepositoryAppearance(icon: .sfSymbol("folder"), color: .blue))
+      _ = feature._reduce(into: &state, action: .resetAppearance)
+      #expect(storedAppearances()["repo-1"] == RepositoryAppearance(iconDetectionSuppressed: true))
+    }
+  }
+
+  @Test(.dependencies) func userImageImportFinishingAfterPaneTeardownIsStillCommitted() async throws {
+    // Deterministic ordering: `.send` effects are delivered synchronously
+    // within the host action, while the import `.run` only starts once the
+    // test yields (TestStore uses the main serial executor). So the pane is
+    // gone before the import completes.
+    let removed = LockIsolated<[(String, URL)]>([])
+    let store = TestStore(
+      initialState: PaneTeardownHost.State(
+        pane: makeState())
+    ) {
+      PaneTeardownHost()
+    } withDependencies: {
+      $0.settingsFileStorage = SettingsTestStorage().storage
+      $0.repositoryAppearancesFileURL = URL(fileURLWithPath: "/tmp/appearances-\(UUID().uuidString).json")
+      $0.repositoryIconAssetStore = RepositoryIconAssetStore(
+        importImage: { _, _ in "late.png" },
+        remove: { filename, root in removed.withValue { $0.append((filename, root)) } },
+        exists: { _, _ in true }
+      )
+    }
+    store.exhaustivity = .off
+    landConcurrently(RepositoryAppearance(icon: .detectedImage(filename: "detected.png")), in: store)
+
+    await store.send(.importThenTeardown(URL(fileURLWithPath: "/tmp/source.png")))
+    await store.finish()
+    await store.skipReceivedActions()
+
+    #expect(store.state.pane == nil)
+    #expect(storedAppearances(in: store)["repo-1"] == RepositoryAppearance(icon: .userImage(filename: "late.png")))
+    // The replaced detected asset is cleaned up; the imported one is kept.
+    #expect(removed.value.map(\.0) == ["detected.png"])
   }
 
   // MARK: - Persistence helpers
@@ -364,6 +511,42 @@ struct RepositorySettingsAppearanceTests {
 }
 
 // MARK: - Test fixtures
+
+/// Mirrors how `AppFeature` tears the repository pane down: the child
+/// state is cleared by a sibling reducer that runs outside the `ifLet`,
+/// so in-flight pane effects are neither cancelled nor able to deliver
+/// actions back to the pane.
+@Reducer
+private struct PaneTeardownHost {
+  @ObservableState
+  struct State: Equatable {
+    var pane: RepositorySettingsFeature.State?
+  }
+
+  enum Action {
+    case importThenTeardown(URL)
+    case teardown
+    case pane(RepositorySettingsFeature.Action)
+  }
+
+  var body: some Reducer<State, Action> {
+    Reduce { state, action in
+      switch action {
+      case .importThenTeardown(let url):
+        return .merge(.send(.pane(.importUserImage(url))), .send(.teardown))
+      case .teardown:
+        state.pane = nil
+        return .none
+      case .pane:
+        return .none
+      }
+    }
+    Reduce<State, Action> { _, _ in .none }
+      .ifLet(\.pane, action: \.pane) {
+        RepositorySettingsFeature()
+      }
+  }
+}
 
 extension RepositoryIconAssetStore {
   /// Silent test fixture: import always returns an empty filename and

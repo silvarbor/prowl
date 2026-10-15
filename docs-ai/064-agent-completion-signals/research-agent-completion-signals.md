@@ -8,7 +8,7 @@
 > [agent-attestation.json](agent-attestation.json), which generates the line below; the dated
 > re-attestation paragraphs are history.
 
-**Tier-A attestation** (generated from [agent-attestation.json](agent-attestation.json) by `scripts/agent_versions.py --write-matrix`; `make test-scripts` fails when this line drifts): claude 2.1.296 · codex 0.162.1 · copilot 1.0.83 · droid 0.210.0 · qodercli 1.1.67 · pi 1.1.0 · omp 18.8.6 · opencode 1.18.34 — last live sweep 2026-10-11 ([attestations/68b7fbaac22fd1846652d943c624c94f6e9332deaac2e685681bc6e12113f36c.json](attestations/68b7fbaac22fd1846652d943c624c94f6e9332deaac2e685681bc6e12113f36c.json)).
+**Tier-A attestation** (generated from [agent-attestation.json](agent-attestation.json) by `scripts/agent_versions.py --write-matrix`; `make test-scripts` fails when this line drifts): claude 2.1.299 · codex 0.162.1 · copilot 1.0.83 · droid 0.210.0 · qodercli 1.1.67 · pi 1.2.0 · omp 18.10.0 · opencode 1.18.34 — last live sweep 2026-10-14 ([attestations/58cb89fa8c0b6f23e1acb8caceaf02d06d64788c18efac624dd59fe67a7ca5d4.json](attestations/58cb89fa8c0b6f23e1acb8caceaf02d06d64788c18efac624dd59fe67a7ca5d4.json)).
 
 **S3c re-attestation (2026-08-26):** Pi 0.84.3 · Oh My Pi 18.0.6 · OpenCode 1.18.23 (all upgraded first;
 see [010-s3c-plan.md](010-s3c-plan.md) for the measured lifecycles).

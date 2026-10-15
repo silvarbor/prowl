@@ -129,6 +129,19 @@ struct AppFeature {
   @Dependency(GitClientDependency.self) var gitClient
   @Dependency(WorkflowRuntimeClient.self) var workflowRuntimeClient
 
+  private func archivedAutoDeleteEvaluation(state: State, period: AutoDeletePeriod?) -> Effect<Action> {
+    let expired = period.map { state.repositories.expiredArchivedWorktrees(for: $0, now: now) } ?? []
+    let spansRepositories = Set(expired.map(\.repository.id)).count > 1
+    let names = expired.map {
+      spansRepositories ? "\($0.repository.name) / \($0.worktree.name)" : $0.worktree.name
+    }
+    let targets = expired.map {
+      ArchivedAutoDeleteTarget(worktreeID: $0.worktree.id, repositoryID: $0.repository.id)
+    }
+    return .send(
+      .settings(.archivedAutoDeletePeriodChangeEvaluated(period, expiringWorktreeNames: names, targets: targets)))
+  }
+
   var body: some Reducer<State, Action> {
     let core = Reduce<State, Action> { state, action in
       switch action {
@@ -308,9 +321,11 @@ struct AppFeature {
         let worktrees = state.repositories.worktreesForInfoWatcher()
         let openedWorktreeIDs = openedWorktreeIDsForInfoWatcher(from: state.repositories)
         let plainRepositoryRoots = state.repositories.plainRepositoryRootsForInfoWatcher()
+        // A failed repository must not block the restore for the others; the deferred
+        // default view mode waits for this restore to finish.
         let shouldRestoreLayout =
           state.launchRestoreMode == .restoreLayout
-          && state.repositories.snapshotPersistencePhase == .active
+          && state.repositories.snapshotPersistencePhase.hasLoadedLiveRepositories
         let shouldDeferDefaultView = state.launchRestoreMode == .restoreLayout
         appLogger.info(
           "[LayoutRestore] repositoriesChanged: mode=\(String(describing: state.launchRestoreMode))"
@@ -325,6 +340,7 @@ struct AppFeature {
           ids.contains($0.key)
         }
         let restorableWorktrees = makeTerminalRestorableWorktrees(from: Array(repositories))
+        let allowsMissingWorktrees = !failedRepositoryIDs.isEmpty
         appLogger.info("[LayoutRestore] restorableWorktrees count=\(restorableWorktrees.count)")
         var allEffects: [Effect<Action>] = [
           // Runs a previous app instance left behind are marked interrupted (dsl-spec §10 Restart).
@@ -358,7 +374,9 @@ struct AppFeature {
           if shouldRestoreLayout {
             effects.append(
               .run { _ in
-                await terminalClient.send(.restoreLayoutSnapshot(worktrees: restorableWorktrees))
+                await terminalClient.send(
+                  .restoreLayoutSnapshot(
+                    worktrees: restorableWorktrees, allowsMissingWorktrees: allowsMissingWorktrees))
               }
             )
           }
@@ -384,7 +402,9 @@ struct AppFeature {
         if shouldRestoreLayout {
           effects.append(
             .run { _ in
-              await terminalClient.send(.restoreLayoutSnapshot(worktrees: restorableWorktrees))
+              await terminalClient.send(
+                .restoreLayoutSnapshot(
+                  worktrees: restorableWorktrees, allowsMissingWorktrees: allowsMissingWorktrees))
             }
           )
         }
@@ -425,14 +445,12 @@ struct AppFeature {
           }
           @Shared(.repositorySettings(repository.rootURL)) var repositorySettings
           @Shared(.userRepositorySettings(repository.rootURL)) var userRepositorySettings
-          @Shared(.repositoryAppearances) var repositoryAppearances
           var repoSettingsState = RepositorySettingsFeature.State(
             rootURL: repository.rootURL,
             repositoryID: repository.id,
             repositoryKind: repository.kind,
             settings: repositorySettings,
-            userSettings: userRepositorySettings,
-            appearance: repositoryAppearances[repository.id] ?? .empty
+            userSettings: userRepositorySettings
           )
           repoSettingsState.workspace = repository.workspace
           repoSettingsState.globalCopyIgnoredOnWorktreeCreate =
@@ -464,7 +482,7 @@ struct AppFeature {
           into: &state
         )
 
-      case .settings(.delegate(.settingsChanged(let settings))):
+      case .settings(.delegate(.settingsChanged(let settings, let initialArchivedAutoDeleteTargets))):
         let shouldCheckSystemNotificationPermission =
           settings.systemNotificationsEnabled && !state.lastKnownSystemNotificationsEnabled
         let didChangeAgentIslandEnabled =
@@ -515,7 +533,8 @@ struct AppFeature {
           .send(
             .repositories(
               .setArchivedAutoDeletePeriod(
-                settings.archivedAutoDeletePeriod
+                settings.archivedAutoDeletePeriod,
+                initialTargets: initialArchivedAutoDeleteTargets
               )
             )
           ),
@@ -577,6 +596,19 @@ struct AppFeature {
 
       case .settings(.delegate(.terminalFontSizeChanged)):
         return .none
+
+      case .settings(.delegate(.archivedAutoDeletePeriodChangeRequested(let period))):
+        return archivedAutoDeleteEvaluation(state: state, period: period)
+
+      case .settings(.delegate(.archivedAutoDeleteConfirmationRequested(let period, let targets))):
+        guard state.settings.pendingArchivedAutoDeletePeriod == period else { return .none }
+        let currentTargets = state.repositories.expiredArchivedWorktrees(for: period, now: now).map {
+          ArchivedAutoDeleteTarget(worktreeID: $0.worktree.id, repositoryID: $0.repository.id)
+        }
+        guard Set(currentTargets).isSubset(of: Set(targets)) else {
+          return archivedAutoDeleteEvaluation(state: state, period: period)
+        }
+        return .send(.settings(.applyArchivedAutoDeletePeriod(period, targets: currentTargets)))
 
       case .settings(.delegate(.editWorkspace(let repositoryID))):
         guard state.repositories.repositories[id: repositoryID]?.isWorkspace == true else {
@@ -673,10 +705,8 @@ struct AppFeature {
         guard let worktree = state.repositories.selectedTerminalWorktree else {
           return .none
         }
-        let rootURL = worktree.repositoryRootURL
-        let actionID = action.settingsID
-        @Shared(.repositorySettings(rootURL)) var repositorySettings
-        $repositorySettings.withLock { $0.openActionID = actionID }
+        setRepositoryOpenActionID(
+          action.settingsID, rootURL: worktree.repositoryRootURL, into: &state)
         return .none
 
       case .openActionResetToAutomatic:
@@ -687,9 +717,9 @@ struct AppFeature {
         // re-resolve and reopen unconditionally so the entry behaves like the
         // concrete app rows, where selecting always opens.
         if !state.openActionIsAutomatic {
-          let rootURL = worktree.repositoryRootURL
-          @Shared(.repositorySettings(rootURL)) var repositorySettings
-          $repositorySettings.withLock { $0.openActionID = OpenWorktreeAction.automaticSettingsID }
+          setRepositoryOpenActionID(
+            OpenWorktreeAction.automaticSettingsID, rootURL: worktree.repositoryRootURL,
+            into: &state)
         }
         @Shared(.settingsFile) var settingsFile
         state.openActionSelection = OpenWorktreeAction.fromSettingsID(
@@ -1129,13 +1159,8 @@ struct AppFeature {
           }
         )
 
-      case .alert(.dismiss):
-        state.alert = nil
-        return .none
-
       case .alert(.presented(.confirmQuit)):
         analyticsClient.capture("app_quit", appQuitProperties(launchedAt: state.launchedAt))
-        state.alert = nil
         return .run { @MainActor _ in
           appLifecycleClient.terminate()
         }
@@ -1236,6 +1261,9 @@ struct AppFeature {
       }
     }
     core
+      // Clears the alert after any button action; without it, state is only cleared by the
+      // view's dismiss writeback and can stay "presented" when that writeback never arrives.
+      .ifLet(\.$alert, action: \.alert)
       .ifLet(\.$workflowStart, action: \.workflowStart) {
         WorkflowStartFeature()
       }

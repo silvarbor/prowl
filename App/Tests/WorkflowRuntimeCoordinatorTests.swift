@@ -118,6 +118,40 @@ struct WorkflowRuntimeCoordinatorTests {
     #expect(await fixture.coordinator.read(request, callerPane: Self.authorCaller).ok == false)
   }
 
+  @Test func aCallerWithoutAPaneReadsWithTheStepsToken() async throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanUp() }
+    var session = try fixture.waitingSession()
+    fixture.sessions = [session]
+    try session.store.ensureLayout(runID: session.run.id)
+    let grant = try #require(session.run.currentInvocation?.content)
+    func read(token: String?, invocation: Int? = nil) async -> CommandResponse {
+      await fixture.coordinator.read(
+        WorkflowInput(
+          action: .read, invocation: invocation ?? grant.invocation, runID: grant.runID.uuidString, token: token),
+        callerPane: nil)
+    }
+
+    #expect(await read(token: nil).error?.code == CLIErrorCode.sourceRequired)
+    #expect(await read(token: "TOKEN-1").ok)
+    #expect(await read(token: "TOKEN-2").error?.code == CLIErrorCode.tokenInvalid)
+    #expect(await read(token: "TOKEN-1", invocation: grant.invocation + 1).error?.code == CLIErrorCode.tokenInvalid)
+    // A pane ignores a stale environment token; a stranger pane gains nothing from a valid one.
+    #expect(
+      await fixture.coordinator.read(
+        WorkflowInput(action: .read, invocation: grant.invocation, runID: grant.runID.uuidString, token: "stale"),
+        callerPane: Self.authorCaller
+      ).ok)
+    #expect(
+      await fixture.coordinator.read(
+        WorkflowInput(action: .read, invocation: grant.invocation, runID: grant.runID.uuidString, token: "TOKEN-1"),
+        callerPane: Self.strangerCaller
+      ).ok == false)
+    session.run.invocations[0].activation?.state = .revoked
+    fixture.sessions = [session]
+    #expect(await read(token: "TOKEN-1").error?.code == CLIErrorCode.tokenInvalid)
+  }
+
   @Test func skippedAndRevokedTasksCannotBeRead() async throws {
     let fixture = try Fixture()
     defer { fixture.cleanUp() }
@@ -289,6 +323,31 @@ struct WorkflowRuntimeCoordinatorTests {
     let unknown = await fixture.coordinator.deliver(
       WorkflowInput(action: .deliver, runID: UUID().uuidString, stepID: "brief", body: "x"), callerPane: nil)
     #expect(unknown.error?.code == CLIErrorCode.runNotFound)
+  }
+
+  @Test func deliverOutsideAnyPaneIsAttributedByTheWaitingActivationsToken() async throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanUp() }
+    let session = try fixture.waitingSession()
+    fixture.sessions = [session]
+    fixture.answer = try delivered(session)
+
+    let wrong = await fixture.coordinator.deliver(
+      WorkflowInput(action: .deliver, body: "x", token: "TOKEN-2"), callerPane: nil)
+    #expect(wrong.error?.code == CLIErrorCode.tokenInvalid)
+    #expect(fixture.sent.isEmpty)
+
+    let response = await fixture.coordinator.deliver(
+      WorkflowInput(action: .deliver, body: "## Scope\nx\n## Claims\ny", token: "TOKEN-1"), callerPane: nil)
+    #expect(response.ok, "\(response.error?.message ?? "")")
+    guard case .deliver(let request) = fixture.sent.first else {
+      Issue.record("expected a deliver action")
+      return
+    }
+    #expect(request.runID == session.run.id)
+    #expect(request.ordinal == 1)
+    #expect(request.selector == .token("TOKEN-1"))
+    #expect(request.source == "token")
   }
 
   @Test func aPaneWithoutAnActivationCanStillDeliverManuallyButNotImplicitly() async throws {

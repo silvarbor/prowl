@@ -99,6 +99,15 @@ struct CLICommandRouterTests {
   }
 
   @MainActor
+  @Test func routerDispatchesCanvasToCanvasHandler() async {
+    let router = CLICommandRouter()
+    let response = await router.route(CommandEnvelope(output: .json, command: .canvas(CanvasInput(action: .status))))
+    #expect(response.command == "canvas")
+    #expect(response.schemaVersion == "prowl.cli.canvas.v1")
+    #expect(response.error?.code == "NOT_IMPLEMENTED")
+  }
+
+  @MainActor
   @Test func routerDispatchesAgentsReadToAgentsReadHandler() async {
     let router = CLICommandRouter()
     let envelope = CommandEnvelope(
@@ -189,6 +198,7 @@ struct CLICommandRouterTests {
       .read(ReadInput()),
       .tab(TabInput(action: .create)),
       .pane(PaneInput(action: .close)),
+      .canvas(CanvasInput(action: .status)),
     ]
     let router = CLICommandRouter()
     for cmd in commands {

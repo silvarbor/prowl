@@ -21,7 +21,20 @@ struct GithubRateLimitClassifierTests {
       stderr: "gh: API rate limit already exceeded for user ID 1.",
       succeeded: false
     )
-    #expect(signal == GithubRateLimitSignal(isRefusal: true))
+    #expect(
+      signal
+        == GithubRateLimitSignal(
+          isRefusal: true,
+          limit: .primary,
+          evidence: GithubRateLimitEvidence(
+            status: 200,
+            source: .graphQLError,
+            errorType: "RATE_LIMIT",
+            headers: ["x-ratelimit-remaining": "4979"],
+            message: "API rate limit already exceeded for user ID 1."
+          )
+        )
+    )
   }
 
   @Test func rateLimitedErrorTypeIsARefusalEvenWhenGhExitsZero() {
@@ -38,7 +51,20 @@ struct GithubRateLimitClassifierTests {
       {"message":"You have exceeded a secondary rate limit.","documentation_url":"https://docs.github.com"}
       """
     let signal = GithubRateLimitClassifier.classify(stdout: stdout, stderr: "", succeeded: false)
-    #expect(signal == GithubRateLimitSignal(isRefusal: true, retryAfter: .seconds(120)))
+    #expect(
+      signal
+        == GithubRateLimitSignal(
+          isRefusal: true,
+          limit: .secondary,
+          retryAfter: .seconds(120),
+          evidence: GithubRateLimitEvidence(
+            status: 403,
+            source: .responseMessage,
+            headers: ["retry-after": "120"],
+            message: "You have exceeded a secondary rate limit."
+          )
+        )
+    )
   }
 
   @Test func retryAfterAsHTTPDateIsRead() {
@@ -67,9 +93,10 @@ struct GithubRateLimitClassifierTests {
       {"message":"API rate limit exceeded for user ID 1."}
       """
     let signal = GithubRateLimitClassifier.classify(stdout: stdout, stderr: "", succeeded: false)
-    #expect(
-      signal
-        == GithubRateLimitSignal(isRefusal: true, resetAt: Date(timeIntervalSince1970: 1_790_892_842)))
+    #expect(signal?.isRefusal == true)
+    #expect(signal?.limit == .primary)
+    #expect(signal?.resetAt == Date(timeIntervalSince1970: 1_790_892_842))
+    #expect(signal?.evidence.headers == ["x-ratelimit-remaining": "0", "x-ratelimit-reset": "1790892842"])
   }
 
   @Test func spendingTheLastOfTheBudgetBlocksWithoutDiscardingTheAnswer() {
@@ -82,7 +109,24 @@ struct GithubRateLimitClassifierTests {
       """
     let signal = GithubRateLimitClassifier.classify(stdout: stdout, stderr: "", succeeded: true)
     #expect(signal?.isRefusal == false)
+    #expect(signal?.limit == .primary)
     #expect(signal?.resetAt == Date(timeIntervalSince1970: 1_790_892_842))
+  }
+
+  @Test func refusalThatNamesNoLimitCoversTheHost() {
+    let stdout = "HTTP/2.0 429 Too Many Requests\n\n{}"
+    #expect(GithubRateLimitClassifier.classify(stdout: stdout, stderr: "", succeeded: false)?.limit == .secondary)
+  }
+
+  @Test func abuseDetectionIsASecondaryLimit() {
+    let signal = GithubRateLimitClassifier.classify(
+      stdout: "",
+      stderr: "gh: You have triggered an abuse detection mechanism. (HTTP 403)",
+      succeeded: false
+    )
+    #expect(signal?.isRefusal == true)
+    #expect(signal?.limit == .secondary)
+    #expect(signal?.evidence.message == "gh: You have triggered an abuse detection mechanism. (HTTP 403)")
   }
 
   @Test func permissionDenialIsNotARateLimit() {
@@ -111,6 +155,222 @@ struct GithubRateLimitClassifierTests {
       succeeded: false
     )
     #expect(signal?.isRefusal == true)
+    #expect(signal?.limit == .primary)
+    #expect(
+      signal?.evidence
+        == GithubRateLimitEvidence(
+          source: .stderr,
+          message: "GraphQL: API rate limit exceeded for user ID 1. (rateLimit)"
+        ))
+  }
+
+  // Login-shell noise, such as a tool that hit api.github.com's limit while the shell started, must
+  // not turn GitHub's own answer into a refusal.
+  @Test func stderrDoesNotSpeakOnceGitHubAnswered() {
+    let stdout = """
+      HTTP/2.0 200 OK
+      X-Ratelimit-Remaining: 9994
+
+      {"data":{"r0":null},"errors":[{"type":"NOT_FOUND","path":["r0"],"message":"Could not resolve to a Repository."}]}
+      """
+    let stderr = "mise WARN  GitHub API rate limit exceeded\ngh: Could not resolve to a Repository."
+    #expect(GithubRateLimitClassifier.classify(stdout: stdout, stderr: stderr, succeeded: false) == nil)
+  }
+
+  @Test func refusalKeepsTheHeadersThatTraceIt() {
+    let stdout = """
+      HTTP/2.0 403 Forbidden
+      Content-Type: application/json; charset=utf-8
+      Retry-After: 60
+      Server: GitHub.com
+      Via: 1.1 proxy.example
+      X-GitHub-Request-Id: ABCD:1234
+
+      {"message":"You have exceeded a secondary rate limit."}
+      """
+    let signal = GithubRateLimitClassifier.classify(stdout: stdout, stderr: "", succeeded: false)
+    #expect(
+      signal?.evidence.headers
+        == [
+          "retry-after": "60", "server": "GitHub.com", "via": "1.1 proxy.example", "x-github-request-id": "ABCD:1234",
+        ]
+    )
+  }
+
+  @Test func refusalWithoutAMessageQuotesTheBody() {
+    let stdout = """
+      HTTP/1.1 429 Too Many Requests
+      Content-Type: text/html
+
+      <html><body>
+        <h1>Request rejected by the proxy</h1>
+      </body></html>
+      """
+    let signal = GithubRateLimitClassifier.classify(stdout: stdout, stderr: "", succeeded: false)
+    #expect(signal?.evidence.source == .status)
+    #expect(signal?.evidence.message == "<html><body> <h1>Request rejected by the proxy</h1> </body></html>")
+  }
+
+  @Test func retryAfterAloneMarksA403AsARefusal() {
+    let stdout = """
+      HTTP/2.0 403 Forbidden
+      Retry-After: 30
+
+      {"message":"Forbidden"}
+      """
+    let signal = GithubRateLimitClassifier.classify(stdout: stdout, stderr: "", succeeded: false)
+    #expect(signal?.isRefusal == true)
+    #expect(signal?.evidence.source == .headers)
+    #expect(signal?.evidence.message == #"{"message":"Forbidden"}"#)
+  }
+}
+
+struct GithubRateLimitRequestTests {
+  @Test func graphQLQueryNamesItsHost() {
+    let request = GithubRateLimitRequest(arguments: ["api", "graphql", "--include", "--hostname", "ghe.example"])
+    #expect(request.scope == GithubRateLimitScope(host: "ghe.example", resource: .graphQL))
+    #expect(request.command == "gh api graphql")
+  }
+
+  @Test func pullRequestCommandTakesTheHostFromItsRepository() {
+    let request = GithubRateLimitRequest(arguments: ["pr", "merge", "7", "--repo", "github.com/octo/repo", "--squash"])
+    #expect(request.scope == GithubRateLimitScope(host: "github.com", resource: .graphQL))
+    #expect(request.command == "gh pr merge")
+  }
+
+  @Test func runCommandsSpendTheRESTBudget() {
+    let request = GithubRateLimitRequest(arguments: ["run", "list", "--branch", "feature", "--json", "status"])
+    #expect(request.scope == GithubRateLimitScope(host: nil, resource: .rest))
+  }
+
+  @Test func repositoryWithoutHostLeavesTheHostToGh() {
+    let request = GithubRateLimitRequest(arguments: ["pr", "close", "7", "--repo", "octo/repo"])
+    #expect(request.scope == GithubRateLimitScope(host: nil, resource: .graphQL))
+  }
+
+  @Test func batchedQueryRecordsItsSize() {
+    let query = """
+      query {
+        r0: repository(owner: "octo", name: "one") {
+          r0_b0: pullRequests(first: 5) { nodes { number } }
+          r0_b1: pullRequests(first: 5) { nodes { number } }
+        }
+        r1: repository(owner: "octo", name: "two") {
+          r1_b0: pullRequests(first: 5) { nodes { number } }
+        }
+      }
+      """
+    let request = GithubRateLimitRequest(
+      arguments: ["api", "graphql", "--include", "--hostname", "ghe.example", "-f", "query=\(query)"])
+    #expect(
+      request.query
+        == GithubRateLimitRequest.QueryShape(bytes: query.utf8.count, repositories: 2, pullRequestLookups: 3))
+  }
+
+  @Test func commandWithoutAQueryHasNoQuerySize() {
+    #expect(GithubRateLimitRequest(arguments: ["pr", "merge", "7", "--squash"]).query == nil)
+  }
+
+  @Test func authStatusForAHostSpendsTheRESTBudget() {
+    let request = GithubRateLimitRequest(arguments: ["auth", "status", "--active", "--hostname", "github.com"])
+    #expect(request.scope == GithubRateLimitScope(host: "github.com", resource: .rest))
+  }
+}
+
+struct GithubRateLimitStatusTests {
+  @Test func graphQLBlockOnTheRepositoryHostHoldsBackItsStatus() {
+    let graphQL = GithubRateLimitBlockFixture.graphQL(host: "ghe.example", retryAt: Date(timeIntervalSince1970: 60))
+    let rest = GithubRateLimitBlockFixture.rest(host: "ghe.example", retryAt: Date(timeIntervalSince1970: 30))
+    let status = GithubRateLimitStatus(blocks: [graphQL, rest], hosts: ["ghe.example"])
+    #expect(status?.retryAt == Date(timeIntervalSince1970: 60))
+    #expect(status?.blocks == [graphQL, rest])
+  }
+
+  @Test func blocksOnOtherHostsDoNotConcernTheRepository() {
+    let blocks = [
+      GithubRateLimitBlockFixture.graphQL(host: "ghe.example"),
+      GithubRateLimitBlockFixture.graphQL(host: nil),
+    ]
+    #expect(GithubRateLimitStatus(blocks: blocks, hosts: ["github.com"]) == nil)
+  }
+
+  @Test func restBlockAloneLeavesThePullRequestStatusShowing() {
+    #expect(
+      GithubRateLimitStatus(blocks: [GithubRateLimitBlockFixture.rest(host: "github.com")], hosts: ["github.com"])
+        == nil)
+  }
+}
+
+struct GithubRateLimitBlockGroupTests {
+  @Test func lanesHeldBackByOneRefusalShowAsOneEntry() {
+    let retryAt = Date(timeIntervalSince1970: 60)
+    let graphQL = GithubRateLimitBlockFixture.graphQL(host: "ghe.example", retryAt: retryAt)
+    var rest = GithubRateLimitBlockFixture.rest(host: "ghe.example", retryAt: retryAt)
+    rest.cause = graphQL.cause
+    let other = GithubRateLimitBlockFixture.graphQL(host: "github.com", retryAt: retryAt)
+
+    #expect(
+      GithubRateLimitBlockGroup.grouping([graphQL, rest, other]) == [
+        GithubRateLimitBlockGroup(
+          host: "ghe.example", resources: [.graphQL, .rest], retryAt: retryAt, cause: graphQL.cause),
+        GithubRateLimitBlockGroup(host: "github.com", resources: [.graphQL], retryAt: retryAt, cause: other.cause),
+      ])
+  }
+
+  @Test func lanesWithTheirOwnRefusalsStaySeparate() {
+    let graphQL = GithubRateLimitBlockFixture.graphQL(host: "ghe.example", retryAt: Date(timeIntervalSince1970: 60))
+    let rest = GithubRateLimitBlockFixture.rest(host: "ghe.example", retryAt: Date(timeIntervalSince1970: 90))
+    #expect(GithubRateLimitBlockGroup.grouping([graphQL, rest]).map(\.resources) == [[.graphQL], [.rest]])
+  }
+}
+
+struct GithubRateLimitCauseSummaryTests {
+  @Test func summaryNamesTheRequestAndEverythingGitHubSent() {
+    var request = GithubRateLimitRequest(
+      scope: GithubRateLimitScope(host: "ghe.example", resource: .graphQL), command: "gh api graphql")
+    request.query = GithubRateLimitRequest.QueryShape(bytes: 18_000, repositories: 15, pullRequestLookups: 40)
+    let cause = GithubRateLimitCause(
+      request: request,
+      limit: .secondary,
+      evidence: GithubRateLimitEvidence(
+        status: 200,
+        source: .graphQLError,
+        errorType: "RATE_LIMITED",
+        headers: ["x-github-request-id": "ABCD:1234", "x-ratelimit-remaining": "9994"],
+        message: "You have exceeded a secondary rate limit."
+      )
+    )
+    #expect(
+      cause.summary == """
+        gh api graphql: 15 repositories, 40 branches, 18000-byte query
+        HTTP 200, secondary limit, from GraphQL errors (RATE_LIMITED)
+        x-github-request-id: ABCD:1234
+        x-ratelimit-remaining: 9994
+        You have exceeded a secondary rate limit.
+        """)
+  }
+}
+
+nonisolated enum GithubRateLimitBlockFixture {
+  static func graphQL(host: String?, retryAt: Date = Date(timeIntervalSince1970: 1_000_060)) -> GithubRateLimitBlock {
+    block(host: host, resource: .graphQL, retryAt: retryAt)
+  }
+
+  static func rest(host: String?, retryAt: Date = Date(timeIntervalSince1970: 1_000_060)) -> GithubRateLimitBlock {
+    block(host: host, resource: .rest, retryAt: retryAt)
+  }
+
+  static func block(host: String?, resource: GithubAPIResource, retryAt: Date) -> GithubRateLimitBlock {
+    let scope = GithubRateLimitScope(host: host, resource: resource)
+    return GithubRateLimitBlock(
+      scope: scope,
+      retryAt: retryAt,
+      cause: GithubRateLimitCause(
+        request: GithubRateLimitRequest(scope: scope, command: "gh api graphql"),
+        limit: .primary,
+        evidence: GithubRateLimitEvidence(status: 403, message: "API rate limit exceeded for user ID 1.")
+      )
+    )
   }
 }
 
@@ -274,22 +534,101 @@ struct GithubRateLimitGateTests {
     #expect(retryAt == clock.value.addingTimeInterval(240))
   }
 
-  @Test func retryTimesStreamFollowsTheGate() async throws {
+  @Test func blocksStreamFollowsTheGateAndNamesTheCause() async throws {
     let clock = LockIsolated(Date(timeIntervalSince1970: 1_000_000))
     let gate = GithubRateLimitGate(now: { clock.value }, jitter: { 0 })
-    var iterator = await gate.retryTimes().makeAsyncIterator()
-    #expect(await iterator.next() == .some(nil))
+    var iterator = await gate.blocks().makeAsyncIterator()
+    #expect(await iterator.next() == [])
 
-    let retryAt = await gate.record(
-      try await gate.admit(),
-      signal: GithubRateLimitSignal(isRefusal: true),
-      answered: true
+    let request = GithubRateLimitRequest(arguments: ["api", "graphql", "--hostname", "github.com"])
+    let signal = GithubRateLimitSignal(
+      isRefusal: true,
+      limit: .primary,
+      evidence: GithubRateLimitEvidence(status: 403, message: "API rate limit exceeded for user ID 1.")
     )
-    #expect(await iterator.next() == .some(retryAt))
+    let retryAt = try #require(await gate.record(try await gate.admit(request), signal: signal, answered: true))
+    #expect(
+      await iterator.next() == [
+        GithubRateLimitBlock(
+          scope: request.scope,
+          retryAt: retryAt,
+          cause: GithubRateLimitCause(request: request, limit: .primary, evidence: signal.evidence)
+        )
+      ]
+    )
 
     clock.withValue { $0.addTimeInterval(60) }
-    _ = await gate.record(try await gate.admit(), signal: nil, answered: true)
-    #expect(await iterator.next() == .some(nil))
+    _ = await gate.record(try await gate.admit(request), signal: nil, answered: true)
+    #expect(await iterator.next() == [])
+  }
+
+  @Test func refusalOnOneHostLeavesOtherHostsOpen() async throws {
+    let gate = GithubRateLimitGate(now: { Date(timeIntervalSince1970: 1_000_000) }, jitter: { 0 })
+    let enterprise = GithubRateLimitRequest(arguments: ["api", "graphql", "--hostname", "ghe.example"])
+    let github = GithubRateLimitRequest(arguments: ["api", "graphql", "--hostname", "github.com"])
+
+    _ = await gate.record(
+      try await gate.admit(enterprise), signal: GithubRateLimitSignal(isRefusal: true), answered: true)
+
+    #expect(try await gate.admit(github) == GithubRateLimitGate.Ticket(isProbe: false, request: github))
+    await #expect(throws: GithubCLIError.self) {
+      _ = try await gate.admit(enterprise)
+    }
+  }
+
+  @Test func primaryLimitHoldsBackOnlyItsAPI() async throws {
+    let gate = GithubRateLimitGate(now: { Date(timeIntervalSince1970: 1_000_000) }, jitter: { 0 })
+    let runList = GithubRateLimitRequest(arguments: ["run", "list", "--repo", "github.com/octo/repo"])
+    let query = GithubRateLimitRequest(arguments: ["api", "graphql", "--hostname", "github.com"])
+
+    _ = await gate.record(
+      try await gate.admit(runList),
+      signal: GithubRateLimitSignal(isRefusal: true, limit: .primary),
+      answered: true
+    )
+
+    #expect(try await gate.admit(query) == GithubRateLimitGate.Ticket(isProbe: false, request: query))
+    await #expect(throws: GithubCLIError.self) {
+      _ = try await gate.admit(runList)
+    }
+  }
+
+  @Test func secondaryLimitHoldsBackEveryAPIOfTheHost() async throws {
+    let clock = LockIsolated(Date(timeIntervalSince1970: 1_000_000))
+    let gate = GithubRateLimitGate(now: { clock.value }, jitter: { 0 })
+    let query = GithubRateLimitRequest(arguments: ["api", "graphql", "--hostname", "github.com"])
+    let runList = GithubRateLimitRequest(arguments: ["run", "list", "--repo", "github.com/octo/repo"])
+    let otherHost = GithubRateLimitRequest(arguments: ["run", "list", "--repo", "ghe.example/octo/repo"])
+
+    let retryAt = await gate.record(
+      try await gate.admit(query),
+      signal: GithubRateLimitSignal(isRefusal: true, limit: .secondary, retryAfter: .seconds(30)),
+      answered: true
+    )
+
+    await #expect(throws: GithubCLIError.rateLimited(retryAt: retryAt!)) {
+      _ = try await gate.admit(runList)
+    }
+    #expect(try await gate.admit(otherHost).isProbe == false)
+    clock.withValue { $0.addTimeInterval(30) }
+    #expect(try await gate.admit(runList).isProbe)
+  }
+
+  @Test func retryNowLetsTheNextRequestProbe() async throws {
+    let clock = LockIsolated(Date(timeIntervalSince1970: 1_000_000))
+    let gate = GithubRateLimitGate(now: { clock.value }, jitter: { 0 })
+    _ = await gate.record(try await gate.admit(), signal: GithubRateLimitSignal(isRefusal: true), answered: true)
+    var iterator = await gate.blocks().makeAsyncIterator()
+    #expect(await iterator.next()?.first?.retryAt == clock.value.addingTimeInterval(60))
+
+    await gate.retryNow()
+
+    #expect(await iterator.next()?.first?.retryAt == clock.value)
+    let probe = try await gate.admit()
+    #expect(probe.isProbe)
+    // A probe that is refused again continues the backoff.
+    let retryAt = await gate.record(probe, signal: GithubRateLimitSignal(isRefusal: true), answered: true)
+    #expect(retryAt == clock.value.addingTimeInterval(120))
   }
 
   @Test func abandonedProbePassesToTheNextRequest() async throws {
@@ -379,6 +718,92 @@ struct GithubRateLimitedClientTests {
       _ = try await client.batchPullRequestsAcrossRepositories("github.com", [request], nil)
     }
     #expect(launches.value == 1)
+  }
+
+  // Issue #908: a refusal for one host or API stopped the pull request queries of every host.
+  @Test func refusedRunListLeavesPullRequestQueriesFlowing() async {
+    let gate = GithubRateLimitGate(now: { Date(timeIntervalSince1970: 1_000_000) }, jitter: { 0 })
+    let launches = LockIsolated(0)
+    let client = GithubCLIClient.live(
+      shell: fakeGh(launches: launches) { arguments in
+        if arguments.first == "run" {
+          throw ShellClientError(
+            command: "gh run list",
+            stdout: "",
+            stderr:
+              "HTTP 403: API rate limit exceeded for user ID 1. (https://api.github.com/repos/octo/repo/actions/runs)",
+            exitCode: 1
+          )
+        }
+        return ShellOutput(stdout: "HTTP/2.0 200 OK\n\n{\"data\":{\"r0\":{}}}", stderr: "", exitCode: 0)
+      },
+      rateLimitGate: gate
+    )
+    await #expect(throws: GithubCLIError.self) {
+      _ = try await client.latestRun(URL(fileURLWithPath: "/tmp/repo"), "feature", nil)
+    }
+
+    let request = CrossRepoPullRequestRequest(owner: "octo", repo: "repo", branches: ["feature"])
+    _ = try? await client.batchPullRequestsAcrossRepositories("github.com", [request], nil)
+
+    #expect(launches.value == 2)
+  }
+
+  @Test func refusedEnterpriseHostLeavesGithubComFlowing() async {
+    let gate = GithubRateLimitGate(now: { Date(timeIntervalSince1970: 1_000_000) }, jitter: { 0 })
+    let launches = LockIsolated(0)
+    let client = GithubCLIClient.live(
+      shell: fakeGh(launches: launches) { arguments in
+        if arguments.contains("ghe.example") {
+          throw ShellClientError(
+            command: "gh api graphql",
+            stdout: GithubRateLimitClassifierTests.graphQLRefusal,
+            stderr: "gh: API rate limit already exceeded for user ID 1.",
+            exitCode: 1
+          )
+        }
+        return ShellOutput(stdout: "HTTP/2.0 200 OK\n\n{\"data\":{\"r0\":{}}}", stderr: "", exitCode: 0)
+      },
+      rateLimitGate: gate
+    )
+    let request = CrossRepoPullRequestRequest(owner: "octo", repo: "repo", branches: ["feature"])
+    await #expect(throws: GithubCLIError.self) {
+      _ = try await client.batchPullRequestsAcrossRepositories("ghe.example", [request], nil)
+    }
+
+    _ = try? await client.batchPullRequestsAcrossRepositories("github.com", [request], nil)
+    await #expect(throws: GithubCLIError.self) {
+      _ = try await client.batchPullRequestsAcrossRepositories("ghe.example", [request], nil)
+    }
+
+    #expect(launches.value == 2)
+  }
+
+  @Test func refusedBatchNamesItsSizeInTheBlock() async throws {
+    let gate = GithubRateLimitGate(now: { Date(timeIntervalSince1970: 1_000_000) }, jitter: { 0 })
+    let client = GithubCLIClient.live(
+      shell: fakeGh(launches: LockIsolated(0)) { _ in
+        throw ShellClientError(
+          command: "gh api graphql",
+          stdout: GithubRateLimitClassifierTests.graphQLRefusal,
+          stderr: "",
+          exitCode: 1
+        )
+      },
+      rateLimitGate: gate
+    )
+    let requests = [
+      CrossRepoPullRequestRequest(owner: "octo", repo: "one", branches: ["main", "feature"]),
+      CrossRepoPullRequestRequest(owner: "octo", repo: "two", branches: ["main"]),
+    ]
+    await #expect(throws: GithubCLIError.self) {
+      _ = try await client.batchPullRequestsAcrossRepositories("ghe.example", requests, nil)
+    }
+
+    var blocks = await gate.blocks().makeAsyncIterator()
+    let query = await blocks.next()?.first?.cause.request.query
+    #expect(query?.repositories == 2)
+    #expect(query?.pullRequestLookups == 3)
   }
 
   @Test func versionCheckRunsWhileRateLimited() async throws {
@@ -494,7 +919,7 @@ struct GithubSettingsRateLimitTests {
         return Self.snapshot
       }
       // The gate already reopened by the time the refusal arrives.
-      $0.githubCLI.rateLimitRetryTimes = { AsyncStream { $0.yield(nil) } }
+      $0.githubCLI.rateLimitBlocks = { AsyncStream { $0.yield([]) } }
     } operation: {
       GithubSettingsViewModel()
     }
@@ -514,7 +939,9 @@ struct GithubSettingsRateLimitTests {
         calls.withValue { $0 += 1 }
         throw GithubCLIError.rateLimited(retryAt: retryAt)
       }
-      $0.githubCLI.rateLimitRetryTimes = { AsyncStream { $0.yield(retryAt) } }
+      $0.githubCLI.rateLimitBlocks = {
+        AsyncStream { $0.yield([GithubRateLimitBlockFixture.rest(host: nil, retryAt: retryAt)]) }
+      }
     } operation: {
       GithubSettingsViewModel()
     }

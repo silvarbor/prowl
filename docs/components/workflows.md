@@ -316,6 +316,14 @@ Agents retrieve assigned prompts and explicit input resources with
 persistence; deliver text or JSON through `prowl workflow deliver -` on stdin. Run
 paths are temporary artifact locations, not durable downstream references.
 
+A typed task line puts the step's `PROWL_WORKFLOW_TOKEN=<token>` in front of both the
+`read` and the `deliver` command. When Prowl can place the calling process in a pane, the
+pane identifies the task and the token only correlates it. When it cannot — for example, a
+command that Codex's shared daemon runs and Prowl cannot map to a pane (see
+[CLI](cli.md)) — the token of the waiting step identifies the task instead, so `read` and
+`deliver` still work. A launched agent gets the token in its environment. Skip, Cancel, and
+Relaunch revoke the token.
+
 ## Settings → Agents → Workflows
 
 The global page is a compact index of **Built-in** and **Your Workflows**
