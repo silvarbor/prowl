@@ -45,7 +45,9 @@ nonisolated enum ClaudeRuntimeDecoder {
     else { throw Failure.unsupported }
     let state: AgentRawState
     switch record.status {
-    case "busy", "shell": state = .working
+    case "busy": state = .working
+    // The turn has ended and the composer accepts input; only background shells still run.
+    case "shell": state = .idle
     case "waiting": state = .blocked
     case "idle": state = .idle
     default: throw Failure.unsupported

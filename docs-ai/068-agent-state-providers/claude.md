@@ -21,9 +21,11 @@ not know still yields the identity, and the transcript path is reported once the
 prompt has created it. The transcript scan and fingerprint are the fallback for versions
 without the registry.
 
-`busy` and `shell` map to Working, `waiting` to Blocked, and `idle` to Idle. Native
-state includes observed assigned children and background shell work, including work
-retained across `/new`. It remains private, process-scoped heuristic evidence; a
+`busy` maps to Working, `waiting` to Blocked, and `idle` and `shell` to Idle. `shell`
+means the turn has ended and the composer accepts input while background shells still
+run; a long-running monitor shell would otherwise hold the pane at Working, and every
+idle wait and dispatch with it, indefinitely. Native state includes observed assigned
+children, including work retained across `/new`. It remains private, process-scoped heuristic evidence; a
 native Idle is neither successful task delivery nor a public completion signal.
 
 Missing/partial reads suspend authority; unsupported records revoke it. Recovery

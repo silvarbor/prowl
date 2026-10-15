@@ -18,7 +18,7 @@ struct ClaudeRuntimeProviderTests {
 
   @Test func nativeStatesIncludeBackgroundShellWork() throws {
     for (raw, expected) in [
-      ("busy", AgentRawState.working), ("shell", .working), ("waiting", .blocked), ("idle", .idle),
+      ("busy", AgentRawState.working), ("shell", .idle), ("waiting", .blocked), ("idle", .idle),
     ] {
       let snapshot = try ClaudeRuntimeDecoder.decode(
         record(status: raw), process: AgentProcessGeneration(pid: 42, startedAt: start))
