@@ -83,9 +83,8 @@ extension RepositoriesFeature {
     ):
       state.isRefreshingWorktrees = false
       let wasRestoringSnapshot = state.snapshotPersistencePhase == .restoring
-      if failures.isEmpty, state.snapshotPersistencePhase != .active {
-        state.snapshotPersistencePhase = .active
-      }
+      state.snapshotPersistencePhase = state.snapshotPersistencePhase.afterLiveLoad(
+        hasFailures: !failures.isEmpty)
       let wasAlreadyLoaded = state.isInitialLoadComplete
       let previousRepoIDs = Set(state.repositories.ids)
       let previousSelection = state.selectedWorktreeID

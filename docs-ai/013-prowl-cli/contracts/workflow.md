@@ -18,7 +18,7 @@ is the wire contract.
 ```bash
 prowl workflow list [target] [--target|--worktree|--tab|--pane <selector>] [--json]
 prowl workflow run <id|name> [source] [--role <role>=<binding>]... [--input <name>=<value>]... [--skip <step>]... [--json]
-prowl workflow read [resource-id] --run <run-id> --invocation <number> [--offset <bytes>] [--json]
+prowl workflow read [resource-id] --run <run-id> --invocation <number> [--offset <bytes>] [--token <t>] [--json]
 prowl workflow status [run-id] [--json]
 prowl workflow deliver (-|--file <path>) [--verdict <v>] [--token <t>] [--run <run-id> --step <step>] [--force] [--json]
 prowl workflow cancel <run-id> [--json]
@@ -29,17 +29,20 @@ prowl workflow schema [--json]
 Wire request: `command: "workflow"` with `action` (`list` | `run` | `status` | `deliver` |
 `cancel` | `read`), `target` (060 selector), and the action's fields — `workflow`, `roleBindings[]`,
 `inputValues[]`, `skippedSteps[]` (`run`); `runID` (`status`, `cancel`, `deliver`); `stepID`,
-`body`, `verdict`, `token`, `force` (`deliver`). The CLI reads the `deliver` body itself (stdin or
-`--file`, UTF-8, at most 16 MiB → `OUTPUT_TOO_LARGE` client-side) and fills `token` from
-`--token` or `$PROWL_WORKFLOW_TOKEN`.
+`body`, `verdict`, `token`, `force` (`deliver`); `token` (`read`). The CLI reads the `deliver`
+body itself (stdin or `--file`, UTF-8, at most 16 MiB → `OUTPUT_TOO_LARGE` client-side) and fills
+`token` from `--token` or `$PROWL_WORKFLOW_TOKEN` for both `deliver` and `read`.
 
 ### `read` assigned content
 
 The socket request uses `action: "read"`, `runID` (UUID), `invocation` (positive
 ordinal), optional `contentResource` (default `prompt`), and `contentOffset`
-(default 0). The caller is resolved from socket peer ancestry. There is no read token
-and no arbitrary path argument. The pane must own this run and the invocation must
-be its role's last assigned task. Skipped/revoked activations and cancelled runs are
+(default 0). The caller is resolved from socket peer ancestry, with no arbitrary path
+argument. The pane must own this run and the invocation must be its role's last assigned
+task; a resolved pane ignores `token`, because its environment can hold an earlier launch
+step's token. When no caller pane resolves (issue #911: a Codex daemon caller that cannot be
+mapped), `token` must equal the invocation's activation token, under the same
+last-assignment rules (`TOKEN_INVALID` otherwise). Skipped/revoked activations and cancelled runs are
 rejected. Normal completion preserves the last assignment until reassignment,
 history cleanup, or app exit. Attribution is checked again after filesystem I/O.
 
@@ -55,7 +58,8 @@ Read errors use the usual workflow error envelope:
 
 | Code | Condition |
 | --- | --- |
-| `SOURCE_REQUIRED` | No caller pane can be resolved. |
+| `SOURCE_REQUIRED` | No caller pane can be resolved and no `token` was passed. |
+| `TOKEN_INVALID` | No caller pane resolved and `token` is not the activation token of the assigned invocation. |
 | `STEP_NOT_EXPECTING` | Run/invocation does not match the current assignment, the task was skipped/revoked, or attribution changed during I/O. |
 | `WORKFLOW_FAILED` | Resource is unknown, history is missing/unsafe/unreadable, or offset is outside the resource. |
 
@@ -134,6 +138,9 @@ be valid (`WORKFLOW_INVALID`, `details` = the validate payload) and enabled
    step must be the one waiting (`STEP_NOT_EXPECTING`). The run log records `source=manual`.
 3. Both present and disagreeing (the caller pane waits for another step or run) is
    `ROLE_MISMATCH` unless `--force`, which takes the manual path (`source=manual --force`).
+4. No caller pane, no `--run --step`, and a token (issue #911): the live run whose waiting
+   activation has that token receives the delivery (`source=token`); no match is
+   `TOKEN_INVALID`.
 
 The response is sent only after the output reached the run directory (decision W1): a cancel
 or skip that lands while it is being written answers `STEP_NOT_EXPECTING`, a write failure

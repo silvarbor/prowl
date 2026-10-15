@@ -113,3 +113,8 @@ restored regardless of the setting.
 - Updated 2026-06-27: visual tuning after real use — `tileCardSpacing` 14 → 12,
   fit-to-view padding 30 → 12 (`viewportFitPadding`), `bottomToolbarReserve` 50 → 40 —
   see [002-spacing-and-fit-margin-tweaks.md](002-spacing-and-fit-margin-tweaks.md)
+- Updated 2026-10-12: the Tile entry points and constants moved — `tileCards()` /
+  `tileCardsWithFit()` became `CanvasView.layoutCards(.tile)` / `applyLayout(.tile)`, the
+  algorithm call lives in `CanvasLayoutEngine`, and `tileCardSpacing` / the 0.6 comfortable
+  fraction live in `CanvasLayoutMetrics` — see
+  [081-canvas-layout-modes](../081-canvas-layout-modes/002-s0-consolidation.md)

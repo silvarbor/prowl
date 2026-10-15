@@ -172,4 +172,104 @@ struct CanvasViewportMathTests {
 
     #expect(delta == CGSize(width: 25, height: 0))
   }
+
+  // MARK: - reveal
+
+  private let revealViewport = CGSize(width: 1000, height: 640)
+
+  @Test func revealIsANoOpForAVisibleCard() {
+    let result = CanvasViewportMath.reveal(
+      cardFrame: CGRect(x: 100, y: 100, width: 300, height: 200),
+      in: CanvasViewportMath.Viewport(size: revealViewport, scale: 1, offset: .zero, bottomReserve: 40),
+      margin: 20,
+      allowsZoomOut: true
+    )
+
+    #expect(result == nil)
+  }
+
+  @Test func revealPansToTheCardsFarEdge() throws {
+    let card = CGRect(x: 1200, y: 100, width: 300, height: 200)
+    let result = try #require(
+      CanvasViewportMath.reveal(
+        cardFrame: card,
+        in: CanvasViewportMath.Viewport(size: revealViewport, scale: 1, offset: .zero, bottomReserve: 40),
+        margin: 20,
+        allowsZoomOut: true
+      ))
+
+    #expect(result.scale == 1)
+    #expect(card.maxX + result.offset.width == revealViewport.width - 20)
+    #expect(result.offset.height == 0)
+  }
+
+  @Test func revealZoomsOutToFitAnOversizedCard() throws {
+    let card = CGRect(x: 2000, y: 2000, width: 1920, height: 1160)
+    let result = try #require(
+      CanvasViewportMath.reveal(
+        cardFrame: card,
+        in: CanvasViewportMath.Viewport(size: revealViewport, scale: 1, offset: .zero, bottomReserve: 40),
+        margin: 20,
+        allowsZoomOut: true
+      ))
+
+    // Visible area is 960 × 560 after margins and the bottom reserve; height binds.
+    #expect(abs(result.scale - 560.0 / 1160.0) < 0.0001)
+    #expect(abs(card.midX * result.scale + result.offset.width - revealViewport.width / 2) < 0.001)
+    #expect(abs(card.midY * result.scale + result.offset.height - (revealViewport.height - 40) / 2) < 0.001)
+  }
+
+  @Test func revealKeepsTheZoomWhenZoomingOutIsNotAllowed() throws {
+    let card = CGRect(x: 2000, y: 2000, width: 1920, height: 1160)
+    let result = try #require(
+      CanvasViewportMath.reveal(
+        cardFrame: card,
+        in: CanvasViewportMath.Viewport(size: revealViewport, scale: 1, offset: .zero, bottomReserve: 40),
+        margin: 20,
+        allowsZoomOut: false
+      ))
+
+    #expect(result.scale == 1)
+  }
+
+  @Test func revealIsANoOpForAVisibleCardInsideTheMargin() {
+    // Fully on screen but closer than the margin to the left edge.
+    let result = CanvasViewportMath.reveal(
+      cardFrame: CGRect(x: 5, y: 100, width: 300, height: 200),
+      in: CanvasViewportMath.Viewport(size: revealViewport, scale: 1, offset: .zero, bottomReserve: 40),
+      margin: 20,
+      allowsZoomOut: true
+    )
+
+    #expect(result == nil)
+  }
+
+  @Test func revealWithoutZoomShowsTheTopLeftOfAnOversizedCard() throws {
+    let card = CGRect(x: 2000, y: 2000, width: 1920, height: 1160)
+    let result = try #require(
+      CanvasViewportMath.reveal(
+        cardFrame: card,
+        in: CanvasViewportMath.Viewport(size: revealViewport, scale: 1, offset: .zero, bottomReserve: 40),
+        margin: 20,
+        allowsZoomOut: false
+      ))
+
+    #expect(card.minX + result.offset.width == 20)
+    #expect(card.minY + result.offset.height == 20)
+  }
+
+  @Test func revealKeepsTheTitleBarVisibleWhenEvenTheMinimumScaleIsTooLarge() throws {
+    let card = CGRect(x: 0, y: 0, width: 400, height: 9000)
+    let result = try #require(
+      CanvasViewportMath.reveal(
+        cardFrame: card,
+        in: CanvasViewportMath.Viewport(
+          size: revealViewport, scale: 1, offset: CGSize(width: 0, height: -5000), bottomReserve: 40),
+        margin: 20,
+        allowsZoomOut: true
+      ))
+
+    #expect(result.scale == CanvasZoomMath.minScale)
+    #expect(card.minY * result.scale + result.offset.height == 20)
+  }
 }

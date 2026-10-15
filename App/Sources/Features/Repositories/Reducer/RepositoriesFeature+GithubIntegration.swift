@@ -261,11 +261,12 @@ extension RepositoriesFeature {
         )
       )
 
-    case .pullRequestRefreshBatchCountResolved(let repositoryID, let count, let remotePriorities):
+    case .pullRequestRefreshBatchCountResolved(let repositoryID, let hosts, let remotePriorities):
+      state.githubHostsByRepositoryID[repositoryID] = hosts
       guard state.inFlightPullRequestRefreshRepositoryIDs.contains(repositoryID) else {
         return .none
       }
-      state.prRefreshBatchCountsByRepositoryID[repositoryID] = max(1, count)
+      state.prRefreshBatchCountsByRepositoryID[repositoryID] = max(1, hosts.count)
       state.prRefreshRemotePrioritiesByRepositoryID[repositoryID] = remotePriorities
       state.prRefreshResultPrioritiesByRepositoryID.removeValue(forKey: repositoryID)
       return .none
@@ -766,9 +767,33 @@ extension RepositoriesFeature {
     case .pullRequestRefreshBatchOutcome(let outcome):
       return reduceBatchOutcome(state: &state, outcome: outcome)
 
-    case .rateLimitRetryTimeChanged(let retryAt):
-      state.githubRateLimitedUntil = retryAt
+    case .rateLimitBlocksChanged(let blocks):
+      state.githubRateLimitBlocks = blocks
       return .none
+
+    case .retryRateLimitedRequests:
+      // The selected worktree's refresh is the probe, so its status shows as soon as GitHub answers.
+      var refresh: Action?
+      if let worktreeID = state.selectedWorktreeID,
+        let worktree = state.worktree(for: worktreeID),
+        let repositoryID = state.repositoryID(containing: worktreeID),
+        let repository = state.repositories[id: repositoryID]
+      {
+        state.pullRequestRefreshForcedWorktreeIDs.insert(worktreeID)
+        refresh = .worktreeInfoEvent(
+          .repositoryPullRequestRefresh(
+            repositoryRootURL: worktree.repositoryRootURL,
+            worktreeIDs: repository.worktrees.map(\.id)
+          )
+        )
+      }
+      let githubCLI = githubCLI
+      return .run { [refresh] send in
+        await githubCLI.retryRateLimitedRequests()
+        if let refresh {
+          await send(refresh)
+        }
+      }
     }
   }
 
@@ -1033,7 +1058,7 @@ extension RepositoriesFeature {
         .githubIntegration(
           .pullRequestRefreshBatchCountResolved(
             repositoryID: repositoryID,
-            count: remoteInfosByHost.count,
+            hosts: Set(remoteInfosByHost.keys),
             remotePriorities: Self.pullRequestRefreshRemotePriorities(remoteInfos)
           )
         )

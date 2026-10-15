@@ -92,6 +92,41 @@ struct AppFeatureTerminalLayoutRestoreTests {
     #expect(store.state.launchRestoreMode == .restoreLayout)
   }
 
+  @Test(.dependencies) func repositoriesChangedRestoresLayoutWhenSomeRepositoriesFailed() async {
+    let worktree = makeWorktree()
+    let repository = makeRepository(worktrees: [worktree])
+    var repositoriesState = RepositoriesFeature.State(repositories: [repository])
+    repositoriesState.snapshotPersistencePhase = .withheld
+    repositoriesState.loadFailuresByID = ["/tmp/missing": "boom"]
+    var settings = SettingsFeature.State()
+    settings.restoreTerminalLayoutOnLaunch = true
+    let sentCommands = LockIsolated<[TerminalClient.Command]>([])
+
+    let store = TestStore(
+      initialState: AppFeature.State(repositories: repositoriesState, settings: settings)
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { command in
+        sentCommands.withValue { $0.append(command) }
+      }
+      $0.worktreeInfoWatcher.send = { _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.repositories(.delegate(.repositoriesChanged([repository])))) {
+      $0.launchRestoreMode = .lastFocusedWorktree
+      $0.repositories.selection = nil
+    }
+    await store.finish()
+
+    #expect(
+      sentCommands.value.contains(
+        .restoreLayoutSnapshot(worktrees: [worktree], allowsMissingWorktrees: true)
+      )
+    )
+  }
+
   @Test(.dependencies) func repositoriesChangedSkipsRestoreWhenDisabled() async {
     let worktree = makeWorktree()
     let repository = makeRepository(worktrees: [worktree])

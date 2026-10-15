@@ -4,8 +4,6 @@ import ProwlCLIShared
 
 struct TerminalClient {
   var send: @MainActor @Sendable (Command) -> Void
-  /// Creates and selects a tab synchronously so Canvas can target its exact ID.
-  var createTabInDirectory: @MainActor @Sendable (Worktree, URL) -> TerminalTabID?
   /// Launches a compiled profile request synchronously and returns the exact tab
   /// and pane identities. This is the CLI/workflow boundary used by workflow starts.
   var launchAgentProfile:
@@ -68,7 +66,9 @@ struct TerminalClient {
     case setCanvasMode(Bool)
     case setSelectedWorktreeID(Worktree.ID?)
     case saveLayoutSnapshot
-    case restoreLayoutSnapshot(worktrees: [Worktree])
+    /// `allowsMissingWorktrees` skips the saved worktrees that `worktrees` does not hold
+    /// instead of resetting the whole layout; a failed repository load leaves them out.
+    case restoreLayoutSnapshot(worktrees: [Worktree], allowsMissingWorktrees: Bool = false)
     case presentTabIconPicker(Worktree)
   }
 
@@ -103,7 +103,6 @@ struct TerminalClient {
 extension TerminalClient: DependencyKey {
   static let liveValue = TerminalClient(
     send: { _ in fatalError("TerminalClient.send not configured") },
-    createTabInDirectory: { _, _ in fatalError("TerminalClient.createTabInDirectory not configured") },
     launchAgentProfile: { _, _ in fatalError("TerminalClient.launchAgentProfile not configured") },
     events: { fatalError("TerminalClient.events not configured") },
     observeAgentState: { _ in fatalError("TerminalClient.observeAgentState not configured") },
@@ -118,7 +117,6 @@ extension TerminalClient: DependencyKey {
 
   static let testValue = TerminalClient(
     send: { _ in },
-    createTabInDirectory: { _, _ in nil },
     launchAgentProfile: { _, _ in .failure(.tabCreationFailed) },
     events: { AsyncStream { $0.finish() } },
     observeAgentState: { _ in AgentObservationStream { $0.finish() } },

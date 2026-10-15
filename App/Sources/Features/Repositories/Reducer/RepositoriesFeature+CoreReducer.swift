@@ -57,8 +57,8 @@ extension RepositoriesFeature {
       state.snapshotPersistencePhase = .restoring
       let githubCLI = githubCLI
       let observeRateLimit = Effect<Action>.run { send in
-        for await retryAt in await githubCLI.rateLimitRetryTimes() {
-          await send(.githubIntegration(.rateLimitRetryTimeChanged(retryAt)))
+        for await blocks in await githubCLI.rateLimitBlocks() {
+          await send(.githubIntegration(.rateLimitBlocksChanged(blocks)))
         }
       }
       return .merge(
@@ -126,51 +126,39 @@ extension RepositoriesFeature {
       state.archivedWorktrees = archivedWorktrees
       return .none
 
-    case .setArchivedAutoDeletePeriod(let period):
+    case .setArchivedAutoDeletePeriod(let period, let initialTargets):
       state.archivedAutoDeletePeriod = period
-      guard period != nil else { return .none }
-      return .send(.autoDeleteExpiredArchivedWorktrees)
+      guard let period else { return .none }
+      guard let initialTargets else { return .send(.autoDeleteExpiredArchivedWorktrees) }
+      return .merge(initialTargets.map { .send(.deleteExpiredArchivedWorktree($0, period: period)) })
 
     case .autoDeleteExpiredArchivedWorktrees:
-      guard let period = state.archivedAutoDeletePeriod else {
-        return .none
-      }
-      let cutoff = now.addingTimeInterval(-Double(period.rawValue) * secondsPerDay)
-      let expiredEntries = state.archivedWorktrees.filter { $0.archivedAt <= cutoff }
-      guard !expiredEntries.isEmpty else {
-        return .none
-      }
-      @Shared(.settingsFile) var settingsFile
-      var deleteEffects: [Effect<Action>] = []
-      for entry in expiredEntries {
-        guard
-          let (worktree, repository) = findWorktreeAndRepository(
-            worktreeID: entry.id,
-            state: state
-          ),
-          !state.isMainWorktree(worktree),
-          !state.deletingWorktreeIDs.contains(entry.id)
-        else {
-          continue
-        }
-        let shouldDeleteBranch =
-          settingsFile.global.deleteBranchOnAutomaticCleanup
-          && state.prowlCreatedWorktreeIDs.contains(worktree.id)
-        deleteEffects.append(
+      guard let period = state.archivedAutoDeletePeriod else { return .none }
+      return .merge(
+        state.expiredArchivedWorktrees(for: period, now: now).map {
           .send(
-            .worktreeLifecycle(
-              .deleteWorktreeConfirmed(
-                worktree.id,
-                repository.id,
-                deleteBranch: shouldDeleteBranch
-              ))
-          )
-        )
-      }
-      guard !deleteEffects.isEmpty else {
-        return .none
-      }
-      return .merge(deleteEffects)
+            .deleteExpiredArchivedWorktree(
+              ArchivedAutoDeleteTarget(worktreeID: $0.worktree.id, repositoryID: $0.repository.id), period: period
+            ))
+        })
+
+    case .deleteExpiredArchivedWorktree(let target, let period):
+      // Recheck membership immediately before entering the existing deletion path. An accepted
+      // snapshot must not delete a worktree that was unarchived or removed in the meantime.
+      guard state.archivedAutoDeletePeriod == period,
+        state.expiredArchivedWorktrees(for: period, now: now).contains(where: {
+          $0.worktree.id == target.worktreeID && $0.repository.id == target.repositoryID
+        })
+      else { return .none }
+      @Shared(.settingsFile) var settingsFile
+      let shouldDeleteBranch =
+        settingsFile.global.deleteBranchOnAutomaticCleanup
+        && state.prowlCreatedWorktreeIDs.contains(target.worktreeID)
+      return reduceWorktreeLifecycle(
+        state: &state,
+        action: .deleteWorktreeConfirmed(
+          target.worktreeID, target.repositoryID, deleteBranch: shouldDeleteBranch
+        ))
 
     case .repositoryOrderIDsLoaded(let repositoryOrderIDs):
       state.repositoryOrderIDs = repositoryOrderIDs
@@ -225,9 +213,8 @@ extension RepositoriesFeature {
     case .repositoriesLoaded(let repositories, let failures, let roots, let animated):
       state.isRefreshingWorktrees = false
       let wasRestoringSnapshot = state.snapshotPersistencePhase == .restoring
-      if failures.isEmpty, state.snapshotPersistencePhase != .active {
-        state.snapshotPersistencePhase = .active
-      }
+      state.snapshotPersistencePhase = state.snapshotPersistencePhase.afterLiveLoad(
+        hasFailures: !failures.isEmpty)
       let previousSelection = state.selectedWorktreeID
       let previousSelectedWorktree = state.worktree(for: previousSelection)
       let incomingRepositories = IdentifiedArray(uniqueElements: repositories)
@@ -648,30 +635,20 @@ extension RepositoriesFeature {
       // Pin the new tab's cwd to the worktree root: Ghostty's default new-tab
       // behavior inherits the focused surface's cwd, which is wrong when the
       // user targets a worktree from the sidebar.
-      if state.isShowingCanvas {
-        return .run { send in
-          guard
-            let tabID = await terminalClient.createTabInDirectory(
-              worktree,
-              worktree.workingDirectory
-            )
-          else {
-            return
-          }
-          await send(.newTerminalTabCreatedInCanvas(worktreeID, tabID))
-        }
-      }
       let createTab: Effect<Action> = .run { _ in
         await terminalClient.send(
           .createTabInDirectory(worktree, directory: worktree.workingDirectory))
       }
+      // Canvas focuses and reveals the new card itself when it appears, like
+      // every other tab created while Canvas is showing.
+      if state.isShowingCanvas { return createTab }
       return .merge(.send(.selectWorktree(worktreeID, focusTerminal: true)), createTab)
 
     case .newTerminalTabCreatedInCanvas(let worktreeID, let tabID):
       // A plain folder's terminal target is its synthesized worktree, so an
       // undo restoring one of its tabs must pass this guard too.
       guard state.isShowingCanvas, state.terminalWorktree(for: worktreeID) != nil else { return .none }
-      requestCanvasFocus(.tab(tabID), openedWorktreeID: worktreeID, state: &state)
+      requestCanvasFocus(.tab(tabID), viewport: .reveal, openedWorktreeID: worktreeID, state: &state)
       return .none
 
     case .focusCanvasRepository(let repositoryID):
@@ -740,6 +717,13 @@ extension RepositoriesFeature {
       return .none
 
     case .consumeCanvasCommandRequest(let id):
+      if state.pendingCanvasCommandRequest?.id == id {
+        state.pendingCanvasCommandRequest = nil
+        state.lastPerformedCanvasCommandRequestID = id
+      }
+      return .none
+
+    case .dropCanvasCommandRequest(let id):
       if state.pendingCanvasCommandRequest?.id == id {
         state.pendingCanvasCommandRequest = nil
       }

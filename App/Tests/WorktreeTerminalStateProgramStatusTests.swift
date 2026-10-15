@@ -216,10 +216,10 @@ struct WorktreeTerminalStateProgramStatusTests {
     #expect(fixture.state.programStatusStoresBySurface[fixture.surfaceID]?.root?.state == .working)
   }
 
-  /// The production table (docs-ai 079 slices 3 and 4): a Claude Code root and a Pi root
-  /// decide the published state and delegate the schedule; an unverified agent's root
-  /// still publishes nothing.
-  @Test func productionTableVerifiesClaudeCodeAndPi() async {
+  /// The production table (docs-ai 079 slices 3 and 4, 079.006): a Claude Code root, a Pi
+  /// root, and an Oh My Pi root decide the published state and delegate the schedule; an
+  /// unverified agent's root still publishes nothing.
+  @Test func productionTableVerifiesClaudeCodePiAndOMP() async {
     let claudeProbe = Probe()
     let claude = makeFixture(support: nil, probe: claudeProbe)
     await bind(claude, probe: claudeProbe)
@@ -251,6 +251,26 @@ struct WorktreeTerminalStateProgramStatusTests {
     #expect(piPane?.decision?.reason.identifier == "osc.working")
     #expect(piFixture.state.agentDetectionCoordinators[piFixture.surfaceID]?.isDelegated == true)
     #expect(piFixture.state.nextScheduleAfterTick(surfaceID: piFixture.surfaceID, hasAgent: true) == .delegated)
+
+    let ompProbe = Probe()
+    let ompFixture = makeFixture(support: nil, probe: ompProbe)
+    ompProbe.job = ForegroundJob(
+      processGroupID: getpid(),
+      processes: [
+        ForegroundProcess(pid: getpid(), parentProcessID: getppid(), name: "omp", argv0: "omp", cmdline: "omp")
+      ])
+    ompFixture.state.lastAgentScreenScanBySurface[ompFixture.surfaceID] = WorktreeTerminalState.AgentScreenScan(
+      agent: .omp, text: "", detection: AgentScreenDetection(state: .idle, reason: .legacyDetector))
+    #expect(await detect(ompFixture))
+    #expect(ompFixture.state.surfaceAgentStates[ompFixture.surfaceID]?.detectedAgent == .omp)
+
+    ompFixture.state.handleProgramStatus(report(.working, app: "omp"), surfaceID: ompFixture.surfaceID)
+
+    let ompPane = ompFixture.state.surfaceAgentStates[ompFixture.surfaceID]
+    #expect(ompPane?.state == .working)
+    #expect(ompPane?.decision?.reason.identifier == "osc.working")
+    #expect(ompFixture.state.agentDetectionCoordinators[ompFixture.surfaceID]?.isDelegated == true)
+    #expect(ompFixture.state.nextScheduleAfterTick(surfaceID: ompFixture.surfaceID, hasAgent: true) == .delegated)
 
     let codexProbe = Probe()
     let codex = makeFixture(support: nil, probe: codexProbe)

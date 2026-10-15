@@ -115,14 +115,16 @@ sequences:
   agent activity (Working/Blocked, incl. background workflows) — see
   [agent-detection](agent-detection.md#worktree-running-indicator).
 - **Program status (OSC 7501)** — Prowl answers the support query, so programs
-  that speak the protocol (Claude Code 2.1.295+, Pi 1.1.0+) report
+  that speak the protocol (Claude Code 2.1.295+, Pi 1.1.0+, Oh My Pi 18.8.7+) report
   idle/working/blocked/done/error. Prowl keeps one record tree per pane with the
   protocol's lifetime rules (a report replaces its record, `clear` removes a
   subtree, `app` is inherited, at most 256 records) and feeds the root record to
   agent detection — see
   [agent-detection](agent-detection.md#program-status-osc-7501) for which
   producers it trusts. OSC 133 also tells detection that the foreground command
-  ended, which releases an agent's entry within one probe.
+  ended, which releases an agent's entry within one probe (except after Oh My Pi
+  has drawn a user message: its own OSC 133 marks use up the shell's command
+  timer, see [agent-detection](agent-detection.md#program-status-osc-7501)).
 - **Bell / desktop notification** — increments unread indicators.
 
 `--capture` in the CLI **requires OSC 133** on the target pane; without it you get
@@ -214,7 +216,10 @@ no in-app Ghostty theme picker; change Ghostty colors via its config file.
 
 If `restoreTerminalLayoutOnLaunch` is enabled, Prowl saves the tab/split layout
 (which worktrees, tabs, split trees, titles, icons) and restores it on next
-launch. Notification bodies are not persisted.
+launch. Notification bodies are not persisted. If a repository fails to load at
+launch (for example, its folder is gone), Prowl still restores the layout of the
+other repositories and applies the default view mode; the worktrees of the
+failed repository are skipped.
 
 ## Gotchas for agents
 

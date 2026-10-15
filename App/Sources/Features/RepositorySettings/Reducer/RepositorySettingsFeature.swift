@@ -31,7 +31,11 @@ struct RepositorySettingsFeature {
     var workspace: ProjectWorkspace?
     var settings: RepositorySettings
     var userSettings: UserRepositorySettings
-    var appearance: RepositoryAppearance = .empty
+    /// The global appearances store, read live rather than copied when the
+    /// pane is built: automatic icon detection commits into the same dict
+    /// while the pane is open, and a stale copy would both show the wrong
+    /// icon and clobber the detected one on the next edit.
+    @Shared(.repositoryAppearances) var appearances
     var globalDefaultWorktreeBaseDirectoryPath: String?
     var globalCopyIgnoredOnWorktreeCreate: Bool = false
     var globalCopyUntrackedOnWorktreeCreate: Bool = false
@@ -87,6 +91,10 @@ struct RepositorySettingsFeature {
       capabilities.supportsRunnableFolderActions
     }
 
+    var appearance: RepositoryAppearance {
+      appearances[repositoryID] ?? .empty
+    }
+
     var exampleWorktreePath: String {
       ProwlPaths.exampleWorktreePath(
         for: rootURL,
@@ -109,7 +117,6 @@ struct RepositorySettingsFeature {
       globalPullRequestMergeStrategy: PullRequestMergeStrategy,
       keybindingUserOverrides: KeybindingUserOverrideStore
     )
-    case appearanceLoaded(RepositoryAppearance)
     case setAppearanceColor(RepositoryColorChoice?)
     case setAppearanceIcon(RepositoryIconSource?)
     case chooseSymbolTapped
@@ -119,7 +126,6 @@ struct RepositorySettingsFeature {
     case symbolSuggestionsLoaded(RepositorySymbolSuggestions)
     case symbolSuggestionsFailed(String)
     case importUserImage(URL)
-    case userImageImported(filename: String)
     case userImageImportFailed(String)
     case dismissAppearanceImportError
     case resetAppearance
@@ -266,46 +272,48 @@ struct RepositorySettingsFeature {
         $userRepositorySettings.withLock { $0.defaultAgentProfileID = profileID }
         return .send(.delegate(.settingsChanged(rootURL)))
 
-      case .appearanceLoaded(let appearance):
-        state.appearance = appearance
-        return .none
-
       case .setAppearanceColor(let color):
         guard state.appearance.color != color else { return .none }
-        state.appearance.color = color
-        return persistAppearance(state.appearance, repositoryID: state.repositoryID)
+        let repositoryID = state.repositoryID
+        state.$appearances.withLock {
+          Self.updateAppearance(in: &$0, repositoryID: repositoryID) { $0.color = color }
+        }
+        return .none
 
       case .setAppearanceIcon(let newIcon):
-        let previousIcon = state.appearance.icon
-        guard previousIcon != newIcon else { return .none }
-        state.appearance.icon = newIcon
-        if newIcon == nil {
-          // An explicit clear also suppresses automatic detection so an
-          // in-flight detector can't restore the icon the user removed.
-          state.appearance.iconDetectionSuppressed = true
-        }
-        let persist = persistAppearance(state.appearance, repositoryID: state.repositoryID)
-        let cleanup = removeAbandonedUserImage(
-          previous: previousIcon,
-          new: newIcon,
-          rootURL: state.rootURL
-        )
-        return .merge(persist, cleanup)
+        guard state.appearance.icon != newIcon else { return .none }
+        let previousIcon = Self.commitIcon(newIcon, to: state.$appearances, repositoryID: state.repositoryID)
+        return removeAbandonedImage(previous: previousIcon, new: newIcon, rootURL: state.rootURL)
 
       case .importUserImage(let sourceURL):
         let rootURL = state.rootURL
+        let repositoryID = state.repositoryID
+        let appearances = state.$appearances
         let store = repositoryIconAssetStore
         return .run { send in
+          let filename: String
           do {
-            let filename = try store.importImage(sourceURL, rootURL)
-            await send(.userImageImported(filename: filename))
+            filename = try store.importImage(sourceURL, rootURL)
           } catch {
+            // Delivered only while the pane is alive; after a teardown
+            // there is nowhere to show it, and nothing was imported.
             await send(.userImageImportFailed(error.localizedDescription))
+            return
+          }
+          // Commit straight into the shared store instead of sending an
+          // action back: the pane can be torn down (Settings sidebar
+          // switch) while the copy runs, and an action delivered to the
+          // missing pane would be dropped, orphaning the imported file.
+          // The commit runs on the main actor so it serializes with the
+          // reducers that also write this dict (edits, icon detection).
+          let newIcon = RepositoryIconSource.userImage(filename: filename)
+          let previousIcon = await MainActor.run {
+            Self.commitIcon(newIcon, to: appearances, repositoryID: repositoryID)
+          }
+          if let abandoned = Self.abandonedImageFilename(previous: previousIcon, new: newIcon) {
+            try? store.remove(abandoned, rootURL)
           }
         }
-
-      case .userImageImported(let filename):
-        return .send(.setAppearanceIcon(.userImage(filename: filename)))
 
       case .userImageImportFailed(let message):
         state.appearanceImportError = message
@@ -351,18 +359,18 @@ struct RepositorySettingsFeature {
         return .none
 
       case .resetAppearance:
-        let previousIcon = state.appearance.icon
         guard !state.appearance.isEmpty else { return .none }
-        // Removing an icon via reset counts as an explicit clear for
-        // detection purposes; a reset that only dropped a color does not.
-        state.appearance = RepositoryAppearance(iconDetectionSuppressed: previousIcon != nil)
-        let persist = persistAppearance(state.appearance, repositoryID: state.repositoryID)
-        let cleanup = removeAbandonedUserImage(
-          previous: previousIcon,
-          new: nil,
-          rootURL: state.rootURL
-        )
-        return .merge(persist, cleanup)
+        let repositoryID = state.repositoryID
+        let previousIcon = state.$appearances.withLock { appearances in
+          let previousIcon = appearances[repositoryID]?.icon
+          // Removing an icon via reset counts as an explicit clear for
+          // detection purposes; a reset that only dropped a color does not.
+          Self.updateAppearance(in: &appearances, repositoryID: repositoryID) {
+            $0 = RepositoryAppearance(iconDetectionSuppressed: previousIcon != nil)
+          }
+          return previousIcon
+        }
+        return removeAbandonedImage(previous: previousIcon, new: nil, rootURL: state.rootURL)
 
       case .branchDataLoaded(let branches, let defaultBaseRef):
         state.defaultWorktreeBaseRef = defaultBaseRef
@@ -472,35 +480,60 @@ struct RepositorySettingsFeature {
     .cancellable(id: CancelID.symbolSuggestions, cancelInFlight: true)
   }
 
-  /// Writes the appearance back to the global `@Shared` dict, dropping
-  /// the entry when it's been cleared so the on-disk file stays tight.
-  private func persistAppearance(
-    _ appearance: RepositoryAppearance,
+  /// Read-modify-write of one repository's entry, touching only what
+  /// `update` changes so concurrent writers (automatic icon detection)
+  /// keep their fields. Drops the entry once it's empty so the on-disk
+  /// file stays tight.
+  nonisolated private static func updateAppearance(
+    in appearances: inout [Repository.ID: RepositoryAppearance],
+    repositoryID: Repository.ID,
+    _ update: (inout RepositoryAppearance) -> Void
+  ) {
+    var appearance = appearances[repositoryID] ?? .empty
+    update(&appearance)
+    appearances[repositoryID] = appearance.isEmpty ? nil : appearance
+  }
+
+  /// Stores `newIcon` and returns the icon it replaced, read under the
+  /// same lock. An explicit clear also suppresses automatic detection so
+  /// an in-flight detector can't restore the icon the user removed.
+  nonisolated private static func commitIcon(
+    _ newIcon: RepositoryIconSource?,
+    to appearances: Shared<[Repository.ID: RepositoryAppearance]>,
     repositoryID: Repository.ID
-  ) -> Effect<Action> {
-    .run { _ in
-      @Shared(.repositoryAppearances) var appearances
-      $appearances.withLock {
-        if appearance.isEmpty {
-          $0.removeValue(forKey: repositoryID)
-        } else {
-          $0[repositoryID] = appearance
+  ) -> RepositoryIconSource? {
+    appearances.withLock { appearances in
+      let previousIcon = appearances[repositoryID]?.icon
+      updateAppearance(in: &appearances, repositoryID: repositoryID) {
+        $0.icon = newIcon
+        if newIcon == nil {
+          $0.iconDetectionSuppressed = true
         }
       }
+      return previousIcon
     }
   }
 
   /// When the icon transitions away from a file-backed source (user
   /// import or automatic detection), the old asset on disk is no longer
-  /// referenced and should be cleaned up. No-op when the previous icon
+  /// referenced and should be cleaned up. `nil` when the previous icon
   /// wasn't file-backed or when the new icon keeps the same file.
-  private func removeAbandonedUserImage(
+  nonisolated private static func abandonedImageFilename(
+    previous: RepositoryIconSource?,
+    new: RepositoryIconSource?
+  ) -> String? {
+    guard let oldFilename = previous?.storedImageFilename,
+      new?.storedImageFilename != oldFilename
+    else { return nil }
+    return oldFilename
+  }
+
+  private func removeAbandonedImage(
     previous: RepositoryIconSource?,
     new: RepositoryIconSource?,
     rootURL: URL
   ) -> Effect<Action> {
-    guard let oldFilename = previous?.storedImageFilename else { return .none }
-    if new?.storedImageFilename == oldFilename {
+    guard let oldFilename = Self.abandonedImageFilename(previous: previous, new: new) else {
       return .none
     }
     let store = repositoryIconAssetStore

@@ -4,7 +4,7 @@
 > an agent) can list panes, read their screens, run commands and capture output,
 > send keystrokes, focus, and open/close tabs and panes programmatically.
 
-**Keywords:** prowl cli, command line, prowl list, prowl agents, prowl agents read, prowl agents signal, prowl agents dispatch, prowl agents wait, prowl profiles list, prowl skills, skills install, agent skills, prowl workflow, workflow status center, workflow run panel, workflow attention, prowl read, prowl send, prowl key, prowl focus, prowl create, prowl close, prowl open, pane id, agent, profile, automation, json, capture, socket
+**Keywords:** prowl cli, command line, prowl list, prowl agents, prowl agents read, prowl agents signal, prowl agents dispatch, prowl agents wait, prowl profiles list, prowl skills, skills install, agent skills, prowl workflow, workflow status center, workflow run panel, workflow attention, prowl read, prowl send, prowl key, prowl focus, prowl canvas, canvas layout, tile, prowl create, prowl close, prowl open, pane id, agent, profile, automation, json, capture, socket
 
 **Related:** [terminal](terminal.md) · [concepts](../concepts.md) · [active-agents](active-agents.md) · [agent-detection](agent-detection.md) · the bundled **`prowl-cli`** (`skills/prowl-cli/SKILL.md`) and **`prowl-workflow`** (`skills/prowl-workflow/SKILL.md`) skills
 
@@ -135,7 +135,11 @@ overrides those variables, cannot be mapped, and caller-scoped commands fail wit
 Session logs larger than 64 MiB are not mapped. Restarting Codex in the pane resets its
 session log; its first indexed submit can establish the mapping again.
 Codex launched from an Agent Profile, or with `--no-daemon`, runs commands inside the pane
-and is not affected.
+and is not affected. For Codex 0.156 and later, Prowl adds `--no-daemon` to every
+interactive profile launch, also when it cannot prepare its managed notifier; it skips the
+flag only when the login shell or `codex --version` does not answer within one second.
+`prowl workflow read` and `deliver` accept the step token in place of a mapped pane (see
+[Workflows](workflows.md)).
 
 ## Commands
 
@@ -789,6 +793,29 @@ prowl focus --pane "$pane" --json
 prowl focus --worktree MyApp --json
 ```
 
+### `prowl canvas`
+Switch to Canvas, lay out its cards, and read its state — for example, after creating
+several agent tabs, tile them so all of them are visible at once:
+
+```bash
+for profile in Reviewer Tester; do prowl create tab "$wt" --profile "$profile" --json >/dev/null; done
+prowl canvas layout tile --show
+prowl canvas status --json | jq -r '.data.layout'
+```
+
+| Command | Effect |
+| --- | --- |
+| `prowl canvas show` / `hide` | Switch to Canvas / back to the normal view (no-op when already there). |
+| `prowl canvas layout <arrange\|organize\|tile> [--show]` | Apply an automatic layout and keep it: Canvas re-applies it as cards are added or closed, until a card is moved by hand. The view refits. |
+| `prowl canvas fit [--show]` | Zoom and pan so every card is visible; the layout mode is unchanged. |
+| `prowl canvas status` | Report the state only. |
+
+`layout` and `fit` act on the Canvas view: while Canvas is hidden they fail with
+`CANVAS_NOT_SHOWING` unless `--show` switches to it first. Every action returns the state
+after it ran — `.data.showing`, `.data.layout` (`arrange`, `organize`, `tile`, or `freeform`;
+absent until Canvas has laid out cards), and `.data.card_count`. See
+[canvas](canvas.md) for how the layouts behave.
+
 ### `prowl create tab`
 Create a new terminal tab (deterministic — unlike `open`). A worktree is required,
 either positionally or with `--worktree`; `--path` must remain inside it.
@@ -799,7 +826,9 @@ pane="$(prowl create tab "$wt" --json | jq -r '.data.target.pane.id')"
 
 Without `--background`, the new tab takes focus, so keystrokes a person is typing
 at that moment land in the new shell. Use `--background` to preserve the current
-selection and focus for both Shell and Agent Profile tabs.
+selection and focus for both Shell and Agent Profile tabs. While Canvas is showing,
+Prowl stays in Canvas: the new card is placed next to the focused card, takes focus,
+and is scrolled into view.
 
 Add `--profile <name|uuid>` to launch an enabled Agent Profile instead of a shell. An
 optional kickoff prompt uses the sole stdin spelling `--prompt -`:
@@ -953,6 +982,8 @@ Follow the returned self-initiated delivery instruction to submit the briefing.
 | `OUTPUT_INVALID` / `OUTPUT_TOO_LARGE` / `VERDICT_REQUIRED` | `workflow deliver`: empty body (or, for a `strict` step, missing sections / bad format / bad verdict), body above the step's size cap, or a strict step that declares verdicts got none. Non-strict issues are accepted as `delivery.state = provisional` instead. |
 | `WORKFLOW_DELIVERY_REQUIRED` | `agents dispatch-complete` ran in a pane whose pending dispatch is a workflow activation; the message carries the exact `prowl workflow deliver` command to run instead. |
 | `REQUEST_CANCELLED` | The CLI disconnected before an in-app workflow request completed; the run itself was not affected. |
+| `CANVAS_NOT_SHOWING` | `canvas layout` or `canvas fit` while Canvas is hidden; add `--show`. |
+| `CANVAS_UNAVAILABLE` | Canvas cannot open because no worktree or folder is open; open one first. |
 | `NO_ACTIVE_PANE` | No pane for focused-target; pass an explicit `--pane`. |
 | `EMPTY_INPUT` | `send` got neither argv nor stdin (or both). |
 | `INVALID_ARGUMENT` | Bad flag/combo (e.g. `--capture --no-wait`) or out-of-range value. |
@@ -962,7 +993,7 @@ Follow the returned self-initiated delivery instruction to submit the briefing.
 | `PATH_NOT_FOUND` / `PATH_NOT_DIRECTORY` / `PATH_NOT_ALLOWED` | Fix the `open`/`create tab` path, or the `skills --scope project` start point (`--path` and the current directory must lie inside a Git repository). |
 | `LAUNCH_FAILED` | App launch or socket wait failed; the message includes the last socket diagnostic when available. |
 | `TRANSPORT_FAILED` | Socket transport failed for a reason other than app availability or permission, such as `ENOTSOCK` or an invalid `PROWL_CLI_SOCKET` path. |
-| `*_FAILED` (`LIST_FAILED`, `AGENTS_FAILED`, `PROFILES_FAILED`, `SKILLS_FAILED`, `FOCUS_FAILED`, `SEND_FAILED`, `READ_FAILED`, `CREATE_FAILED`, `CLOSE_FAILED`, `TAB_FAILED`, `PANE_FAILED`, `OPEN_FAILED`, `WORKFLOW_FAILED`) | The action itself failed. |
+| `*_FAILED` (`LIST_FAILED`, `AGENTS_FAILED`, `PROFILES_FAILED`, `SKILLS_FAILED`, `FOCUS_FAILED`, `SEND_FAILED`, `READ_FAILED`, `CREATE_FAILED`, `CLOSE_FAILED`, `TAB_FAILED`, `PANE_FAILED`, `OPEN_FAILED`, `WORKFLOW_FAILED`, `CANVAS_FAILED`) | The action itself failed. |
 
 ## Safety & self-targeting
 

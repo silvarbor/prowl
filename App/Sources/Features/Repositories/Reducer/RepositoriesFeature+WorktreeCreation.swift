@@ -169,11 +169,15 @@ extension RepositoriesFeature {
       let branchNameSuggestionClient = branchNameSuggestionClient
       let repositoryName = repository.name
       let repositoryRootURL = repository.rootURL
+      let gitClient = gitClient
       return .run { send in
+        // Base ref options mix local and remote-tracking refs; without the remote part,
+        // `origin/` would look like the repository's branch prefix.
+        let remotes = (try? await gitClient.remoteNames(repositoryRootURL)) ?? []
         let context = await branchNameSuggestionClient.gatherContext(
           repositoryName,
           repositoryRootURL,
-          baseRefOptions
+          BranchNameSanitizer.branchNames(fromRefs: baseRefOptions, remotes: remotes)
         )
         let suggestion = await branchNameSuggestionClient.suggest(context)
         await send(.worktreeCreationPrompt(.presented(.branchNameSuggestionReceived(suggestion))))

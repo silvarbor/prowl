@@ -45,6 +45,7 @@ final class ProwlCLIIntegrationTests: XCTestCase {
     XCTAssertTrue(help.stdout.contains("create"))
     XCTAssertTrue(help.stdout.contains("close"))
     XCTAssertTrue(help.stdout.contains("skills"))
+    XCTAssertTrue(help.stdout.contains("canvas"))
     XCTAssertTrue(help.stdout.contains("handoff"), "Retired handoff must remain discoverable for one release")
     XCTAssertTrue(
       help.stdout.contains("prowl skills install"),
@@ -1207,6 +1208,76 @@ final class ProwlCLIIntegrationTests: XCTestCase {
     XCTAssertEqual(result.exitCode, 0)
     XCTAssertTrue(result.stdout.contains("Reviewer  claude  disabled  unknown"), result.stdout)
     XCTAssertTrue(result.stdout.contains("Availability check has not completed"), result.stdout)
+  }
+
+  // MARK: - canvas
+
+  func testCanvasLayoutRoundTripsOverSocket() throws {
+    let response = try CommandResponse(
+      ok: true,
+      command: "canvas",
+      schemaVersion: "prowl.cli.canvas.v1",
+      data: RawJSON(encoding: CanvasCommandPayload(action: .layout, showing: true, layout: "tile", cardCount: 4))
+    )
+
+    let (requestData, result) = try runWithMockServer(
+      socketPath: temporarySocketPath(suffix: "canvas-layout"),
+      response: response,
+      args: ["canvas", "layout", "tile", "--show", "--json"]
+    )
+
+    XCTAssertEqual(result.exitCode, 0)
+    let envelope = try JSONDecoder().decode(CommandEnvelope.self, from: requestData)
+    guard case .canvas(let input) = envelope.command else {
+      return XCTFail("Expected canvas command envelope")
+    }
+    XCTAssertEqual(input.action, .layout)
+    XCTAssertEqual(input.layout, .tile)
+    XCTAssertTrue(input.show)
+    let output = try jsonObject(from: result.stdout)
+    XCTAssertEqual(output["schema_version"] as? String, "prowl.cli.canvas.v1")
+  }
+
+  func testCanvasStatusRendersOneLine() throws {
+    let response = try CommandResponse(
+      ok: true,
+      command: "canvas",
+      schemaVersion: "prowl.cli.canvas.v1",
+      data: RawJSON(encoding: CanvasCommandPayload(action: .status, showing: false, layout: nil, cardCount: 1))
+    )
+
+    let (requestData, result) = try runWithMockServer(
+      socketPath: temporarySocketPath(suffix: "canvas-status"),
+      response: response,
+      args: ["canvas", "status", "--no-color"]
+    )
+
+    XCTAssertEqual(result.exitCode, 0)
+    let envelope = try JSONDecoder().decode(CommandEnvelope.self, from: requestData)
+    guard case .canvas(let input) = envelope.command else {
+      return XCTFail("Expected canvas command envelope")
+    }
+    XCTAssertEqual(input.action, .status)
+    XCTAssertTrue(result.stdout.contains("Canvas  hidden  layout: not set  1 card"), result.stdout)
+  }
+
+  func testCanvasErrorKeepsTheCanvasSchemaVersion() throws {
+    let response = CommandResponse(
+      ok: false,
+      command: "canvas",
+      schemaVersion: "prowl.cli.canvas.v1",
+      error: CommandError(code: CLIErrorCode.canvasNotShowing, message: "Canvas is not showing.")
+    )
+
+    let (_, result) = try runWithMockServer(
+      socketPath: temporarySocketPath(suffix: "canvas-error"),
+      response: response,
+      args: ["canvas", "fit", "--json"]
+    )
+
+    XCTAssertNotEqual(result.exitCode, 0)
+    let output = try jsonObject(from: result.stdout)
+    XCTAssertEqual((output["error"] as? [String: Any])?["code"] as? String, "CANVAS_NOT_SHOWING")
   }
 
   // MARK: - workflow

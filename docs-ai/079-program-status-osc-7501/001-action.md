@@ -14,11 +14,12 @@ the index and the state after the last merge.
 | 2026-10-11 | Slice 3: Claude Code `.verified`; the acceptance list replayed in an isolated Debug instance; the pane's session identity moved from the screen fingerprint to Claude's pid registry (`process_log` / `exact`, a three-miss hold across transient read failures, `agents read` reports current evidence). Six review rounds | #895, [004](004-claude-verified.md) |
 | 2026-10-11 | Slice 4: Pi `.verified`; the acceptance list replayed with Pi 1.1.0; a 3 s settle window after each wake keeps the screen reads that attribute an in-process `/new` or `/resume`. Five review rounds | #896, [005](005-pi-verified.md) |
 | 2026-10-11 | #895 merged; #896 merged after the reconciliation with `main` (both producers `.verified`, the two table tests combined with an unverified codex control, the support rows in the manual and the living docs) | this record |
+| 2026-10-12 | Oh My Pi `.verified` (`app=omp`, 18.8.7+): harness baseline with omp 18.10.0, the acceptance list replayed in an isolated Debug instance, the table tests extended | #900, [006](006-omp-verified.md) |
 
-## Outcome & current state (as of 2026-10-11)
+## Outcome & current state (as of 2026-10-12)
 
-- **Who decides.** For Claude Code 2.1.295+ (`app=claude-code`) and Pi 1.1.0+ (`app=pi`)
-  the pane's OSC 7501 root record is the first-priority state evidence, applied the moment
+- **Who decides.** For Claude Code 2.1.295+ (`app=claude-code`), Pi 1.1.0+ (`app=pi`), and
+  Oh My Pi 18.8.7+ (`app=omp`, since [006](006-omp-verified.md)) the pane's OSC 7501 root record is the first-priority state evidence, applied the moment
   the report arrives. While it decides, the detection loop delegates: every 2 s it probes
   the process and resolves the session, reads no screen, and `screen_reason` reports
   `screen.delegated`. A wake (key press, CLI input, finished command, report for an unbound
@@ -26,10 +27,11 @@ the index and the state after the last merge.
   delegates again. Every other agent is `.unverified`: records are stored, fenced, and
   resolved, the shadow comparison is logged, and the legacy decision is published. The
   table is static (`ProgramStatusSupport.level(for:)`); the producer's own variables
-  (`CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1`, `PI_PROGRAM_STATUS=0`) are the escape hatch.
+  (`CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1`, `PI_PROGRAM_STATUS=0`, Oh My Pi's
+  `terminal.programStatus: false`) are the escape hatch.
 - **What the fallbacks are.** Claude Code: the native registry snapshot and the screen rules,
   as before slice 3; the native provider is not sampled while the record decides. Pi: the
-  legacy screen detector (`legacy.detector`). The record is withdrawn by `clear`, by the
+  legacy screen detector (`legacy.detector`). Oh My Pi: its screen rules. The record is withdrawn by `clear`, by the
   `COMMAND_FINISHED` probe when the agent is gone, and by the time fence on relaunch.
 - **Root-only mapping.** The root record decides; a child `blocked` vetoes, a child `working`
   is ignored. Claude Code 2.1.296 does send child records, and it keeps the root `working`
@@ -40,20 +42,25 @@ the index and the state after the last merge.
 - **What every agent got.** The `COMMAND_FINISHED` release: an agent that exits is released
   within one probe (Claude `/exit` 545–793 ms, `kill -9` 394 ms; Pi ctrl+d 69 ms, `kill -9`
   143 ms, all CLI-polled; `main` before 079 took 1.8–2.1 s), and an undo-close restores the
-  pane with its store intact.
+  pane with its store intact. Oh My Pi is the exception once it has drawn a user message:
+  its own OSC 133 marks use up the shell's command timer, so its exit takes the six-miss
+  release (2.1–3.4 s observed; a fresh session still releases within 0.3 s), see
+  [006](006-omp-verified.md).
 - **Session identity.** Claude Code: `ClaudeSessionRegistry` reads `~/.claude/sessions/<pid>.json`
   (`process_log` / `exact`); a rotation is visible within one delegated tick (`/clear` 2.1 s,
   in-process `/resume` 4.2 s, no input needed). Pi: the transcript scan plus the screen
-  fingerprint, with the settle window (an in-process `/resume` followed in 2.5 s).
+  fingerprint, with the settle window (an in-process `/resume` followed in 2.5 s). Oh My Pi:
+  the transcript scan over `~/.omp/agent/sessions` plus the screen fingerprint, with the
+  settle window.
 - **Cost.** `make measure-cpu` against the slice 2 baseline on `main`: idle `detectAgentState`
   0.49 % of a core before, 0.52 % (slice 3 build) and 0.70 % (slice 4 build, higher load)
   after; under OSC authority the per-symbol working cost is lower than the 300 ms loop's. The
   overall working means are not like-for-like across runs (locked screen, model, window).
-- **Flipping the next producer** repeats slices 3/4: harness rows in the baseline, the
-  acceptance list replayed in an isolated Debug instance, the *Verification inside Prowl*
-  table filled, `ProgramStatusSupport.level(for:)` and `programStatusApp` updated, the two
-  table tests (`defaultTableVerifiesClaudeCodeAndPi()`,
-  `productionTableVerifiesClaudeCodeAndPi()`) extended, and the support rows in
+- **Flipping the next producer** repeats slices 3/4 (and 006): harness rows in the baseline,
+  the acceptance list replayed in an isolated Debug instance, the *Verification inside Prowl*
+  table filled, a living doc under 068, `ProgramStatusSupport.level(for:)` and `programStatusApp` updated, the two
+  table tests (`defaultTableVerifiesClaudeCodePiAndOMP()`,
+  `productionTableVerifiesClaudeCodePiAndOMP()`) extended, and the support rows in
   `docs/components/agent-detection.md`, [068/architecture.md](../068-agent-state-providers/architecture.md),
   and the `agents` contract updated.
 
@@ -78,7 +85,8 @@ the index and the state after the last merge.
   background work as Working; deferred, the OSC path applies the root-only rule.
 - [#897](https://github.com/onevcat/Prowl/issues/897): panes under `/tmp` or `/var` never
   resolve a cwd-keyed transcript session (`resolvingSymlinksInPath()` strips `/private`);
-  found during the slice 4 replay, pre-existing on `main`.
+  found during the slice 4 replay, pre-existing on `main`. Resolved: the resolver now
+  derives the physical variant with `realpath(3)`.
 - [#894](https://github.com/onevcat/Prowl/issues/894): `agents dispatch` on a manual Claude
   Code 2.1.296 pane is refused because the composer placeholder reads as a draft.
 - Producer gap to report upstream: Claude Code keeps the root `working` while a background
@@ -92,9 +100,11 @@ the index and the state after the last merge.
 
 ## Refs
 
-PRs #887, #892, #893, #895, #896. Records [002](002-fork-action-and-bridge.md),
-[003](003-generic-provider.md), [004](004-claude-verified.md), [005](005-pi-verified.md);
+PRs #887, #892, #893, #895, #896, #900. Records [002](002-fork-action-and-bridge.md),
+[003](003-generic-provider.md), [004](004-claude-verified.md), [005](005-pi-verified.md),
+[006](006-omp-verified.md);
 [producer-baseline.md](producer-baseline.md). Living docs:
 [068/architecture.md](../068-agent-state-providers/architecture.md),
 [068/claude.md](../068-agent-state-providers/claude.md), [068/pi.md](../068-agent-state-providers/pi.md),
+[068/omp.md](../068-agent-state-providers/omp.md),
 `docs/components/agent-detection.md`.

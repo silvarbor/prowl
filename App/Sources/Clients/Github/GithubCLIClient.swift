@@ -210,7 +210,8 @@ struct GithubCLIClient: Sendable {
   var isAvailable: @Sendable () async -> Bool
   var authStatusSnapshot: @Sendable () async throws -> GithubAuthStatusSnapshot
   var authStatus: @Sendable () async throws -> GithubAuthStatus?
-  var rateLimitRetryTimes: @Sendable () async -> AsyncStream<Date?>
+  var rateLimitBlocks: @Sendable () async -> AsyncStream<[GithubRateLimitBlock]>
+  var retryRateLimitedRequests: @Sendable () async -> Void
 }
 
 extension GithubCLIClient: DependencyKey {
@@ -238,7 +239,8 @@ extension GithubCLIClient: DependencyKey {
       isAvailable: isAvailableFetcher(shell: shell, resolver: resolver),
       authStatusSnapshot: authStatusSnapshotFetcher(shell: shell, resolver: resolver, gate: gate),
       authStatus: authStatusFetcher(shell: shell, resolver: resolver, gate: gate),
-      rateLimitRetryTimes: { await gate.retryTimes() }
+      rateLimitBlocks: { await gate.blocks() },
+      retryRateLimitedRequests: { await gate.retryNow() }
     )
   }
 
@@ -273,7 +275,8 @@ extension GithubCLIClient: DependencyKey {
       )
     },
     authStatus: { GithubAuthStatus(username: "testuser", host: "github.com") },
-    rateLimitRetryTimes: { AsyncStream { $0.finish() } }
+    rateLimitBlocks: { AsyncStream { $0.finish() } },
+    retryRateLimitedRequests: {}
   )
 }
 
@@ -1348,7 +1351,7 @@ nonisolated private func runGh(
   acceptsGraphQLErrors: Bool = false
 ) async throws -> String {
   let command = (["gh"] + arguments).joined(separator: " ")
-  let ticket = try await gate.admit()
+  let ticket = try await gate.admit(GithubRateLimitRequest(arguments: arguments))
   if Task.isCancelled {
     await gate.abandon(ticket)
     throw CancellationError()

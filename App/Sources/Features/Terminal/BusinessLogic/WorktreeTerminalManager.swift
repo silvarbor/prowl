@@ -28,6 +28,7 @@ final class WorktreeTerminalManager {
   @ObservationIgnored private let codexConfigReadProcess: CodexConfigReadProcess
   @ObservationIgnored private let codexShellEnvironmentResolver:
     @Sendable (URL, String?) async -> CodexShellLaunchEnvironment?
+  @ObservationIgnored private let codexVersionQuery: AgentManagedHookPreparer.CodexVersionQuery
   @ObservationIgnored private let hookResourcesProvider: @MainActor () -> AgentHookResources?
   @ObservationIgnored private let forwardingRecordBaseDirectory: URL
   @ObservationIgnored private var codexForwardingRecordStore: CodexForwardingRecordStore?
@@ -60,6 +61,9 @@ final class WorktreeTerminalManager {
       @escaping @Sendable (URL, String?) async -> CodexShellLaunchEnvironment? = {
         await CodexShellLaunchEnvironmentProbe.resolve(cwd: $0, pathOverride: $1)
       },
+    codexVersionQuery: @escaping AgentManagedHookPreparer.CodexVersionQuery = {
+      await CodexVersionProbe.query(executableURL: $0)
+    },
     hookResourcesProvider: @escaping @MainActor () -> AgentHookResources? = {
       guard let url = ProwlPaths.bundledCLIURL else { return nil }
       return AgentHookResources(
@@ -85,6 +89,7 @@ final class WorktreeTerminalManager {
     self.agentDispatchStore = agentDispatchStore
     self.codexConfigReadProcess = codexConfigReadProcess
     self.codexShellEnvironmentResolver = codexShellEnvironmentResolver
+    self.codexVersionQuery = codexVersionQuery
     self.hookResourcesProvider = hookResourcesProvider
     self.forwardingRecordBaseDirectory = forwardingRecordBaseDirectory
     // A remembered size equal to the config's size means "follow the config".
@@ -118,11 +123,6 @@ final class WorktreeTerminalManager {
       return
     }
     handleManagementCommand(command)
-  }
-
-  /// Creates a tab at an explicit directory and returns its ID for immediate Canvas selection.
-  func createTabInDirectory(_ worktree: Worktree, directory: URL) -> TerminalTabID? {
-    createTabAsync(in: worktree, runSetupScriptIfNew: false, workingDirectory: directory)
   }
 
   /// Synchronous launch boundary used by the CLI and workflow runner. Menu and
@@ -167,6 +167,7 @@ final class WorktreeTerminalManager {
         resources: resources,
         codexShellEnvironment: codexShellEnvironment,
         codexConfigReadProcess: codexConfigReadProcess,
+        codexVersionQuery: codexVersionQuery,
         droidSettingsEnvironmentResolver: { cwd, pathOverride in
           await DroidSettingsEnvironmentProbe.resolve(cwd: cwd, pathOverride: pathOverride)
         },
@@ -186,7 +187,8 @@ final class WorktreeTerminalManager {
           runtime: request.plan.runtime.rawValue,
           message: "The launch target changed during managed hook preparation."
         )
-        return .success(PreparedAgentProfileLaunch(context: context, warnings: [warning]))
+        return .success(
+          PreparedAgentProfileLaunch(context: fallbackContext(context, preparation), warnings: [warning]))
       }
       return applyManagedHook(preparation, context: context, resources: resources)
     }
@@ -203,10 +205,11 @@ final class WorktreeTerminalManager {
     resources: AgentHookResources?
   ) -> Result<PreparedAgentProfileLaunch, AgentProfileLaunchError> {
     let runtimeRawValue = context.request.plan.runtime.rawValue
+    let fallbackContext = fallbackContext(context, preparation)
     func degraded(_ message: String) -> Result<PreparedAgentProfileLaunch, AgentProfileLaunchError> {
       .success(
         PreparedAgentProfileLaunch(
-          context: context,
+          context: fallbackContext,
           warnings: [
             LifecycleCommandWarning(
               code: .managedHookDegraded,
@@ -236,7 +239,7 @@ final class WorktreeTerminalManager {
       discardPrivateFiles()
       return .success(
         PreparedAgentProfileLaunch(
-          context: context,
+          context: fallbackContext,
           warnings: preparation.warning.map { [$0] } ?? []
         )
       )
@@ -265,25 +268,22 @@ final class WorktreeTerminalManager {
       coveredEvents: capability.coveredEvents,
       forwardingRecord: privateFiles.last
     )
-    let preparedContext = FrozenAgentProfileLaunchContext(
-      request: AgentProfileLaunchRequest(
-        plan: executionPlan,
-        placement: context.request.placement,
-        workingDirectoryOverride: context.request.workingDirectoryOverride,
-        inheritanceAnchor: context.request.inheritanceAnchor,
-        title: context.request.title
-      ),
-      inheritedCWD: context.inheritedCWD,
-      anchorSurfaceID: context.anchorSurfaceID,
-      tracksFocusedAnchor: context.tracksFocusedAnchor,
-      tracksInheritedCWD: context.tracksInheritedCWD
-    )
+    let preparedContext = context.replacingPlan(executionPlan)
     return .success(
       PreparedAgentProfileLaunch(
         context: preparedContext,
         warnings: preparation.warning.map { [$0] } ?? []
       )
     )
+  }
+
+  /// A launch without its managed hook still takes the runtime's fallback invocation.
+  private func fallbackContext(
+    _ context: FrozenAgentProfileLaunchContext,
+    _ preparation: AgentManagedHookPreparation
+  ) -> FrozenAgentProfileLaunchContext {
+    guard let invocation = preparation.fallbackInvocation else { return context }
+    return context.replacingPlan(context.request.plan.replacingInvocation(invocation))
   }
 
   /// Materialize a runtime's merged hook settings into the owner-only store and render the
@@ -526,10 +526,11 @@ final class WorktreeTerminalManager {
     case .saveLayoutSnapshot:
       terminalLogger.info("[LayoutRestore] received saveLayoutSnapshot command")
       Task { await persistLayoutSnapshot() }
-    case .restoreLayoutSnapshot(let worktrees):
+    case .restoreLayoutSnapshot(let worktrees, let allowsMissingWorktrees):
       terminalLogger.info(
-        "[LayoutRestore] received restoreLayoutSnapshot command, worktrees=\(worktrees.count)")
-      Task { await restoreLayoutSnapshot(from: worktrees) }
+        "[LayoutRestore] received restoreLayoutSnapshot command, worktrees=\(worktrees.count)"
+          + " allowsMissing=\(allowsMissingWorktrees)")
+      Task { await restoreLayoutSnapshot(from: worktrees, allowsMissingWorktrees: allowsMissingWorktrees) }
     case .presentTabIconPicker(let worktree):
       state(for: worktree).presentIconPickerForFocusedTab()
     default:
@@ -1473,7 +1474,7 @@ final class WorktreeTerminalManager {
     terminalLogger.info("[LayoutRestore] persistSync: save result=\(saved)")
   }
 
-  func restoreLayoutSnapshot(from worktrees: [Worktree]) async {
+  func restoreLayoutSnapshot(from worktrees: [Worktree], allowsMissingWorktrees: Bool = false) async {
     terminalLogger.info("[LayoutRestore] restore: loading snapshot from disk")
     guard let payload = await layoutPersistence.loadSnapshot() else {
       terminalLogger.info("[LayoutRestore] restore: no snapshot found on disk, skipping")
@@ -1494,13 +1495,20 @@ final class WorktreeTerminalManager {
       terminalLogger.info(
         "[LayoutRestore] restore: available[\(index)] id=\(worktree.id) name=\(worktree.name)")
     }
-    let didRestore = applyLayoutSnapshotPayload(payload, availableWorktrees: worktrees)
-    terminalLogger.info("[LayoutRestore] restore: applyResult=\(didRestore)")
-    if didRestore {
+    let skippedWorktreeIDs = applyLayoutSnapshotPayload(
+      payload,
+      availableWorktrees: worktrees,
+      allowsMissingWorktrees: allowsMissingWorktrees
+    )
+    terminalLogger.info("[LayoutRestore] restore: applyResult=\(skippedWorktreeIDs != nil)")
+    if let skippedWorktreeIDs {
+      let selectedWorktreeID = payload.selectedWorktreeID.flatMap {
+        skippedWorktreeIDs.contains($0) ? nil : $0
+      }
       terminalLogger.info(
-        "[LayoutRestore] restore: emitting layoutRestored selectedWorktreeID=\(payload.selectedWorktreeID ?? "nil")"
+        "[LayoutRestore] restore: emitting layoutRestored selectedWorktreeID=\(selectedWorktreeID ?? "nil")"
       )
-      emit(.layoutRestored(selectedWorktreeID: payload.selectedWorktreeID))
+      emit(.layoutRestored(selectedWorktreeID: selectedWorktreeID))
     } else {
       terminalLogger.warning(
         "[LayoutRestore] restore: clearing invalid snapshot and emitting failure toast")
@@ -1536,26 +1544,34 @@ final class WorktreeTerminalManager {
     )
   }
 
+  /// Returns the IDs of the saved worktrees that were skipped, or `nil` when the
+  /// snapshot is invalid and nothing was restored.
   private func applyLayoutSnapshotPayload(
     _ payload: TerminalLayoutSnapshotPayload,
-    availableWorktrees: [Worktree]
-  ) -> Bool {
+    availableWorktrees: [Worktree],
+    allowsMissingWorktrees: Bool
+  ) -> Set<Worktree.ID>? {
     let worktreeByID = Dictionary(
       availableWorktrees.map { ($0.id, $0) },
       uniquingKeysWith: { first, _ in first }
     )
     var restoredStates: [WorktreeTerminalState] = []
     restoredStates.reserveCapacity(payload.worktrees.count)
+    var skippedWorktreeIDs: Set<Worktree.ID> = []
 
     for snapshot in payload.worktrees {
       guard let worktree = worktreeByID[snapshot.worktreeID] else {
         terminalLogger.warning(
           "[LayoutRestore] apply: worktreeID \(snapshot.worktreeID) not found in available worktrees"
         )
+        if allowsMissingWorktrees {
+          skippedWorktreeIDs.insert(snapshot.worktreeID)
+          continue
+        }
         for state in restoredStates {
           state.closeAllSurfaces()
         }
-        return false
+        return nil
       }
       terminalLogger.info("[LayoutRestore] apply: restoring worktree \(worktree.id)")
       let state = state(for: worktree)
@@ -1566,14 +1582,15 @@ final class WorktreeTerminalManager {
         for restored in restoredStates {
           restored.closeAllSurfaces()
         }
-        return false
+        return nil
       }
       restoredStates.append(state)
     }
 
     terminalLogger.info(
-      "[LayoutRestore] apply: successfully restored \(restoredStates.count) worktree(s)")
-    return true
+      "[LayoutRestore] apply: successfully restored \(restoredStates.count) worktree(s),"
+        + " skipped \(skippedWorktreeIDs.count)")
+    return skippedWorktreeIDs
   }
 
   #if DEBUG
@@ -1592,6 +1609,7 @@ final class WorktreeTerminalManager {
       self.agentDispatchStore = AgentDispatchStore()
       self.codexConfigReadProcess = CodexConfigReadProcess()
       self.codexShellEnvironmentResolver = { _, _ in nil }
+      self.codexVersionQuery = { _ in nil }
       self.hookResourcesProvider = { nil }
       self.forwardingRecordBaseDirectory = ProwlPaths.agentHookForwardingDirectory
       self.closeUndoStack = TerminalCloseUndoStack(timeout: .zero)

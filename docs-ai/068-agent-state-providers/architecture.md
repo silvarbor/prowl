@@ -23,7 +23,8 @@ pane's OSC 7501 root record as pushed evidence, resolved ahead of native, log, a
 screen; a static support table decides whether a producer's records drive the decision
 (`.verified`: Claude Code since [079 slice 3](../079-program-status-osc-7501/004-claude-verified.md),
 see [claude.md](claude.md); Pi since [079 slice 4](../079-program-status-osc-7501/005-pi-verified.md),
-see [pi.md](pi.md)) or are only compared with it (`.unverified`: every other agent).
+see [pi.md](pi.md); Oh My Pi since [079.006](../079-program-status-osc-7501/006-omp-verified.md),
+see [omp.md](omp.md)) or are only compared with it (`.unverified`: every other agent).
 This is a shared decision path, not a general plugin interface for arbitrary providers.
 
 | Responsibility | Current source |
@@ -31,7 +32,7 @@ This is a shared decision path, not a general plugin interface for arbitrary pro
 | Process identity and generation | `App/Sources/Infrastructure/AgentDetection/ProcessDetection.swift` |
 | Observation acquisition and ordering | `App/Sources/Features/Terminal/BusinessLogic/AgentDetectionCoordinator.swift` |
 | Pure arbitration | `App/Sources/Domain/AgentDetection/AgentStateMachine.swift` |
-| Runtime acquisition/decoding | [Codex provider](codex.md); Pi has no file provider, see [pi.md](pi.md) |
+| Runtime acquisition/decoding | [Codex provider](codex.md); Pi and Oh My Pi have no file provider, see [pi.md](pi.md), [omp.md](omp.md) |
 | OSC 7501 program status (push, every producer) | `App/Sources/Domain/AgentDetection/ProgramStatusRecordStore.swift`, `ProgramStatusEvidence.swift`, `App/Sources/Features/Terminal/Models/WorktreeTerminalState+ProgramStatus.swift`; policy in [079](../079-program-status-osc-7501/000-plan.md) |
 | Terminal publication | `App/Sources/Features/Terminal/Models/WorktreeTerminalState+AgentDetection.swift` |
 | Wait/readiness evidence | `App/Sources/CLIService/AgentConditionEvidence.swift` |

@@ -14,11 +14,13 @@ struct CanvasView: View {
   var repositoryCustomTitles: [Repository.ID: String] = [:]
   var focusRequest: CanvasFocusRequest?
   /// A one-shot, reducer-driven request to run a view-local canvas command
-  /// (expand/arrange/organize/select-all), e.g. from the command palette.
+  /// (expand, layout, select-all, navigate), e.g. from the command palette.
   var commandRequest: CanvasCommandRequest?
   var onFocusedWorktreeChanged: (Worktree.ID?) -> Void = { _ in }
   var onFocusRequestConsumed: (Int) -> Void = { _ in }
   var onCommandConsumed: (Int) -> Void = { _ in }
+  /// Canvas is closing with a request it never ran; it must not run later.
+  var onCommandDropped: (Int) -> Void = { _ in }
   /// Reports whether a card is currently expanded in place, so the parent can
   /// give the window toolbar a matching scrim (it can't be covered from here).
   var onExpandedChange: (Bool) -> Void = { _ in }
@@ -34,6 +36,14 @@ struct CanvasView: View {
   @State var lastTitleBarTapDate: Date = .distantPast
   @State var activeResize: [TerminalTabID: ActiveResize] = [:]
   @State var hasPerformedInitialFit = false
+  /// Viewport size the current automatic layout was computed for.
+  @State var automaticLayoutViewportSize: CGSize = .zero
+  /// A card-set change arrived while a relayout could not run (a card was
+  /// expanded or being resized); apply the automatic layout afterwards.
+  @State var needsAutomaticRelayout = false
+  /// The viewport of the last fit-to-view; a relayout refits only while the
+  /// viewport still shows it.
+  @State var fittedViewport: CanvasViewportAnimator.Snapshot?
   @State var hasSeenCanvasCards = false
   @State var viewportSize: CGSize = .zero
   @State var configReloadCounter = 0
@@ -47,11 +57,10 @@ struct CanvasView: View {
   let minCardHeight: CGFloat = 200
   let maxCardWidth: CGFloat = 2400
   let maxCardHeight: CGFloat = 1600
-  let titleBarHeight: CGFloat = 28
-  let cardSpacing: CGFloat = 20
-  /// Tighter gap for the Tile layout. It lives in the scaled-up tile frame, so
-  /// the on-screen gap shrinks further as more cards are tiled (gap × scale).
-  let tileCardSpacing: CGFloat = 12
+  let layoutMetrics = CanvasLayoutMetrics.standard
+  var titleBarHeight: CGFloat { layoutMetrics.titleBarHeight }
+  /// Margin kept between a revealed card and the viewport edge.
+  let revealMargin: CGFloat = 20
   /// Outer margin kept when fitting the whole canvas into the visible viewport.
   let viewportFitPadding: CGFloat = 12
   /// Reserved height at the bottom of the viewport for the help button and
@@ -80,24 +89,12 @@ struct CanvasView: View {
   }
 
   var body: some View {
-    let selectAllCanvasShortcut = AppShortcuts.resolvedShortcut(
-      for: AppShortcuts.CommandID.selectAllCanvasCards,
-      in: resolvedKeybindings
-    )
-    let arrangeCanvasShortcut = AppShortcuts.resolvedShortcut(
-      for: AppShortcuts.CommandID.arrangeCanvasCards,
-      in: resolvedKeybindings
-    )
-    let organizeCanvasShortcut = AppShortcuts.resolvedShortcut(
-      for: AppShortcuts.CommandID.organizeCanvasCards,
-      in: resolvedKeybindings
-    )
-    let tileCanvasShortcut = AppShortcuts.resolvedShortcut(
-      for: AppShortcuts.CommandID.tileCanvasCards,
-      in: resolvedKeybindings
-    )
     let expandCanvasShortcut = AppShortcuts.resolvedShortcut(
       for: AppShortcuts.CommandID.expandCanvasCard,
+      in: resolvedKeybindings
+    )
+    let selectAllCanvasShortcut = AppShortcuts.resolvedShortcut(
+      for: AppShortcuts.CommandID.selectAllCanvasCards,
       in: resolvedKeybindings
     )
     let _ = configReloadCounter
@@ -106,12 +103,14 @@ struct CanvasView: View {
       lastOffset: $lastCanvasOffset,
       scale: $canvasScale,
       lastScale: $lastCanvasScale,
-      isInteractionEnabled: expandedTabID == nil
+      isInteractionEnabled: expandedTabID == nil,
+      viewportAnimator: viewportAnimator
     ) {
       GeometryReader { _ in
         let activeStates = terminalManager.activeWorktreeStates
-        let allCardKeys = collectCardKeys(from: activeStates)
-        let allTabIDs = collectVisibleTabIDs(from: activeStates)
+        let cards = canvasCards(in: activeStates)
+        let allCardKeys = cards.map(\.key)
+        let allTabIDs = cards.map(\.tabID)
 
         // Background layer: handles canvas pan and tap-to-clear.
         Color.clear
@@ -119,24 +118,29 @@ struct CanvasView: View {
             if !allCardKeys.isEmpty {
               hasSeenCanvasCards = true
             }
-            ensureLayouts(for: allCardKeys)
+            // Drop layouts of tabs closed since the last visit first, so new
+            // cards are not placed around them.
+            cleanStaleLayouts()
+            placeUnpositionedCards(allCardKeys)
             if !allCardKeys.isEmpty {
               layoutStore.ensureZOrder(for: allCardKeys)
             }
             pruneSelection(previousOrder: [], currentOrder: allTabIDs, states: activeStates)
             syncBroadcastCallbacks(states: activeStates)
             fulfillPendingFocusRequest(focusRequest, states: activeStates)
+            // A request sent just before Canvas showed (e.g. `prowl canvas
+            // layout --show`) produces no change event for this new view.
+            fulfillCommandRequest(commandRequest)
           }
-          .onChange(of: allCardKeys) { _, newKeys in
+          .onChange(of: allCardKeys) { oldKeys, newKeys in
             if newKeys.isEmpty {
-              CanvasLayoutStore.hasAutoArrangedInSession = false
               if hasSeenCanvasCards {
                 layoutStore.prune(to: [])
               }
             } else {
               hasSeenCanvasCards = true
             }
-            ensureLayouts(for: newKeys)
+            handleCardSetChange(to: newKeys, appeared: Set(newKeys).subtracting(oldKeys))
             if !newKeys.isEmpty {
               layoutStore.ensureZOrder(for: newKeys)
             }
@@ -167,22 +171,10 @@ struct CanvasView: View {
         proxy.size
       } action: { newSize in
         viewportSize = newSize
-        let currentCardKeys = collectCardKeys(from: terminalManager.activeWorktreeStates)
-        if !hasPerformedInitialFit, !currentCardKeys.isEmpty {
-          hasPerformedInitialFit = true
-          if !CanvasLayoutStore.hasAutoArrangedInSession {
-            CanvasLayoutStore.hasAutoArrangedInSession = true
-            if layoutStore.shouldAutoArrangeOnInitialEntry(for: currentCardKeys) {
-              switch settingsFile.global.canvasDefaultLayout {
-              case .uniform:
-                arrangeCards()
-              case .tile:
-                tileCards()
-              }
-            }
-          }
-          fitToView(canvasSize: newSize)
-        }
+        performEntryLayoutIfNeeded()
+      }
+      .task(id: viewportSize) {
+        await relayoutAfterViewportChange()
       }
     }
     .overlay(alignment: .bottomTrailing) {
@@ -196,52 +188,20 @@ struct CanvasView: View {
       clearSelection(states: terminalManager.activeWorktreeStates)
       return .handled
     }
-    .onKeyPress(
-      selectAllCanvasShortcut?.keyEquivalent ?? AppShortcuts.selectAllCanvasCards.keyEquivalent,
-      phases: .down
-    ) { keyPress in
-      // Bail when the binding is disabled in Settings (resolved shortcut is nil);
-      // otherwise the app-default key would still fire despite being unbound.
-      guard let shortcut = selectAllCanvasShortcut else { return .ignored }
-      guard keyPress.modifiers == shortcut.modifiers else { return .ignored }
+    .onCanvasShortcut(selectAllCanvasShortcut, fallback: AppShortcuts.selectAllCanvasCards) {
       selectAllCards()
-      return .handled
     }
-    .onKeyPress(
-      arrangeCanvasShortcut?.keyEquivalent ?? AppShortcuts.arrangeCanvasCards.keyEquivalent,
-      phases: .down
-    ) { keyPress in
-      guard let shortcut = arrangeCanvasShortcut else { return .ignored }
-      guard keyPress.modifiers == shortcut.modifiers else { return .ignored }
-      arrangeCardsWithFit()
-      return .handled
+    .onCanvasShortcut(layoutShortcut(.arrange), fallback: CanvasLayoutKind.arrange.defaultShortcut) {
+      applyLayout(.arrange)
     }
-    .onKeyPress(
-      organizeCanvasShortcut?.keyEquivalent ?? AppShortcuts.organizeCanvasCards.keyEquivalent,
-      phases: .down
-    ) { keyPress in
-      guard let shortcut = organizeCanvasShortcut else { return .ignored }
-      guard keyPress.modifiers == shortcut.modifiers else { return .ignored }
-      organizeCardsWithFit()
-      return .handled
+    .onCanvasShortcut(layoutShortcut(.organize), fallback: CanvasLayoutKind.organize.defaultShortcut) {
+      applyLayout(.organize)
     }
-    .onKeyPress(
-      tileCanvasShortcut?.keyEquivalent ?? AppShortcuts.tileCanvasCards.keyEquivalent,
-      phases: .down
-    ) { keyPress in
-      guard let shortcut = tileCanvasShortcut else { return .ignored }
-      guard keyPress.modifiers == shortcut.modifiers else { return .ignored }
-      tileCardsWithFit()
-      return .handled
+    .onCanvasShortcut(layoutShortcut(.tile), fallback: CanvasLayoutKind.tile.defaultShortcut) {
+      applyLayout(.tile)
     }
-    .onKeyPress(
-      expandCanvasShortcut?.keyEquivalent ?? AppShortcuts.expandCanvasCard.keyEquivalent,
-      phases: .down
-    ) { keyPress in
-      guard let shortcut = expandCanvasShortcut else { return .ignored }
-      guard keyPress.modifiers == shortcut.modifiers else { return .ignored }
+    .onCanvasShortcut(expandCanvasShortcut, fallback: AppShortcuts.expandCanvasCard) {
       toggleExpandFocusedCard()
-      return .handled
     }
     .onChange(of: expandedTabID) { _, newValue in
       onExpandedChange(newValue != nil)
@@ -286,7 +246,7 @@ struct CanvasView: View {
     ZStack(alignment: .topLeading) {
       ForEach(activeStates, id: \.worktreeID) { state in
         ForEach(state.tabManager.tabs) { tab in
-          if state.surfaceView(for: tab.id) != nil {
+          if state.hasCanvasCard(tab.id) {
             cardView(for: tab, in: state, activeStates: activeStates)
           }
         }
@@ -322,7 +282,7 @@ struct CanvasView: View {
     activeStates: [WorktreeTerminalState]
   ) -> some View {
     let tree = state.splitTree(for: tab.id)
-    let cardKey = tab.id.rawValue.uuidString
+    let cardKey = tab.id.canvasCardKey
     let baseLayout = layoutStore.cardLayouts[cardKey] ?? CanvasCardLayout(position: .zero)
     let isCardExpanded = expandedTabID == tab.id
     let expandHelp = AppShortcuts.helpText(
@@ -429,6 +389,7 @@ struct CanvasView: View {
     // implicit transaction), so drive it explicitly. Only the toggled card's
     // value changes, so the rest stay put.
     .animation(expandAnimation, value: isCardExpanded)
+    .hiddenUntilPlaced(layoutStore.cardLayouts[cardKey] != nil)
     .zIndex(zIndex(for: tab.id, cardKey: cardKey))
   }
 
@@ -470,6 +431,7 @@ struct CanvasView: View {
   var canvasPanGesture: some Gesture {
     DragGesture()
       .onChanged { value in
+        viewportAnimator.cancel()
         canvasOffset = CGSize(
           width: lastCanvasOffset.width + value.translation.width,
           height: lastCanvasOffset.height + value.translation.height
@@ -483,6 +445,7 @@ struct CanvasView: View {
   var canvasZoomGesture: some Gesture {
     MagnifyGesture()
       .onChanged { value in
+        viewportAnimator.cancel()
         let newScale = max(0.25, min(2.0, lastCanvasScale * value.magnification))
         let anchor = value.startLocation
 
@@ -505,52 +468,7 @@ struct CanvasView: View {
       }
   }
 
-  // MARK: - Layout
-
-  /// Batch-position all cards that don't have stored layouts yet.
-  /// Uses a single, consistent column count to avoid overlap between
-  /// cards positioned in different passes.
-  func ensureLayouts(for cardKeys: [String]) {
-    let unpositioned = cardKeys.filter { layoutStore.cardLayouts[$0] == nil }
-    guard !unpositioned.isEmpty else { return }
-
-    // Count only VISIBLE cards that already have layouts (ignores stale entries).
-    let positionedCount = cardKeys.count - unpositioned.count
-    // For incremental adds, preserve the existing grid shape.
-    // For initial layout, use total count for a balanced grid.
-    let columns =
-      positionedCount > 0
-      ? gridColumns(for: positionedCount)
-      : gridColumns(for: cardKeys.count)
-
-    // Build locally, assign once to trigger a single save.
-    let cardSize = adaptiveDefaultCardSize
-    var layouts = layoutStore.cardLayouts
-    for (offset, key) in unpositioned.enumerated() {
-      layouts[key] = CanvasCardLayout(
-        position: gridPosition(index: positionedCount + offset, columns: columns, cardSize: cardSize),
-        size: cardSize
-      )
-    }
-    layoutStore.setCardLayouts(layouts)
-  }
-
-  /// Balanced grid: columns ≈ sqrt(N). No viewport constraint — the canvas
-  /// is infinite and fitToView handles zoom.
-  func gridColumns(for count: Int) -> Int {
-    max(1, Int(ceil(sqrt(Double(count)))))
-  }
-
-  func gridPosition(index: Int, columns: Int, cardSize: CGSize) -> CGPoint {
-    let cardW = cardSize.width
-    let cardH = cardSize.height + titleBarHeight
-    let row = index / columns
-    let col = index % columns
-    return CGPoint(
-      x: cardSpacing + (cardW + cardSpacing) * CGFloat(col) + cardW / 2,
-      y: cardSpacing + (cardH + cardSpacing) * CGFloat(row) + cardH / 2
-    )
-  }
+  // MARK: - Card Geometry
 
   /// Compute effective center and size accounting for resize only (not drag).
   /// Drag is applied separately via `.offset()` to avoid layout passes.
@@ -595,156 +513,6 @@ struct CanvasView: View {
     max(minCardHeight, min(maxCardHeight, height))
   }
 
-  // MARK: - Organize & Fit
-
-  func collectCardKeys(from states: [WorktreeTerminalState]) -> [String] {
-    states.flatMap { state in
-      state.tabManager.tabs.compactMap { tab in
-        state.surfaceView(for: tab.id) != nil ? tab.id.rawValue.uuidString : nil
-      }
-    }
-  }
-
-  func collectVisibleTabIDs(from states: [WorktreeTerminalState]) -> [TerminalTabID] {
-    states.flatMap { state in
-      state.tabManager.tabs.compactMap { tab in
-        state.surfaceView(for: tab.id) != nil ? tab.id : nil
-      }
-    }
-  }
-
-  func collectFocusCandidates(from states: [WorktreeTerminalState]) -> [CanvasFocusCandidate] {
-    states.flatMap { state in
-      state.tabManager.tabs.compactMap { tab in
-        state.surfaceView(for: tab.id) != nil
-          ? CanvasFocusCandidate(worktreeID: state.worktreeID, tabID: tab.id)
-          : nil
-      }
-    }
-  }
-
-  /// Reset all card positions to a clean grid layout (uniform sizes).
-  func organizeCards() {
-    let keys = collectCardKeys(from: terminalManager.activeWorktreeStates)
-    let columns = gridColumns(for: keys.count)
-    let cardSize = adaptiveDefaultCardSize
-    var layouts = layoutStore.cardLayouts
-    for (index, key) in keys.enumerated() {
-      layouts[key] = CanvasCardLayout(
-        position: gridPosition(index: index, columns: columns, cardSize: cardSize),
-        size: cardSize
-      )
-    }
-    layoutStore.setCardLayouts(layouts, zOrder: keys)
-  }
-
-  /// Arrange cards with `CanvasCardPacker`, which chooses between waterfall
-  /// and row-break layouts. Preserves each card's current size and finds a
-  /// compact layout whose aspect ratio matches the viewport.
-  func arrangeCards() {
-    let keys = collectCardKeys(from: terminalManager.activeWorktreeStates)
-    guard !keys.isEmpty, viewportSize.width > 0, viewportSize.height > 0 else { return }
-
-    let cards: [CanvasCardPacker.CardInfo] = keys.map { key in
-      let size = layoutStore.cardLayouts[key]?.size ?? adaptiveDefaultCardSize
-      return CanvasCardPacker.CardInfo(key: key, size: size)
-    }
-
-    let packer = CanvasCardPacker(spacing: cardSpacing, titleBarHeight: titleBarHeight)
-    let targetRatio = viewportSize.width / viewportSize.height
-    let result = packer.pack(cards: cards, targetRatio: targetRatio)
-
-    guard !result.layouts.isEmpty else { return }
-    layoutStore.setCardLayouts(result.layouts, zOrder: keys)
-  }
-
-  /// Tile cards to fill the viewport: resize every card into a balanced grid
-  /// whose orientation follows the viewport (rows when wide, columns when tall).
-  func tileCards() {
-    let keys = collectCardKeys(from: terminalManager.activeWorktreeStates)
-    guard !keys.isEmpty, viewportSize.width > 0, viewportSize.height > 0 else { return }
-
-    // Below this card surface, scale the layout up (and the viewport back down)
-    // so cards keep enough rows/columns to read at a glance. 0.6 keeps a handful
-    // of cards at native scale before the gentle zoom-out begins.
-    let comfortableSize = CGSize(
-      width: adaptiveDefaultCardSize.width * 0.6,
-      height: adaptiveDefaultCardSize.height * 0.6
-    )
-    let tiler = CanvasTileLayout(spacing: tileCardSpacing, titleBarHeight: titleBarHeight)
-    let layouts = tiler.layout(keys: keys, viewport: viewportSize, comfortableSize: comfortableSize)
-    guard !layouts.isEmpty else { return }
-    layoutStore.setCardLayouts(layouts, zOrder: keys)
-  }
-
-  /// Arrange cards (preserving sizes) and refit the viewport, animated.
-  /// Shared by the toolbar button and the keyboard shortcut.
-  func arrangeCardsWithFit() {
-    withAnimation(.easeInOut(duration: 0.2)) {
-      cancelExpandForRelayout()
-      arrangeCards()
-      fitToView(canvasSize: viewportSize)
-    }
-  }
-
-  /// Organize cards into a uniform grid and refit the viewport, animated.
-  /// Shared by the toolbar button and the keyboard shortcut.
-  func organizeCardsWithFit() {
-    withAnimation(.easeInOut(duration: 0.2)) {
-      cancelExpandForRelayout()
-      organizeCards()
-      fitToView(canvasSize: viewportSize)
-    }
-  }
-
-  /// Tile cards to fill the viewport and refit, animated. Shared by the toolbar
-  /// button and the keyboard shortcut.
-  func tileCardsWithFit() {
-    withAnimation(.easeInOut(duration: 0.2)) {
-      cancelExpandForRelayout()
-      tileCards()
-      fitToView(canvasSize: viewportSize)
-    }
-  }
-
-  /// Adjust scale and offset so all cards fit within the viewport.
-  func fitToView(canvasSize: CGSize) {
-    guard canvasSize.width > 0, canvasSize.height > 0 else { return }
-
-    let keys = collectCardKeys(from: terminalManager.activeWorktreeStates)
-    guard !keys.isEmpty else { return }
-
-    var bounds = CGRect.null
-
-    for key in keys {
-      guard let layout = layoutStore.cardLayouts[key] else { continue }
-      bounds = bounds.union(cardRect(for: layout))
-    }
-
-    guard
-      let fit = CanvasViewportMath.fit(
-        bounds: bounds,
-        viewport: canvasSize,
-        bottomReserve: bottomToolbarReserve,
-        padding: viewportFitPadding
-      )
-    else {
-      return
-    }
-
-    canvasOffset = fit.offset
-    canvasScale = fit.scale
-    lastCanvasScale = fit.scale
-    lastCanvasOffset = canvasOffset
-  }
-
-  /// Remove stored layouts for tabs that no longer exist.
-  func cleanStaleLayouts() {
-    let visibleKeys = Set(collectCardKeys(from: terminalManager.activeWorktreeStates))
-    guard !visibleKeys.isEmpty || hasSeenCanvasCards else { return }
-    layoutStore.prune(to: visibleKeys)
-  }
-
   var canvasToolbar: some View {
     // Two visual groups: selection (broadcast / select-all) and the three layout
     // actions. A wider gap separates the groups; the layout trio is tucked tight.
@@ -778,53 +546,34 @@ struct CanvasView: View {
       }
 
       HStack(spacing: 4) {
-        Button {
-          arrangeCardsWithFit()
-        } label: {
-          Image(systemName: "rectangle.3.group")
-            .font(.body)
-            .accessibilityLabel("Arrange")
+        ForEach(CanvasLayoutKind.allCases, id: \.self) { kind in
+          layoutButton(kind, isActive: layoutStore.mode?.automaticKind == kind)
         }
-        .buttonStyle(.bordered)
-        .help(
-          AppShortcuts.helpText(
-            title: "Arrange cards preserving sizes",
-            commandID: AppShortcuts.CommandID.arrangeCanvasCards,
-            in: resolvedKeybindings
-          ))
-
-        Button {
-          organizeCardsWithFit()
-        } label: {
-          Image(systemName: "square.grid.2x2")
-            .font(.body)
-            .accessibilityLabel("Organize")
-        }
-        .buttonStyle(.bordered)
-        .help(
-          AppShortcuts.helpText(
-            title: "Organize cards in a uniform grid",
-            commandID: AppShortcuts.CommandID.organizeCanvasCards,
-            in: resolvedKeybindings
-          ))
-
-        Button {
-          tileCardsWithFit()
-        } label: {
-          Image(systemName: "rectangle.split.2x1")
-            .font(.body)
-            .accessibilityLabel("Tile")
-        }
-        .buttonStyle(.bordered)
-        .help(
-          AppShortcuts.helpText(
-            title: "Tile cards to fill the canvas",
-            commandID: AppShortcuts.CommandID.tileCanvasCards,
-            in: resolvedKeybindings
-          ))
       }
     }
     .padding()
+  }
+
+  /// A layout button. The active automatic layout is tinted, so the user can
+  /// tell that new and closed cards will follow it.
+  func layoutButton(_ kind: CanvasLayoutKind, isActive: Bool) -> some View {
+    Button {
+      applyLayout(kind)
+    } label: {
+      Image(systemName: kind.systemImage)
+        .font(.body)
+        .foregroundStyle(isActive ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.primary))
+        .accessibilityLabel(Text(kind.title))
+    }
+    .buttonStyle(.bordered)
+    .tint(isActive ? Color.accentColor : nil)
+    .accessibilityAddTraits(isActive ? .isSelected : [])
+    .help(
+      AppShortcuts.helpText(
+        title: isActive ? kind.activeHelpTitle : kind.helpTitle,
+        commandID: kind.commandID,
+        in: resolvedKeybindings
+      ))
   }
 
   func zIndex(for tabID: TerminalTabID, cardKey: String) -> Double {
@@ -841,11 +590,11 @@ struct CanvasView: View {
   // MARK: - Drag
 
   func commitDrag(for cardKey: String, translation: CGSize) {
-    if var layout = layoutStore.cardLayouts[cardKey] {
-      layout.position.x += translation.width
-      layout.position.y += translation.height
-      layoutStore.cardLayouts[cardKey] = layout
-    }
+    guard translation != .zero, var layout = layoutStore.cardLayouts[cardKey] else { return }
+    layout.position.x += translation.width
+    layout.position.y += translation.height
+    layoutStore.cardLayouts[cardKey] = layout
+    enterFreeformLayout()
   }
 
   // MARK: - Resize
@@ -854,15 +603,21 @@ struct CanvasView: View {
     guard activeResize[tabID] != nil else { return }
     if var layout = layoutStore.cardLayouts[cardKey] {
       let resized = resizedFrame(for: tabID, baseLayout: layout)
-      // Settle the card into its committed size with a short animation (cards
-      // no longer animate size on their own; the canvas drives it explicitly).
-      withAnimation(.easeInOut(duration: 0.2)) {
-        layout.position = resized.center
-        layout.size = resized.size
-        layoutStore.cardLayouts[cardKey] = layout
+      if resized.center != layout.position || resized.size != layout.size {
+        // Settle the card into its committed size with a short animation (cards
+        // no longer animate size on their own; the canvas drives it explicitly).
+        withAnimation(.easeInOut(duration: 0.2)) {
+          layout.position = resized.center
+          layout.size = resized.size
+          layoutStore.cardLayouts[cardKey] = layout
+        }
+        enterFreeformLayout()
       }
     }
     activeResize[tabID] = nil
+    // A card-set change that waited for this resize; a resize that changed
+    // nothing keeps the automatic layout, so it must still run.
+    relayoutIfDeferred()
     for surface in surfaces {
       surface.needsLayout = true
       surface.needsDisplay = true
@@ -871,7 +626,7 @@ struct CanvasView: View {
 
   func selectAllCards() {
     let activeStates = terminalManager.activeWorktreeStates
-    let allTabIDs = collectVisibleTabIDs(from: activeStates)
+    let allTabIDs = canvasCards(in: activeStates).map(\.tabID)
     guard allTabIDs.count > 1 else { return }
     mutateSelection(states: activeStates) { state in
       state.selectAll(allTabIDs)
@@ -884,7 +639,7 @@ struct CanvasView: View {
     _ tabID: TerminalTabID,
     states: [WorktreeTerminalState]
   ) {
-    layoutStore.moveToFront(tabID.rawValue.uuidString)
+    layoutStore.moveToFront(tabID.canvasCardKey)
     mutateSelection(states: states) { state in
       state.focusSingle(tabID)
     }
@@ -896,96 +651,33 @@ struct CanvasView: View {
   func navigateCard(_ direction: CanvasNavigationDirection) -> Bool {
     guard expandedTabID == nil else { return false }
     let activeStates = terminalManager.activeWorktreeStates
+    let cards = canvasCards(in: activeStates)
     guard let currentTabID = selectionState.primaryTabID else {
-      let allTabIDs = collectVisibleTabIDs(from: activeStates)
-      if let first = allTabIDs.first {
-        focusSingleCard(first, states: activeStates)
-        scrollToRevealCard(first)
+      if let first = cards.first {
+        focusSingleCard(first.tabID, states: activeStates)
+        revealCard(first.tabID, allowsZoomOut: false)
       }
-      return !allTabIDs.isEmpty
+      return !cards.isEmpty
     }
 
-    let entries = cardEntries(from: activeStates)
-    let currentKey = currentTabID.rawValue.uuidString
+    let entries = cards.compactMap { card -> CanvasSpatialNavigation.CardEntry? in
+      guard let layout = layoutStore.cardLayouts[card.key] else { return nil }
+      return CanvasSpatialNavigation.CardEntry(id: card.key, center: layout.position)
+    }
     guard
       let targetKey = CanvasSpatialNavigation.nearest(
-        from: currentKey,
+        from: currentTabID.canvasCardKey,
         direction: direction,
         cards: entries
-      )
+      ),
+      let target = cards.first(where: { $0.key == targetKey })
     else {
       return true
     }
 
-    let allTabIDs = collectVisibleTabIDs(from: activeStates)
-    guard let targetTabID = allTabIDs.first(where: { $0.rawValue.uuidString == targetKey }) else {
-      return true
-    }
-
-    focusSingleCard(targetTabID, states: activeStates)
-    scrollToRevealCard(targetTabID)
+    focusSingleCard(target.tabID, states: activeStates)
+    revealCard(target.tabID, allowsZoomOut: false)
     return true
-  }
-
-  private func scrollToRevealCard(_ tabID: TerminalTabID) {
-    guard viewportSize.width > 0, viewportSize.height > 0 else { return }
-    let cardKey = tabID.rawValue.uuidString
-    guard let layout = layoutStore.cardLayouts[cardKey] else { return }
-
-    let cardRect = screenRect(for: layout)
-    let delta = CanvasViewportMath.revealDelta(
-      for: cardRect,
-      viewport: viewportSize,
-      bottomReserve: bottomToolbarReserve,
-      margin: 20
-    )
-
-    guard delta != .zero else { return }
-
-    let target = CGSize(
-      width: canvasOffset.width + delta.width,
-      height: canvasOffset.height + delta.height
-    )
-    let start = CanvasViewportAnimator.Snapshot(offset: canvasOffset, scale: canvasScale)
-    let end = CanvasViewportAnimator.Snapshot(offset: target, scale: canvasScale)
-    viewportAnimator.animate(from: start, to: end) { [self] snapshot in
-      canvasOffset = snapshot.offset
-      lastCanvasOffset = snapshot.offset
-    }
-  }
-
-  private func cardRect(for layout: CanvasCardLayout) -> CGRect {
-    let width = layout.size.width
-    let height = layout.size.height + titleBarHeight
-    return CGRect(
-      x: layout.position.x - width / 2,
-      y: layout.position.y - height / 2,
-      width: width,
-      height: height
-    )
-  }
-
-  private func screenRect(for layout: CanvasCardLayout) -> CGRect {
-    let rect = cardRect(for: layout)
-    return CGRect(
-      x: rect.minX * canvasScale + canvasOffset.width,
-      y: rect.minY * canvasScale + canvasOffset.height,
-      width: rect.width * canvasScale,
-      height: rect.height * canvasScale
-    )
-  }
-
-  private func cardEntries(
-    from states: [WorktreeTerminalState]
-  ) -> [CanvasSpatialNavigation.CardEntry] {
-    states.flatMap { state in
-      state.tabManager.tabs.compactMap { tab -> CanvasSpatialNavigation.CardEntry? in
-        guard state.surfaceView(for: tab.id) != nil else { return nil }
-        let key = tab.id.rawValue.uuidString
-        guard let layout = layoutStore.cardLayouts[key] else { return nil }
-        return CanvasSpatialNavigation.CardEntry(id: key, center: layout.position)
-      }
-    }
   }
 
   // MARK: - Expand In Place
@@ -1048,6 +740,31 @@ struct CanvasView: View {
       collapseExpand()
     } else if let tabID = selectionState.primaryTabID {
       expandCard(tabID, states: terminalManager.activeWorktreeStates)
+    }
+  }
+}
+
+extension View {
+  /// A new card renders once before it gets a spot. Keep it invisible (but
+  /// mounted, so its terminal can take focus) until then, and let it appear at
+  /// its spot rather than fly there from the canvas origin.
+  fileprivate func hiddenUntilPlaced(_ isPlaced: Bool) -> some View {
+    opacity(isPlaced ? 1 : 0)
+      .animation(nil, value: isPlaced)
+  }
+
+  /// Run `action` when the canvas has focus and `shortcut` is pressed. The
+  /// handler listens on the app-default key when the binding is disabled
+  /// (`shortcut == nil`), so it must ignore the press rather than fire.
+  fileprivate func onCanvasShortcut(
+    _ shortcut: AppShortcut?,
+    fallback: AppShortcut,
+    perform action: @escaping () -> Void
+  ) -> some View {
+    onKeyPress(shortcut?.keyEquivalent ?? fallback.keyEquivalent, phases: .down) { keyPress in
+      guard let shortcut, keyPress.modifiers == shortcut.modifiers else { return .ignored }
+      action()
+      return .handled
     }
   }
 }

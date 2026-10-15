@@ -97,8 +97,11 @@ jobs:
           # SwiftPM serializes access to .build; keep its checks in one branch.
           run_task cli-tests make test-cli-smoke test-cli-unit test-cli-integration &
           pid_cli=$!
-          # Lint and the localization check need no build, so they run beside it.
-          run_task checks make lint check-localization test-scripts &
+          # Lint and the localization check need no build, so they run beside it. format-lint
+          # is the swift-format half of `make check`; without it a change that fails
+          # `make check` locally could still pass CI (#503, #575). `-k` runs every check
+          # after one fails, so a single run reports all of them.
+          run_task checks make -k lint format-lint check-localization test-scripts &
           pid_checks=$!
 
           failed=0

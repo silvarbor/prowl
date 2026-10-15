@@ -125,6 +125,14 @@ enum OutputRenderer {
         return
       }
 
+      if response.command == "canvas",
+         let data = response.data,
+         let payload = try? data.decode(as: CanvasCommandPayload.self)
+      {
+        print(renderCanvas(payload))
+        return
+      }
+
       if response.command == "skills",
          let data = response.data,
          let payload = try? data.decode(as: SkillsCommandPayload.self)
@@ -440,6 +448,14 @@ enum OutputRenderer {
       let reason = profile.availability.reason.map { "  \($0.dim)" } ?? ""
       return "\(profile.name.bold)  \(profile.runtime)  \(enabled)  \(availability)  \(profile.id.dim)\(reason)"
     }.joined(separator: "\n")
+  }
+
+  /// One line, e.g. `Canvas  showing  layout: tile  7 cards`.
+  static func renderCanvas(_ payload: CanvasCommandPayload) -> String {
+    let showing = payload.showing ? "showing".green : "hidden".dim
+    let layout = payload.layout.map { "layout: \($0.bold)" } ?? "layout: \("not set".dim)"
+    let cards = payload.cardCount == 1 ? "1 card" : "\(payload.cardCount) cards"
+    return "\("Canvas".bold)  \(showing)  \(layout)  \(cards)"
   }
 
   private static func renderSkills(_ payload: SkillsCommandPayload) {
