@@ -41,6 +41,12 @@ session resolver only checks the TUI files and transcript fingerprints.
   Check device, inode, size, modification time, and change time on every lookup;
   read and parse only changed files. Validate the snapshot across reads and bound
   reads to 64 MiB. Do not retain prompt bytes or delay selection checks with a TTL.
+- Share one daemon scan across panes. Every Codex pane on a daemon asks for its
+  binding on each poll, through both the log provider and the session resolver, so
+  list the daemon's open rollouts at most once per 250 ms per daemon, below the 300 ms
+  poll, and rebuild the ownership index only when a rollout gains bytes or the open
+  set changes. Selection checks still read each pane's TUI log on every lookup; only
+  rollout evidence can be up to 250 ms older, the same as a turn not yet written.
 
 ## Boundary
 
