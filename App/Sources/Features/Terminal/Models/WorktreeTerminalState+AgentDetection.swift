@@ -648,6 +648,16 @@ extension WorktreeTerminalState {
     }
   }
 
+  /// Re-emits the entries of every tab after the tab strip changed order or length. An entry
+  /// carries its tab's position, which orders it in the Active Agents panel, and nothing else
+  /// republishes it when a tab moves, closes, or comes back from undo. The emission dedup
+  /// drops the entries whose position did not change.
+  func refreshAgentEntriesForTabOrderChange() {
+    for tab in tabManager.tabs {
+      refreshAgentEntriesForTitleChange(in: tab.id)
+    }
+  }
+
   /// Lands tab titles held back by coalescing and refreshes the Active Agents
   /// entries that follow them — the same refresh a title written directly through
   /// `updateTitle` triggers, so the two paths cannot drift.
@@ -741,7 +751,8 @@ extension WorktreeTerminalState {
     guard let agent = state.detectedAgent, state.state != .unknown || state.remote != nil else { return nil }
     let paneIDs = trees[tabId]?.leaves().map(\.id) ?? []
     let paneIndex = paneIDs.firstIndex(of: surfaceID).map { $0 + 1 } ?? 1
-    let tabTitle = tabManager.tabs.first(where: { $0.id == tabId })?.displayTitle ?? "?"
+    let tabIndex = tabManager.tabs.firstIndex(where: { $0.id == tabId })
+    let tabTitle = tabIndex.map { tabManager.tabs[$0].displayTitle } ?? "?"
     let workingDirectory = activeAgentWorkingDirectory(surfaceID: surfaceID)
     return ActiveAgentEntry(
       id: surfaceID,
@@ -752,6 +763,7 @@ extension WorktreeTerminalState {
       paneTitle: paneTitle(surfaceID: surfaceID, fallbackTabTitle: tabTitle),
       surfaceID: surfaceID,
       paneIndex: paneIndex,
+      tabIndex: tabIndex ?? 0,
       iconLookupToken: state.iconLookupToken ?? agent.iconLookupToken,
       agent: agent,
       session: state.session,

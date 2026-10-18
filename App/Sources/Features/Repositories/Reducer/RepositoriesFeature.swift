@@ -652,6 +652,21 @@ struct RepositoriesFeature {
     .ifLet(\.$workspaceEditor, action: \.workspaceEditor) {
       WorkspaceEditorFeature()
     }
+    // The Active Agents panel lists agents in sidebar order. Ranks follow the sidebar only while
+    // agents are listed: they are fetched when the first agent arrives and again whenever the
+    // sidebar inputs change. An agent update that changes neither never rebuilds them.
+    .onChange(of: \.worktreeRankTrigger) { _, _ in
+      Reduce { state, _ in
+        guard !state.activeAgents.entries.isEmpty else { return .none }
+        return syncWorktreeRanks(state)
+      }
+    }
+  }
+
+  private func syncWorktreeRanks(_ state: State) -> Effect<Action> {
+    let ranks = state.worktreeRanks()
+    guard ranks != state.activeAgents.worktreeRanks else { return .none }
+    return .send(.activeAgents(.worktreeRanksChanged(ranks)))
   }
 
 }
