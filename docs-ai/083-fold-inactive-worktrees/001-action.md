@@ -11,8 +11,8 @@
 - `GlobalSettings.foldInactiveWorktrees` (default `false`) reaches
   `RepositoriesFeature.State.foldInactiveWorktrees` through
   `worktreeOrdering(.setFoldInactiveWorktrees)`, sent from `AppFeature` on
-  `settingsChanged` next to `setMoveNotifiedWorktreeToTop`. The toggle sits beside
-  "Move notified worktree to top" in the Notifications settings.
+  `settingsChanged` next to `setMoveNotifiedWorktreeToTop`. The toggle sits in
+  the "Sidebar" section of General settings (see Deviations).
 - `worktreeRowSections(in:)` splits the unpinned worktrees into `unpinned` and
   `inactive` when the setting is on. A worktree is inactive when it is not in
   `openedWorktreeIDs`, is not the selected worktree, and is not in the sidebar
@@ -57,6 +57,13 @@
   expand/fold action is a top-level `RepositoriesFeature` action next to
   `revealSelectedWorktreeInSidebar`, because it is sidebar state rather than
   ordering.
+
+- After the operator's test, the "Inactive (N)" row uses `.body`, the font of the
+  worktree names, with a 16 pt chevron column and the same horizontal padding as
+  the worktree rows above it, instead of `.caption`. The toggle moved from the
+  Notifications pane to a new "Sidebar" section in General, directly above
+  "Repository Icons", because it changes the sidebar and has no notification
+  behavior. The plan had placed it beside "Move notified worktree to top".
 
 ## Open questions
 

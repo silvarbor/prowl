@@ -118,14 +118,17 @@ struct WorktreeRowsView: View {
     } label: {
       HStack(spacing: 6) {
         Image(systemName: "chevron.right")
-          .font(.caption2.weight(.semibold))
+          .font(.footnote.weight(.semibold))
           .rotationEffect(.degrees(isExpanded ? 90 : 0))
+          .frame(width: 16, height: 16)
           .accessibilityHidden(true)
         Text("Inactive (\(count))")
-          .font(.caption)
+          .font(.body)
+          .lineLimit(1)
         Spacer(minLength: 0)
       }
       .foregroundStyle(.secondary)
+      .padding(.horizontal, 2)
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)

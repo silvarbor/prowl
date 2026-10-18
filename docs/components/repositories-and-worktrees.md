@@ -148,7 +148,7 @@ active, Prowl also refreshes every 30 seconds as a fallback.
 ## Folding inactive worktrees
 
 A repository that other tools also drive can accumulate worktrees you never open
-in Prowl. Turn on **Settings → Notifications → Fold worktrees with no open tab**
+in Prowl. Turn on **Settings → General → Sidebar → Fold worktrees with no open tab**
 (`foldInactiveWorktrees`, default off) to gather them into one row.
 
 - **Inactive** means the worktree has no open terminal tab in Prowl. Agent
