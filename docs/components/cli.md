@@ -114,12 +114,11 @@ different pane reports the pane its server started in. A value that matches no
 your pane (see [Transport & app launch](#transport--app-launch)). A match proves the pane
 exists, not that you run in it: trust the value only when your process ancestry reaches
 the pane's shell — under tmux/screen or a detached wrapper it names the pane the
-server started in, so identify your pane by other means (`prowl agents --json` for the
-pane hosting your agent session, a unique `pane.cwd`) and pass it explicitly. Keep every
-step that depends on knowing yourself inside the success branch. When it is unset or
-matches nothing, stop rather than guess: `pane.cwd` only narrows the candidates — several panes
-usually share one cwd — and may stand in for you only when the match is unique; never
-assume the *focused* pane is you. Prowl itself never trusts the variable for
+server started in. For commands that accept a target, select the pane independently,
+such as through a user's choice or a controller's recorded pane-creation result, and
+pass it explicitly. Keep every step that depends on knowing yourself inside the success
+branch. A cwd or a heuristic session match can narrow candidates but does not establish
+caller identity, even if unique. Never assume the *focused* pane is you. Prowl itself never trusts the variable for
 attribution; commands that need the calling pane (`agents signal`) resolve it
 from the caller's process ancestry.
 
@@ -133,7 +132,8 @@ and instead maps `CODEX_THREAD_ID` to the pane whose Codex TUI submitted to that
 `CODEX_TUI_RECORD_SESSION=1` and a pane-owned `CODEX_TUI_SESSION_LOG_PATH`. Codex writes
 the submitted prompts there (mode 0600); Prowl deletes the file once the pane's close can no
 longer be undone. A pane whose Codex has not submitted anything yet, or whose shell
-overrides those variables, cannot be mapped, and caller-scoped commands fail with
+overrides those variables, cannot be mapped. An incomplete daemon file inventory can also
+prevent mapping of sessions that previously worked. Caller-scoped commands then fail with
 `SOURCE_REQUIRED`.
 Session logs larger than 64 MiB are not mapped. Restarting Codex in the pane resets its
 session log; its first indexed submit can establish the mapping again.
@@ -141,8 +141,8 @@ Codex launched from an Agent Profile, or with `--no-daemon`, runs commands insid
 and is not affected. For Codex 0.156 and later, Prowl adds `--no-daemon` to every
 interactive profile launch, also when it cannot prepare its managed notifier; it skips the
 flag only when the login shell or `codex --version` does not answer within one second.
-`prowl workflow read` and `deliver` accept the step token in place of a mapped pane (see
-[Workflows](workflows.md)).
+`prowl workflow read` and `deliver` accept the step token in place of a mapped pane;
+an explicit source can start the run (see [workflow fallback](#workflow-fallback-when-caller-identity-is-unavailable)).
 
 ## Commands
 
@@ -234,6 +234,25 @@ Each agent contains:
   `store_record`). Ambiguous sessions are omitted instead of guessed. A
   `medium` session id must not be used for automatic resume without
   additional confirmation.
+- `remote`: present only for an agent on a remote host behind the pane's `ssh` (see
+  [agent detection](agent-detection.md#remote-agents-over-ssh)). It contains:
+  - `host` (`user@hostname`), `user`, `hostname`, `port`: absent while the connection
+    is not resolved.
+  - `correlation`: `pending`, `correlated`, `ambiguous`, `unmapped`,
+    `probe_unavailable`, or `unsupported`.
+  - `correlation_reason`: why. For `probe_unavailable` it is a code: `authentication`,
+    `host_key`, `unresolvable_host`, `unreachable`, `launch`, `exit`,
+    `unrecognized_output`, or `connection_failed`. For `unsupported` it names the `ssh`
+    option.
+  - `confidence`: `probed` (a host snapshot shows the process) or `heuristic` (OSC 7501
+    reports only).
+  - `freshness`: `fresh`, or `stale` when nothing has confirmed the agent for 10 s.
+    `last_confirmed_at` gives the last confirmation of a stale agent.
+  - `state_known`: `false` when no evidence decides the state.
+
+  A stale or unknown `status` is not evidence: `agents wait --until idle|blocked` keeps
+  waiting until the host confirms the agent again. Text output appends `remote=<host>` with the weaker
+  qualifiers in brackets.
 
 `prowl agents` is read-only. Text output is sorted for triage: `Blocked`,
 `Working`, `Done`, then `Idle`. It prints a pane handle such as `p7`; JSON keeps
@@ -594,7 +613,10 @@ prowl workflow schema [--action] [--json]                          # workflow or
   execution root is closed, moved, or deleted. See [history retention](workflows.md).
 - `read [resource-id] --run <run-uuid> --invocation <number>` retrieves the assigned
   instruction (default) or a resource ID returned with it. Prowl checks the caller pane,
-  run, and invocation against the current task assignment. Reads need no token.
+  run, and invocation against the current task assignment. A resolved assigned pane needs
+  no token. When caller resolution is unavailable, use the supplied `PROWL_WORKFLOW_TOKEN=`
+  prefix (or `--token`) with the exact run and invocation. A token cannot override a
+  resolved conflicting pane.
   Normal completion keeps the last task readable until reassignment, history cleanup,
   or app exit; cancellation, Skip, and activation revocation revoke access. `--json` returns `body`, `encoding`
   (`utf-8` or `base64`), `resources`, `invocation`, `offset`, `next_offset`, and `total_bytes`.
@@ -682,6 +704,37 @@ It uses the same worktree, fixed bundle copy, process limits, cancellation, and 
 as a workflow run. Poll the returned run ID with `workflow status` and inspect its run directory.
 
 `validate` accepts the bundle directory, not its `workflow.yaml`. Loose YAML files are not workflow bundles. See [Workflows](workflows.md#script-actions-and-bundles) for approval and results.
+
+### Workflow fallback when caller identity is unavailable
+
+An absent `.data.caller` does not prevent an explicitly targeted workflow. Select the
+source independently, such as through the user's pane choice or a controller's recorded
+`create tab` result, then pass its UUID:
+
+```bash
+prowl workflow run prowl.review-loop --pane <source-pane-uuid> --role reviewer="Pi Reviewer" --json
+```
+
+Do not infer the source from inherited `PROWL_PANE_ID`, the focused pane, cwd, or a
+heuristic session match in `prowl agents`. If the source is not known, select it first;
+the step token cannot identify an initiating pane before a run exists.
+
+Check `.data.bindings` and `.data.self_initiated` in the response. If `self_initiated`
+is present, follow its task immediately. Otherwise Prowl delivers the first message
+when its target becomes idle. **If the selected source is your own pane, report the
+run ID and end your turn.** Polling or waiting in that turn can prevent the first
+task from arriving. An external observer can use `workflow status <run-id>`.
+
+Use the exact token-prefixed `workflow read` and `workflow deliver` commands in each
+assigned task. They work when the caller is unresolved; `Delivered` (JSON
+`delivery.state == "delivered"`) confirms acceptance. Tokens do not authorize a
+different task or override a known conflicting caller. Do not substitute manual
+`--run --step --force` delivery for this protocol.
+
+Later messages return to the fixed role-to-pane bindings, not to the focused pane.
+This route preserves delivery to the selected source while it remains available;
+it does not prove that source was the invoking agent or repair `.data.caller`.
+Caller-scoped signals and ordinary dispatch completion still need resolved identity.
 
 ### Built-in Review Loop workflow
 
