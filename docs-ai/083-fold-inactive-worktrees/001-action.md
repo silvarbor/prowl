@@ -38,11 +38,11 @@
 
 ## Verification
 
-- `FoldInactiveWorktreesTests` (21 tests): the section split with the setting off
+- `FoldInactiveWorktreesTests` (22 tests): the section split with the setting off
   and on, each always-active exception, a worktree moving between groups on its
   first tab and its last tab closing, ⌘⌃↑/↓ and offset navigation skipping folded
   rows and including them when expanded, palette rows unchanged, drag mapping in
-  each group, the fold-state toggle and its pruning, and the setting's
+  each group, the fold-state toggle and its pruning (including a failed load), and the setting's
   decode default and round trip. `AppFeatureSettingsChangedTests` receives the
   new action.
 - `make check`, `make lint`, `make check-localization`, and `make test` passed

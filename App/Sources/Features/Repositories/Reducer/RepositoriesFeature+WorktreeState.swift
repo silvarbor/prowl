@@ -28,11 +28,14 @@ func requestCanvasFocus(
   state.openedWorktreeIDs.insert(openedWorktreeID)
 }
 
-/// Drops expanded-group IDs of repositories that no longer exist, so storage
-/// does not grow with removed repositories.
+/// Drops expanded-group IDs of repositories that are no longer configured, so storage
+/// does not grow with removed repositories. A repository whose load failed is absent
+/// from `state.repositories` but still has a root, so its saved state survives the
+/// failure.
 func pruneExpandedInactiveRepositoryIDs(state: inout RepositoriesFeature.State) {
-  let repositoryIDs = Set(state.repositories.map(\.id))
-  let kept = state.expandedInactiveRepositoryIDs.filter { repositoryIDs.contains($0) }
+  var knownIDs = Set(state.repositories.map(\.id))
+  knownIDs.formUnion(state.repositoryRoots.map { $0.standardizedFileURL.path(percentEncoded: false) })
+  let kept = state.expandedInactiveRepositoryIDs.filter { knownIDs.contains($0) }
   guard kept != state.expandedInactiveRepositoryIDs else { return }
   state.$expandedInactiveRepositoryIDs.withLock { $0 = kept }
 }

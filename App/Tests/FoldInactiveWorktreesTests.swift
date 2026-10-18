@@ -212,6 +212,26 @@ struct FoldInactiveWorktreesTests {
     #expect(store.state.expandedInactiveRepositoryIDs == [fixture.repository.id])
   }
 
+  @Test func failedLoadKeepsExpandedStateOfThatRepository() async {
+    var fixture = makeFixture()
+    fixture.state.$expandedInactiveRepositoryIDs.withLock { $0 = [fixture.repository.id, "/tmp/gone"] }
+    let store = TestStore(initialState: fixture.state) {
+      RepositoriesFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .repositoriesLoaded(
+        [],
+        failures: [RepositoriesFeature.LoadFailure(rootID: fixture.repository.id, message: "boom")],
+        roots: [fixture.repository.rootURL],
+        animated: false
+      )
+    )
+
+    #expect(store.state.expandedInactiveRepositoryIDs == [fixture.repository.id])
+  }
+
   @Test func setFoldInactiveWorktreesUpdatesState() async {
     let store = TestStore(initialState: RepositoriesFeature.State()) {
       RepositoriesFeature()
