@@ -1,6 +1,6 @@
 {
   "_comment": "Metadata for the docs/ manual. The last_synced_commit is the commit at which docs/ was last verified against the implementation; the sync-docs skill (.agents/skills/sync-docs/SKILL.md) diffs HEAD against it and updates this file. Committed to git on purpose so the baseline persists across sessions and machines. A dotfile + .json so a future docs website does not render it as a page.",
-  "last_synced_commit": "e6ad001a4cf83cf9f490644d26ac356aa4010afe",
-  "last_synced_date": "2026-10-15",
-  "note": "Canvas layout and prowl canvas commands (#904), GitHub rate-limit gate scope (#917), Codex daemon opt-out and workflow caller (#918), archived auto-delete confirmation (#910), and OMP verified (#900) updated the manual in their PRs; branch prefix (#914), Open in pin sync (#915), /tmp session roots (#909), appearance writes (#912), alert ifLet (#916), layout restore (#899), and Shelf motion (#898) need no doc edits."
+  "last_synced_commit": "60d92a97628d84de15f39201957c0b90610179ff",
+  "last_synced_date": "2026-10-17",
+  "note": "Codex OSC 7501 verified (#922) updated the manual in its PR; the localization sync and version bump need no doc edits."
 }

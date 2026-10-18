@@ -9,7 +9,7 @@ import Testing
 @MainActor
 struct AgentCoordinatorProgramStatusTests {
   private let started = Date(timeIntervalSince1970: 1_000)
-  private var generation: AgentProcessGeneration { AgentProcessGeneration(pid: 42, startedAt: started) }
+  private var generation: AgentProcessGeneration { .local(pid: 42, startedAt: started) }
   private let idle = AgentScreenDetection(state: .idle, reason: .noRuleMatched)
   private let working = AgentScreenDetection(state: .working, reason: .noRuleMatched)
   private let legacyWorking = AgentScreenDetection(state: .working, reason: .legacyDetector)
@@ -76,11 +76,10 @@ struct AgentCoordinatorProgramStatusTests {
     #expect(lines.count == 2)
   }
 
-  /// The production table (docs-ai 079 slices 3 and 4, 079.006): Claude Code, Pi, and Oh My Pi
-  /// are verified; every other agent stays unverified until its own baseline replays inside Prowl.
-  @Test func defaultTableVerifiesClaudeCodePiAndOMP() async {
+  /// Only producers whose baseline replayed inside Prowl may drive the decision.
+  @Test func defaultTableVerifiesKnownProducers() async {
     for agent in DetectedAgent.allCases {
-      let expected: ProgramStatusSupport = [.claude, .pi, .omp].contains(agent) ? .verified : .unverified
+      let expected: ProgramStatusSupport = [.claude, .pi, .omp, .codex].contains(agent) ? .verified : .unverified
       #expect(ProgramStatusSupport.level(for: agent) == expected, "\(agent)")
     }
     // With the default table a Claude root decides on the tick that sees it, the
@@ -117,14 +116,66 @@ struct AgentCoordinatorProgramStatusTests {
     #expect(ompDecision?.reason.identifier == "osc.idle")
     #expect(ompDecision?.screenReason == .delegated)
     #expect(ompCoordinator.isDelegated)
-    // Every other agent keeps its legacy path: a record changes nothing it publishes.
-    let codex = AgentDetectionCoordinator(sample: { _, _ in [.unavailable] })
+    // Codex delegates without sampling its log provider, even against a working screen.
+    let codex = AgentDetectionCoordinator(sample: { _, _ in
+      Issue.record("A verified Codex root must not sample the log provider")
+      return [.unavailable]
+    })
     let codexDecision = await codex.observe(
       agent: .codex, process: generation, screen: legacyWorking, configRoot: nil,
       programStatus: store([(report(.idle, app: "codex"), 1)]))
-    #expect(codexDecision?.state == .working)
-    #expect(codexDecision?.reason.isProgramStatus == false)
-    #expect(codex.isDelegated == false)
+    #expect(codexDecision?.state == .idle)
+    #expect(codexDecision?.reason.identifier == "osc.idle")
+    #expect(codexDecision?.screenReason == .delegated)
+    #expect(codex.isDelegated)
+  }
+
+  @Test func codexReportsDriveLifecycleAndClearRestoresTheProvider() async {
+    var samples = 0
+    let coordinator = AgentDetectionCoordinator(sample: { _, _ in
+      samples += 1
+      return [.unavailable]
+    })
+    var records = store([(report(.idle, app: "codex"), 1)])
+    _ = await coordinator.observe(
+      agent: .codex, process: generation, screen: working, configRoot: nil, programStatus: records)
+    #expect(samples == 0)
+
+    for (state, expected) in [
+      (GhosttyProgramStatusReport.State.working, "osc.working"),
+      (.blocked, "osc.blocked.unspecified"),
+      (.working, "osc.working"),
+      (.idle, "osc.idle"),
+    ] {
+      records.apply(report(state, app: "codex"), arrivedAt: started.addingTimeInterval(2))
+      guard case .decision(let decision) = coordinator.receive(programStatus: records) else {
+        Issue.record("A Codex lifecycle report must publish immediately")
+        return
+      }
+      #expect(decision.reason.identifier == expected)
+      #expect(decision.screenReason == .delegated)
+      #expect(decision.hasOutstandingWork == (state != .idle))
+    }
+    #expect(samples == 0)
+
+    records.apply(report(.clear, app: nil), arrivedAt: started.addingTimeInterval(3))
+    #expect(coordinator.receive(programStatus: records) == .withdrawn)
+    let fallback = await coordinator.observe(
+      agent: .codex, process: generation, screen: working, configRoot: nil, programStatus: records)
+    #expect(samples == 1)
+    #expect(fallback?.reason.isProgramStatus == false)
+    #expect(!coordinator.isDelegated)
+  }
+
+  @Test func codexRejectsForeignAndPredecessorRoots() async {
+    for (app, offset) in [("claude-code", 1.0), ("codex", -1.0)] {
+      let coordinator = AgentDetectionCoordinator(sample: { _, _ in [.unavailable] })
+      let decision = await coordinator.observe(
+        agent: .codex, process: generation, screen: working, configRoot: nil,
+        programStatus: store([(report(.idle, app: app), offset)]))
+      #expect(decision?.reason.isProgramStatus == false)
+      #expect(!coordinator.isDelegated)
+    }
   }
 
   @Test func verifiedEligibleRootDrivesTheDecisionAndDelegates() async {
@@ -181,7 +232,7 @@ struct AgentCoordinatorProgramStatusTests {
       agent: .pi, process: generation, screen: legacyWorking, configRoot: nil, programStatus: records)
     #expect(bound?.reason.identifier == "osc.idle")
 
-    let relaunch = AgentProcessGeneration(pid: 42, startedAt: started.addingTimeInterval(5))
+    let relaunch = AgentProcessGeneration.local(pid: 42, startedAt: started.addingTimeInterval(5))
     let rebound = await coordinator.observe(
       agent: .pi, process: relaunch, screen: legacyWorking, configRoot: nil, programStatus: records)
 

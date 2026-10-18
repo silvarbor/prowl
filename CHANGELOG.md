@@ -1,5 +1,11 @@
 # Changelog
 
+## [2026.10.17](https://github.com/onevcat/Prowl/releases/tag/v2026.10.17)
+
+### Improved
+
+- Codex 0.163.0 and later now reports its status to Prowl directly, so Codex sessions update their status immediately. Approval requests and questions appear as blocked while waiting for your response.
+
 ## [2026.10.15](https://github.com/onevcat/Prowl/releases/tag/v2026.10.15)
 
 ### New

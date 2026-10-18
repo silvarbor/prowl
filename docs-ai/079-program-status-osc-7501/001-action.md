@@ -16,10 +16,11 @@ the index and the state after the last merge.
 | 2026-10-11 | #895 merged; #896 merged after the reconciliation with `main` (both producers `.verified`, the two table tests combined with an unverified codex control, the support rows in the manual and the living docs) | this record |
 | 2026-10-12 | Oh My Pi `.verified` (`app=omp`, 18.8.7+): harness baseline with omp 18.10.0, the acceptance list replayed in an isolated Debug instance, the table tests extended | #900, [006](006-omp-verified.md) |
 
-## Outcome & current state (as of 2026-10-12)
+## Outcome & current state (as of 2026-10-17)
 
-- **Who decides.** For Claude Code 2.1.295+ (`app=claude-code`), Pi 1.1.0+ (`app=pi`), and
-  Oh My Pi 18.8.7+ (`app=omp`, since [006](006-omp-verified.md)) the pane's OSC 7501 root record is the first-priority state evidence, applied the moment
+- **Who decides.** For Claude Code 2.1.295+ (`app=claude-code`), Pi 1.1.0+ (`app=pi`),
+  Oh My Pi 18.8.7+ (`app=omp`, since [006](006-omp-verified.md)), and Codex 0.163.0+
+  (`app=codex`, since [007](007-codex-verified.md)) the pane's OSC 7501 root record is the first-priority state evidence, applied the moment
   the report arrives. While it decides, the detection loop delegates: every 2 s it probes
   the process and resolves the session, reads no screen, and `screen_reason` reports
   `screen.delegated`. A wake (key press, CLI input, finished command, report for an unbound
@@ -28,10 +29,12 @@ the index and the state after the last merge.
   resolved, the shadow comparison is logged, and the legacy decision is published. The
   table is static (`ProgramStatusSupport.level(for:)`); the producer's own variables
   (`CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1`, `PI_PROGRAM_STATUS=0`, Oh My Pi's
-  `terminal.programStatus: false`) are the escape hatch.
+  `terminal.programStatus: false`) are the escape hatch where available. Codex
+  0.163.0 has no OSC-specific opt-out.
 - **What the fallbacks are.** Claude Code: the native registry snapshot and the screen rules,
   as before slice 3; the native provider is not sampled while the record decides. Pi: the
-  legacy screen detector (`legacy.detector`). Oh My Pi: its screen rules. The record is withdrawn by `clear`, by the
+  legacy screen detector (`legacy.detector`). Oh My Pi: its screen rules. Codex: its
+  log provider and screen rules. The record is withdrawn by `clear`, by the
   `COMMAND_FINISHED` probe when the agent is gone, and by the time fence on relaunch.
 - **Root-only mapping.** The root record decides; a child `blocked` vetoes, a child `working`
   is ignored. Claude Code 2.1.296 does send child records, and it keeps the root `working`

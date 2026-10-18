@@ -130,6 +130,32 @@ stays Working until the job's result turn ends.
 - Timings are for ordering (query before DA1, idle after mount), not latency guarantees.
 - Keep `msg` out of durable logs by default; it is untrusted program text.
 
+## Codex 0.163.0 (2026-10-17, macOS)
+
+Release source: [OpenAI PR #52725](https://github.com/openai/codex/pull/52725),
+included in [rust-v0.163.0](https://github.com/openai/codex/releases/tag/rust-v0.163.0).
+`codex-rs/tui/src/terminal_program_status.rs` emits a root record whenever stdout
+is a terminal, including multiplexers; no support query or OSC-specific opt-out.
+`chatwidget/status_surfaces.rs` chooses Blocked for action-required UI, then Working
+for a running task or live unified-exec process, otherwise Idle. No child records,
+kind, message, Done, or Error are encoded.
+
+Replayed with `scripts/program_status_probe.py`, `--no-alt-screen`, a trusted
+scratch directory, and the configured GPT-6-Astra model at low reasoning effort.
+The approval run used `approval_policy="on-request"`, `sandbox_mode="read-only"`,
+and an explicit request for a harmless `touch` with `sandbox_permissions=require_escalated`.
+The question run entered `/plan` and requested `request_user_input`.
+
+| Scenario | Reports observed |
+| --- | --- |
+| Startup | `state=idle:app=codex`; a short startup `working` → `idle` transition also occurred before input |
+| Prompt submitted | `state=working:app=codex`, about 0.2 s after Enter |
+| Reply complete | `state=idle:app=codex` (not `done`) |
+| Command approval | `state=blocked:app=codex`, no kind |
+| Plan-mode question | `state=blocked:app=codex`, no kind |
+| Escape at either blocker | `working` → `idle` within 0.02 s |
+| Ctrl+D at the composer | `state=clear`, without app |
+
 ## Verification inside Prowl
 
 Filled in by the slice that marks a producer verified (slices 3 and 4 of
@@ -232,3 +258,31 @@ interval of 250 ms) and are for ordering, not latency guarantees. "Delegated" me
 
 Not exercised: `kind=auth` (omp's run-status module has no auth kind), child records (omp
 writes none), and the Done → viewed → Idle step (the unchanged `markAgentSeen` path).
+
+### Codex
+
+Replayed on 2026-10-17 with Codex 0.163.0 and the 079.007 Debug build in a separate
+instance, using an isolated preferences home and CLI socket. Scratch workspace:
+`/Users/onevcat/.prowl-codex-osc-probe`. Observations below came from the running
+app's bundled CLI, not injected OSC reports. `agents` reported `screen.delegated`
+while the root decided; on-demand `agents read` still read the current screen.
+
+| Scenario | Observation |
+| --- | --- |
+| TUI mount | `osc.idle`; entry appeared within 0.83 s of launch |
+| Plain reply | `osc.working` → `osc.idle`; `agents read` returned `complete` with the expected marker and exact session; idle wait resolved after its 2 s settling window |
+| Command approval | `osc.blocked.unspecified`; semantic read returned the actual approval text and `pending`; a 3 s idle wait timed out while blocked |
+| Approve the command | `osc.working` within 0.04 s, then `osc.idle`; the scratch file existed and the result marker was complete |
+| Plan-mode question | `osc.blocked.unspecified`; semantic read returned the actual choices; answer → `osc.working` → `osc.idle` |
+| Escape during a running turn | `osc.idle` within 0.03 s; semantic result remained `incomplete`, not successful |
+| `/new` | root remained idle; the public session still named the preceding session before the next prompt. The next turn resolved the new session and returned its distinct result marker (`transcript_match`, high). OSC carries no identity |
+| Ctrl+Z / `fg` | suspended entry disappeared; foreground resume restored `osc.idle`. A trailing kitty key-release sequence reached the shell, so Ctrl+U was needed before `fg` |
+| Normal Ctrl+D exit | authority withdrew (`screen.noLiveTurn`), then the entry disappeared within 0.55–0.84 s of the key |
+| Profile launch and redispatch | two explicit dispatch receipts succeeded; `osc.working` → `osc.idle` and semantic result remained available. The first fixture's `notify=[]` correctly degraded the managed hook; this is not evidence of a verified hook |
+| Profile with valid notifier | No launch degradation; explicit dispatch succeeded, `hook_codex` was `verified_live` at `exact`, and state remained `osc.working` → `osc.idle` |
+| Abrupt exit | A separately launched TUI was killed by its recorded PID; its entry disappeared within 0.29 s without a producer `clear` |
+
+Not exercised: authentication UI, remote/multiplexed sessions, provider failures,
+external editor, or live child/background work. Source inspection establishes the
+coarse root semantics, not live acceptance of those cases. Older versions were not
+installed; no-report and clear fallback are covered by the automated coordinator tests.

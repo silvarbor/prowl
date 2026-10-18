@@ -226,7 +226,8 @@ at a `~/.grok/` install (so Cursor's own `agent` entrypoint stays Cursor).
 3. **State decision.** Every agent uses one state machine. Codex also supplies
    incremental JSONL lifecycle evidence from process-owned session logs, without
    installing hooks. Claude supplies process-scoped native state without hooks.
-   Other agents keep their screen-only behavior. For Codex, an observed open
+   These providers and the screen rules apply when no verified OSC root is present.
+   For Codex without OSC authority, an observed open
    parent turn or child task stays **Working** through quiet periods; current
    approval/question UI takes precedence as **Blocked**. Completion closes only
    its matching work. Initial historical records do not start new work.
@@ -249,6 +250,16 @@ at a `~/.grok/` install (so Cursor's own `agent` entrypoint stays Cursor).
    If a previously established daemon binding becomes unavailable, detection falls
    back to the screen but retains its log cursors. When the binding returns, it
    consumes pending events without replaying earlier turn starts.
+
+   Codex 0.163.0 and later sends [program status](#program-status-osc-7501)
+   with `app=codex`. Its root outranks the log provider and screen rules; the log
+   provider is not sampled while it decides. Session identity and semantic results
+   still use the session resolver and transcript reader. Codex sends `idle` after
+   completion or cancellation, so OSC alone does not earn a Done badge or prove a
+   dispatch completed. Approval and question prompts report `blocked` without a
+   kind (`osc.blocked.unspecified`). Codex clears its record when it hands the
+   terminal to an external program or exits, and re-emits after returning. It has
+   no OSC-specific opt-out; older versions remain on the existing fallback path.
 
    Claude reads the detected PID's native registry under its configured root
    (`~/.claude/sessions` by default). `busy` and `shell` mean **Working**, including
@@ -319,7 +330,7 @@ removes a record and its descendants (an empty id removes everything), a record 
 (`title`, `msg`) is never logged or published.
 
 A root record is **attributed** to the pane's detected agent only when its `app` is the
-agent's own name (`claude-code` for Claude Code, `pi` for Pi, `omp` for Oh My Pi) and it arrived after that
+agent's own name (`claude-code` for Claude Code, `pi` for Pi, `omp` for Oh My Pi, `codex` for Codex) and it arrived after that
 agent's process started. That rejects another program's records and a predecessor's
 leftovers (an agent that exited without `clear`); it does not authenticate the writer: a
 wrapper or nested program that writes the expected `app` is attributed like the agent
@@ -328,8 +339,8 @@ in the app, not a setting:
 
 | Support | Meaning |
 | --- | --- |
-| unverified | Records are stored and resolved, but only compared with the live decision; disagreements are logged (`AgentDetection` category). Every agent except Claude Code, Pi, and Oh My Pi today. |
-| verified | The root record is the first-priority state evidence, applied the moment the report arrives. Claude Code (2.1.295 and later, `app=claude-code`), Pi (1.1.0 and later, `app=pi`), and Oh My Pi (18.8.7 and later, `app=omp`). |
+| unverified | Records are stored and resolved, but only compared with the live decision; disagreements are logged (`AgentDetection` category). Every agent except Claude Code, Pi, Oh My Pi, and Codex today. |
+| verified | The root record is the first-priority state evidence, applied the moment the report arrives. Claude Code (2.1.295 and later, `app=claude-code`), Pi (1.1.0 and later, `app=pi`), Oh My Pi (18.8.7 and later, `app=omp`), and Codex (0.163.0 and later, `app=codex`). |
 
 For a verified producer the pane follows the **root** record only: `working` → Working
 (`osc.working`), `blocked` → Blocked (`osc.blocked.<kind>`, `unspecified` without a
@@ -351,7 +362,8 @@ there and releases the entry when it is gone. There is no silence timeout.
 
 Producers that never report (older versions, `CLAUDE_CODE_DISABLE_TERMINAL_TITLE`,
 `PI_PROGRAM_STATUS=0`, Oh My Pi's `terminal.programStatus: false`) get today's screen and provider detection unchanged. The
-producer's own variables are the escape hatch; Prowl has no setting for this.
+available producer controls are the escape hatch; Codex 0.163.0 has none for OSC.
+Prowl has no setting for this.
 
 Independently of the support table, Ghostty's shell integration tells Prowl when the
 foreground command finished (OSC 133). Detection then probes the process at once,
