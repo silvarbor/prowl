@@ -631,6 +631,10 @@ struct RepositoriesFeature {
       Scope(state: \.activeAgents, action: \.activeAgents) {
         ActiveAgentsFeature()
       }
+      Reduce { state, action in
+        guard case .activeAgents(.agentEntryChanged) = action else { return .none }
+        return syncWorktreeRanks(state)
+      }
 
       // Presentation requests must never outlive their target. Keeping this
       // reducer last makes the invariant hold after every repository mutation,
@@ -652,6 +656,20 @@ struct RepositoriesFeature {
     .ifLet(\.$workspaceEditor, action: \.workspaceEditor) {
       WorkspaceEditorFeature()
     }
+    // The Active Agents panel lists agents in sidebar order. Ranks follow the sidebar only while
+    // agents are listed; an entry that arrives into an empty panel fetches them (see below).
+    .onChange(of: \.worktreeRankInputs) { _, _ in
+      Reduce { state, _ in
+        guard !state.activeAgents.entries.isEmpty else { return .none }
+        return syncWorktreeRanks(state)
+      }
+    }
+  }
+
+  private func syncWorktreeRanks(_ state: State) -> Effect<Action> {
+    let ranks = state.worktreeRanks()
+    guard ranks != state.activeAgents.worktreeRanks else { return .none }
+    return .send(.activeAgents(.worktreeRanksChanged(ranks)))
   }
 
 }

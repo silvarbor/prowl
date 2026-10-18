@@ -47,8 +47,16 @@ Command Palette → "Toggle Active Agents Panel".
 | **Done** | finished, not yet seen | blue |
 | **Idle** | nothing running / seen | grey |
 
-Rows appear in the order agents are first detected. (See
-[agent-detection](agent-detection.md) for how these states are determined.)
+Rows follow the sidebar. The panel has no controls of its own: agents in pinned worktrees come
+first, across all repositories, in sidebar order, and every other agent follows in sidebar order
+(repositories in their sidebar order; within a repository, the main worktree, then the unpinned
+worktrees). Agents in one worktree are ordered by tab position, then by pane. A pin is stored per
+worktree: in the sidebar it lifts the row within its repository, and here it lifts the agent to
+the top of the whole panel. Dragging or pinning a worktree in the sidebar reorders the panel, and
+a notified worktree that moves to the top of its repository's unpinned rows takes its agent along.
+Moving a tab reorders the agents of that worktree. An agent that exits and starts again returns to
+its place in the order, not to the end. (See [agent-detection](agent-detection.md) for how these
+states are determined.)
 A row whose pane is bound to an active workflow run replaces its subtitle with
 `in <workflow> · <role>` for the life of the run.
 

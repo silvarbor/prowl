@@ -451,6 +451,9 @@ final class WorktreeTerminalState {
         self?.refreshAgentEntriesForTitleChange(in: tabID)
       }
     }
+    self.tabManager.onTabOrderChanged = { [weak self] in
+      self?.refreshAgentEntriesForTabOrderChange()
+    }
   }
 
   var worktreeID: Worktree.ID { worktree.id }
