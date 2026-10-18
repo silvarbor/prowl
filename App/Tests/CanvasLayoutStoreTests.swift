@@ -49,10 +49,11 @@ struct CanvasLayoutStoreTests {
 
     #expect(store.cardLayouts == legacyLayouts)
     #expect(Set(store.zOrder) == Set(legacyLayouts.keys))
-    #expect(store.shouldAutoArrangeOnInitialEntry(for: ["tab-a", "tab-b"]) == false)
+    #expect(store.mode == .freeform)
+    #expect(store.layoutForEntry(cardKeys: ["tab-a", "tab-b"], defaultKind: .tile) == nil)
   }
 
-  @Test func skipsInitialAutoArrangeWhenCurrentCardsWereLoadedFromStorage() throws {
+  @Test func layoutsStoredBeforeModesExistedLoadAsFreeform() {
     let defaults = makeDefaults()
     defer { defaults.removePersistentDomain(forName: defaultsSuiteName(defaults)) }
     let store = CanvasLayoutStore(defaults: defaults)
@@ -63,8 +64,101 @@ struct CanvasLayoutStoreTests {
 
     let restoredStore = CanvasLayoutStore(defaults: defaults)
 
-    #expect(restoredStore.shouldAutoArrangeOnInitialEntry(for: ["tab-a", "tab-b"]) == false)
-    #expect(restoredStore.shouldAutoArrangeOnInitialEntry(for: ["tab-c", "tab-d"]))
+    #expect(restoredStore.mode == .freeform)
+    #expect(restoredStore.layoutForEntry(cardKeys: ["tab-a", "tab-b"], defaultKind: .tile) == nil)
+    #expect(restoredStore.mode == .freeform)
+  }
+
+  @Test func freshCanvasStartsInTheDefaultLayout() {
+    let defaults = makeDefaults()
+    defer { defaults.removePersistentDomain(forName: defaultsSuiteName(defaults)) }
+    let store = CanvasLayoutStore(defaults: defaults)
+
+    #expect(store.mode == nil)
+    #expect(store.layoutForEntry(cardKeys: ["tab-a"], defaultKind: .arrange) == .arrange)
+    #expect(store.mode == .automatic(.arrange))
+    #expect(store.layoutForEntry(cardKeys: [], defaultKind: .tile) == nil)
+  }
+
+  @Test func rememberedAutomaticLayoutSurvivesUnknownCards() {
+    // Without terminal layout restore, every launch brings new tab IDs.
+    let defaults = makeDefaults()
+    defer { defaults.removePersistentDomain(forName: defaultsSuiteName(defaults)) }
+    let store = CanvasLayoutStore(defaults: defaults)
+    store.setCardLayouts(["tab-a": CanvasCardLayout(position: .zero)])
+    store.mode = .automatic(.organize)
+
+    let restoredStore = CanvasLayoutStore(defaults: defaults)
+
+    #expect(restoredStore.layoutForEntry(cardKeys: ["tab-x", "tab-y"], defaultKind: .tile) == .organize)
+    #expect(restoredStore.mode == .automatic(.organize))
+  }
+
+  @Test func freeformCanvasWhoseCardsAreAllUnknownStartsInTheDefaultLayout() {
+    let defaults = makeDefaults()
+    defer { defaults.removePersistentDomain(forName: defaultsSuiteName(defaults)) }
+    let store = CanvasLayoutStore(defaults: defaults)
+    store.setCardLayouts(["tab-a": CanvasCardLayout(position: .zero)])
+    store.mode = .freeform
+
+    let restoredStore = CanvasLayoutStore(defaults: defaults)
+
+    #expect(restoredStore.layoutForEntry(cardKeys: ["tab-c", "tab-d"], defaultKind: .tile) == .tile)
+    #expect(restoredStore.mode == .automatic(.tile))
+  }
+
+  @Test func rememberedAutomaticLayoutAppliesOnEntry() {
+    let defaults = makeDefaults()
+    defer { defaults.removePersistentDomain(forName: defaultsSuiteName(defaults)) }
+    let store = CanvasLayoutStore(defaults: defaults)
+    store.setCardLayouts(["tab-a": CanvasCardLayout(position: .zero)])
+    store.mode = .automatic(.organize)
+
+    let restoredStore = CanvasLayoutStore(defaults: defaults)
+
+    #expect(restoredStore.mode == .automatic(.organize))
+    #expect(restoredStore.layoutForEntry(cardKeys: ["tab-a", "tab-b"], defaultKind: .tile) == .organize)
+  }
+
+  @Test func unknownStoredModeKeepsTheCardLayouts() throws {
+    let defaults = makeDefaults()
+    defer { defaults.removePersistentDomain(forName: defaultsSuiteName(defaults)) }
+    let json = """
+      {"cardLayouts":{"tab-a":{"positionX":1,"positionY":2,"width":300,"height":200}},\
+      "zOrder":["tab-a"],"mode":"spiral"}
+      """
+    defaults.set(Data(json.utf8), forKey: "canvasCardLayouts")
+
+    let store = CanvasLayoutStore(defaults: defaults)
+
+    #expect(store.cardLayouts["tab-a"]?.size == CGSize(width: 300, height: 200))
+    #expect(store.mode == .freeform)
+  }
+
+  @Test func applyLayoutsKeepsUncoveredCardsBelowTheLaidOutOnes() {
+    let defaults = makeDefaults()
+    defer { defaults.removePersistentDomain(forName: defaultsSuiteName(defaults)) }
+    let store = CanvasLayoutStore(defaults: defaults)
+    let hidden = CanvasCardLayout(position: CGPoint(x: 5, y: 5))
+    store.setCardLayouts(
+      [
+        "tab-a": CanvasCardLayout(position: .zero),
+        "tab-hidden": hidden,
+        "tab-b": CanvasCardLayout(position: .zero),
+      ],
+      zOrder: ["tab-a", "tab-hidden", "tab-b"]
+    )
+
+    let laidOut = [
+      "tab-a": CanvasCardLayout(position: CGPoint(x: 100, y: 100)),
+      "tab-b": CanvasCardLayout(position: CGPoint(x: 200, y: 200)),
+    ]
+    store.applyLayouts(laidOut, order: ["tab-b", "tab-a"])
+
+    #expect(store.cardLayouts["tab-a"] == laidOut["tab-a"])
+    #expect(store.cardLayouts["tab-b"] == laidOut["tab-b"])
+    #expect(store.cardLayouts["tab-hidden"] == hidden)
+    #expect(store.zOrder == ["tab-hidden", "tab-b", "tab-a"])
   }
 
   @Test func moveToFrontPersistsZOrder() {

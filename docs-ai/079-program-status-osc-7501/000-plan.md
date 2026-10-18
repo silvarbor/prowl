@@ -4,7 +4,7 @@
 | --- | --- |
 | **Status** | Implemented — see [001-action.md](001-action.md) |
 | **Anchor date** | 2026-10-10 |
-| **Primary PRs** | #887 (slice 1, [002-fork-action-and-bridge.md](002-fork-action-and-bridge.md)); #893 (slice 2, [003-generic-provider.md](003-generic-provider.md)); #895 (slice 3, [004-claude-verified.md](004-claude-verified.md)); #896 (slice 4, [005-pi-verified.md](005-pi-verified.md)) |
+| **Primary PRs** | #887 (slice 1, [002-fork-action-and-bridge.md](002-fork-action-and-bridge.md)); #893 (slice 2, [003-generic-provider.md](003-generic-provider.md)); #895 (slice 3, [004-claude-verified.md](004-claude-verified.md)); #896 (slice 4, [005-pi-verified.md](005-pi-verified.md)); #900 (Oh My Pi verified, [006-omp-verified.md](006-omp-verified.md)) |
 | **Related** | [078-ghostty-1-4-upgrade-rehearsal](../078-ghostty-1-4-upgrade-rehearsal/000-plan.md), [068-agent-state-providers](../068-agent-state-providers/architecture.md), [064-agent-completion-signals](../064-agent-completion-signals/000-plan.md), `docs/components/agent-detection.md`, [producer-baseline.md](producer-baseline.md), [#891](https://github.com/onevcat/Prowl/issues/891) (legacy background-work semantics, deferred) |
 
 ## Background
@@ -53,8 +53,9 @@ detection layer as it is on `main` (see the second amendment for what that revie
 - No session identity from `app`/`id`; `logSessionID` keeps coming from native/log providers.
 - No version detection and no user setting. A producer either reports or it does not; a
   verified producer is trusted whenever it reports. The escape hatches are the producer's
-  own variables (`CLAUDE_CODE_DISABLE_TERMINAL_TITLE`, `PI_PROGRAM_STATUS=0`) and a Prowl
-  release that flips the support table back.
+  own variables (`CLAUDE_CODE_DISABLE_TERMINAL_TITLE`, `PI_PROGRAM_STATUS=0`, Oh My Pi's
+  `terminal.programStatus: false` since 079.006) and a Prowl
+  release that flips the support table back. Codex 0.163.0 has no OSC-specific opt-out.
 - No change to the legacy providers' outstanding-work semantics (Claude native `busy`,
   Codex log children, `claude.backgroundWork`): deferred to #891.
 - No removal of screen rules: they stay as the fallback for older producer versions.
@@ -116,7 +117,7 @@ to a process.
 
 **Attribution fence** (coordinator). A root record is eligible only when it exists, its
 `app` (after inheritance) equals `DetectedAgent.programStatusApp` (`claude` → `claude-code`,
-`pi` → `pi`, every other agent `nil`), and `arrivedAt >= process.startedAt` of the detected
+`pi` → `pi`, `omp` → `omp` since 079.006, `codex` → `codex` since 079.007, every other agent `nil`), and `arrivedAt >= process.startedAt` of the detected
 agent's process generation (`ProcessDetection.processStartDate` has microsecond precision).
 The arrival-time test applies to every record, not only the root: a child left behind by a
 previous process (it exited without `clear` and a new root replaced only the root record)
@@ -412,6 +413,7 @@ baseline rows, amendment `005-pi-verified.md`.
 | 2 | #893 ([003](003-generic-provider.md)) | store, machine, coordinator, delegated schedule, command-finished release, all `.unverified` | `make check`, `make test`, `make build-app`; a Debug run with Claude and Pi shows shadow disagreements only where expected; legacy-only regression checks for the fast release (an agent that never reports, kill -9 and normal exit, relaunch in the same pane, `wait --until exit`, a pending dispatch across the release) |
 | 3 | #895 ([004](004-claude-verified.md)) | Claude `.verified` | acceptance list above replayed; no case where OSC was wrong and the legacy decision right; CPU recorded |
 | 4 | #896 ([005](005-pi-verified.md)) | Pi `.verified` | same, for Pi |
+| — (amendment) | #900 ([006](006-omp-verified.md)) | Oh My Pi `.verified` | same, for Oh My Pi |
 
 PRs merge in order: slice 2 alone, then slices 3 and 4 from `main` in parallel (their
 acceptance runs on merged slice 2 code). `001-action.md` is written when slice 4 lands.
@@ -537,3 +539,6 @@ pane) is expected to be noise; slices 3 and 4 measure it.
 - Updated 2026-10-11: slice 3 implemented (Claude Code `.verified`; the acceptance list replayed in an isolated Debug instance with Claude Code 2.1.296, CPU compared with the slice 2 baseline, the boundary rows for interrupt, subagents, background agents, and `/clear` corrected from the observations; the session identity moved to the pid registry after the review finding) — see [004-claude-verified.md](004-claude-verified.md)
 - Updated 2026-10-11: slice 4 implemented (Pi `.verified`; the acceptance list replayed in an isolated Debug instance with Pi 1.1.0, CPU compared with the slice 2 baseline; a 3 s settle window after each wake keeps the screen reads that attribute an in-process `/new` or `/resume`) — see [005-pi-verified.md](005-pi-verified.md)
 - Updated 2026-10-11: slices 3 and 4 merged; the outcome of the whole entry is in [001-action.md](001-action.md)
+- Updated 2026-10-12: Oh My Pi 18.8.7+ verified (`app=omp`; the slice 4 row "Oh My Pi … stays `.unverified`" is superseded, and the attribution mapping and the escape-hatch list were corrected in place; harness baseline and the acceptance list replayed in an isolated Debug instance with omp 18.10.0; omp's own OSC 133 marks leave its exit to the six-miss release) — see [006-omp-verified.md](006-omp-verified.md)
+
+- Updated 2026-10-17: Codex 0.163.0 verified after PTY and isolated Debug acceptance (`app=codex`; idle/working/unspecified blocked, no Done badge) — see [007-codex-verified.md](007-codex-verified.md).

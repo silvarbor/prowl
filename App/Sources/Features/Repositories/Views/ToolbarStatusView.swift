@@ -5,11 +5,12 @@ import SwiftUI
 struct ToolbarStatusView: View {
   @Dependency(FeatureFlags.self) private var featureFlags
   let toast: RepositoriesFeature.StatusToast?
-  let githubRateLimitedUntil: Date?
+  let githubRateLimit: GithubRateLimitStatus?
   let workflow: WorkflowStatusCenterPresentation
   let pullRequest: GithubPullRequest?
   let codeHost: CodeHost
   let onWorkflowIntent: (WorkflowRunPanelIntent) -> Void
+  let onRetryGithubRateLimit: () -> Void
 
   var body: some View {
     let selection = ToolbarStatusSelection(
@@ -17,7 +18,7 @@ struct ToolbarStatusView: View {
       workflow: featureFlags.workflowUI
         ? workflow : WorkflowStatusCenterPresentation(state: .init(), selectedWorktreeID: nil, now: .distantPast),
       pullRequest: pullRequest,
-      githubRateLimitedUntil: githubRateLimitedUntil
+      githubRateLimit: githubRateLimit
     )
     ZStack {
       // Keep the panel mounted so a selected run remains readable after the last active run ends.
@@ -60,17 +61,9 @@ struct ToolbarStatusView: View {
         .transition(.opacity)
       case .workflow:
         EmptyView()
-      case .githubRateLimited(let retryAt):
-        HStack(spacing: 6) {
-          Image(systemName: "exclamationmark.triangle.fill")
-            .foregroundStyle(.orange)
-            .accessibilityHidden(true)
-          Text("GitHub rate-limited, retrying at \(retryAt, format: .dateTime.hour().minute())")
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-        }
-        .help("GitHub refused requests for this account's rate limit. Prowl sends none until the retry time.")
-        .transition(.opacity)
+      case .githubRateLimited(let status):
+        GithubRateLimitStatusButton(status: status, onRetry: onRetryGithubRateLimit)
+          .transition(.opacity)
       case .pullRequest(let model):
         PullRequestStatusButton(model: model, codeHost: codeHost)
           .transition(.opacity)
@@ -88,7 +81,7 @@ struct ToolbarStatusView: View {
 enum ToolbarStatusSelection: Equatable {
   case toast(RepositoriesFeature.StatusToast)
   case workflow(WorkflowStatusCenterPresentation)
-  case githubRateLimited(Date)
+  case githubRateLimited(GithubRateLimitStatus)
   case pullRequest(PullRequestStatusModel)
   case motivational
 
@@ -101,14 +94,14 @@ enum ToolbarStatusSelection: Equatable {
     toast: RepositoriesFeature.StatusToast?,
     workflow: WorkflowStatusCenterPresentation,
     pullRequest: GithubPullRequest?,
-    githubRateLimitedUntil: Date? = nil
+    githubRateLimit: GithubRateLimitStatus? = nil
   ) {
     if let toast {
       self = .toast(toast)
     } else if !workflow.runs.isEmpty {
       self = .workflow(workflow)
-    } else if let githubRateLimitedUntil {
-      self = .githubRateLimited(githubRateLimitedUntil)
+    } else if let githubRateLimit {
+      self = .githubRateLimited(githubRateLimit)
     } else if let pullRequest = PullRequestStatusModel(pullRequest: pullRequest) {
       self = .pullRequest(pullRequest)
     } else {

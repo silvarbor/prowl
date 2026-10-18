@@ -1,6 +1,6 @@
 {
   "_comment": "Metadata for the docs/ manual. The last_synced_commit is the commit at which docs/ was last verified against the implementation; the sync-docs skill (.agents/skills/sync-docs/SKILL.md) diffs HEAD against it and updates this file. Committed to git on purpose so the baseline persists across sessions and machines. A dotfile + .json so a future docs website does not render it as a page.",
-  "last_synced_commit": "b9d3be3896588e75ebe2c1e15e23b6486bb53dc5",
-  "last_synced_date": "2026-10-11",
-  "note": "Verified OSC 7501 program status (#887, #893, #895, #896), Ghostty tip upgrade (#886), split close button (#888), and neutral user settings paths (#889). Feature PRs updated the manual; no further edits needed."
+  "last_synced_commit": "60d92a97628d84de15f39201957c0b90610179ff",
+  "last_synced_date": "2026-10-17",
+  "note": "Codex OSC 7501 verified (#922) updated the manual in its PR; the localization sync and version bump need no doc edits."
 }

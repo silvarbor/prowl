@@ -133,12 +133,25 @@ final class WorkflowRuntimeCoordinator {
   // MARK: - Scoped task content
 
   func read(_ input: WorkflowInput, callerPane: CallerPane?) async -> CommandResponse {
-    guard let callerPane else {
-      return Self.failure(code: CLIErrorCode.sourceRequired, message: "Read workflow content from its assigned pane.")
+    // The caller pane identifies the task. A caller Prowl cannot place in a pane, such as a
+    // command that Codex's shared daemon runs, proves the task with its step's delivery token.
+    let assignment: () -> (WorkflowRunSession, WorkflowInvocation)?
+    if let callerPane, assignedContent(input, pane: callerPane.surfaceID) != nil {
+      assignment = { self.assignedContent(input, pane: callerPane.surfaceID) }
+    } else if callerPane == nil, let token = input.token {
+      guard assignedContent(input, token: token) != nil else {
+        return Self.failure(
+          code: CLIErrorCode.tokenInvalid, message: "The token does not belong to this task's current step.")
+      }
+      assignment = { self.assignedContent(input, token: token) }
+    } else if callerPane == nil {
+      return Self.failure(
+        code: CLIErrorCode.sourceRequired,
+        message: "Read workflow content from its assigned pane, or pass the step's --token.")
+    } else {
+      return Self.failure(code: CLIErrorCode.stepNotExpecting, message: "This task is no longer assigned to this pane.")
     }
-    guard let (session, invocation) = assignedContent(input, pane: callerPane.surfaceID),
-      let grant = invocation.content
-    else {
+    guard let (session, invocation) = assignment(), let grant = invocation.content else {
       return Self.failure(code: CLIErrorCode.stepNotExpecting, message: "This task is no longer assigned to this pane.")
     }
     let role = invocation.role
@@ -201,7 +214,7 @@ final class WorkflowRuntimeCoordinator {
           resources: names, offset: offset, nextOffset: next, totalBytes: total)
       }.value
       // Do not return bytes if cancellation or reassignment won during the filesystem read.
-      guard assignedContent(input, pane: callerPane.surfaceID) != nil else {
+      guard assignment() != nil else {
         return Self.failure(code: CLIErrorCode.stepNotExpecting, message: "The task changed during content retrieval.")
       }
       return Self.success(.read(payload))
@@ -210,8 +223,10 @@ final class WorkflowRuntimeCoordinator {
     }
   }
 
+  /// A pane's environment can still hold the token of an earlier launch step, so a resolved
+  /// pane ignores the token.
   private func assignedContent(_ input: WorkflowInput, pane: UUID) -> (WorkflowRunSession, WorkflowInvocation)? {
-    guard input.stepID == nil, !input.force, input.token == nil,
+    guard input.stepID == nil, !input.force,
       let reference = input.runID, let runID = UUID(uuidString: reference),
       dependencies.paneOwner(pane) == runID,
       let session = dependencies.sessions().first(where: { $0.run.id == runID }),
@@ -220,6 +235,21 @@ final class WorkflowRuntimeCoordinator {
       let invocation = session.run.invocations.last(where: { $0.role == role }),
       invocation.ordinal == input.invocation, invocation.content != nil,
       invocation.activation?.state != .skipped, invocation.activation?.state != .revoked
+    else { return nil }
+    return (session, invocation)
+  }
+
+  /// The same assignment rules without a pane: the invocation's activation token stands in for
+  /// the pane that owns the role. Skip, Cancel, and Relaunch revoke the token with the activation.
+  private func assignedContent(_ input: WorkflowInput, token: String) -> (WorkflowRunSession, WorkflowInvocation)? {
+    guard input.stepID == nil, !input.force,
+      let reference = input.runID, let runID = UUID(uuidString: reference),
+      let session = dependencies.sessions().first(where: { $0.run.id == runID }),
+      !session.run.status.isTerminal || session.run.status == .completed,
+      let invocation = session.run.invocations.first(where: { $0.ordinal == input.invocation }),
+      let activation = invocation.activation, activation.token == token,
+      activation.state != .skipped, activation.state != .revoked, invocation.content != nil,
+      session.run.invocations.last(where: { $0.role == invocation.role })?.ordinal == invocation.ordinal
     else { return nil }
     return (session, invocation)
   }
@@ -328,6 +358,21 @@ final class WorkflowRuntimeCoordinator {
           source: "pane", callerRole: activation.role))
     }
     guard let explicit else {
+      if callerPane == nil, let token {
+        // No pane to correlate with (issue #911): the token alone names a waiting activation.
+        for session in active {
+          if let activation = session.run.currentActivation, activation.token == token {
+            return .success(
+              Attribution(
+                runID: session.run.id, ordinal: activation.ordinal, selector: .token(token),
+                source: "token", callerRole: activation.role))
+          }
+        }
+        return .failure(
+          Self.refusal(
+            code: CLIErrorCode.tokenInvalid,
+            message: "No workflow step is waiting for this token; the step may have moved on or been skipped."))
+      }
       if callerPane == nil {
         return .failure(
           Self.refusal(

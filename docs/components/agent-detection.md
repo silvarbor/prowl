@@ -195,6 +195,13 @@ at a `~/.grok/` install (so Cursor's own `agent` entrypoint stays Cursor).
    a newer idle composer is ignored. The `band` (fresh-install default), `claude`, and the
    other composer shapes start a status row with that spinner, which the leading-spinner
    rule reads; an idle composer shows the static brand glyph instead.
+   Oh My Pi 18.8.7 and later also reports its state through
+   [program status](#program-status-osc-7501), and that root record outranks its screen
+   cues, which are read only when Oh My Pi sends no reports (`terminal.programStatus:
+   false`, older versions). A tool approval prompt is `osc.blocked.permission`, an `ask`
+   question is `osc.blocked.question`, and a failed turn is `osc.error`. A background
+   (`async`) bash job keeps the root `working` until the job's result turn ends, so the
+   pane stays **Working** meanwhile.
    Other agent families keep their own patterns (including
    Oh My Pi's `Working… ⟦esc⟧` loader and the Esc-prefixed loader row above,
    braille frames, symbol cycles, Cursor's
@@ -219,7 +226,8 @@ at a `~/.grok/` install (so Cursor's own `agent` entrypoint stays Cursor).
 3. **State decision.** Every agent uses one state machine. Codex also supplies
    incremental JSONL lifecycle evidence from process-owned session logs, without
    installing hooks. Claude supplies process-scoped native state without hooks.
-   Other agents keep their screen-only behavior. For Codex, an observed open
+   These providers and the screen rules apply when no verified OSC root is present.
+   For Codex without OSC authority, an observed open
    parent turn or child task stays **Working** through quiet periods; current
    approval/question UI takes precedence as **Blocked**. Completion closes only
    its matching work. Initial historical records do not start new work.
@@ -242,6 +250,16 @@ at a `~/.grok/` install (so Cursor's own `agent` entrypoint stays Cursor).
    If a previously established daemon binding becomes unavailable, detection falls
    back to the screen but retains its log cursors. When the binding returns, it
    consumes pending events without replaying earlier turn starts.
+
+   Codex 0.163.0 and later sends [program status](#program-status-osc-7501)
+   with `app=codex`. Its root outranks the log provider and screen rules; the log
+   provider is not sampled while it decides. Session identity and semantic results
+   still use the session resolver and transcript reader. Codex sends `idle` after
+   completion or cancellation, so OSC alone does not earn a Done badge or prove a
+   dispatch completed. Approval and question prompts report `blocked` without a
+   kind (`osc.blocked.unspecified`). Codex clears its record when it hands the
+   terminal to an external program or exits, and re-emits after returning. It has
+   no OSC-specific opt-out; older versions remain on the existing fallback path.
 
    Claude reads the detected PID's native registry under its configured root
    (`~/.claude/sessions` by default). `busy` and `shell` mean **Working**, including
@@ -312,7 +330,7 @@ removes a record and its descendants (an empty id removes everything), a record 
 (`title`, `msg`) is never logged or published.
 
 A root record is **attributed** to the pane's detected agent only when its `app` is the
-agent's own name (`claude-code` for Claude Code, `pi` for Pi) and it arrived after that
+agent's own name (`claude-code` for Claude Code, `pi` for Pi, `omp` for Oh My Pi, `codex` for Codex) and it arrived after that
 agent's process started. That rejects another program's records and a predecessor's
 leftovers (an agent that exited without `clear`); it does not authenticate the writer: a
 wrapper or nested program that writes the expected `app` is attributed like the agent
@@ -321,8 +339,8 @@ in the app, not a setting:
 
 | Support | Meaning |
 | --- | --- |
-| unverified | Records are stored and resolved, but only compared with the live decision; disagreements are logged (`AgentDetection` category). Every agent except Claude Code and Pi today. |
-| verified | The root record is the first-priority state evidence, applied the moment the report arrives. Claude Code (2.1.295 and later, `app=claude-code`) and Pi (1.1.0 and later, `app=pi`). |
+| unverified | Records are stored and resolved, but only compared with the live decision; disagreements are logged (`AgentDetection` category). Every agent except Claude Code, Pi, Oh My Pi, and Codex today. |
+| verified | The root record is the first-priority state evidence, applied the moment the report arrives. Claude Code (2.1.295 and later, `app=claude-code`), Pi (1.1.0 and later, `app=pi`), Oh My Pi (18.8.7 and later, `app=omp`), and Codex (0.163.0 and later, `app=codex`). |
 
 For a verified producer the pane follows the **root** record only: `working` → Working
 (`osc.working`), `blocked` → Blocked (`osc.blocked.<kind>`, `unspecified` without a
@@ -343,8 +361,9 @@ wakes the probe described below, which keeps the authority when the same agent i
 there and releases the entry when it is gone. There is no silence timeout.
 
 Producers that never report (older versions, `CLAUDE_CODE_DISABLE_TERMINAL_TITLE`,
-`PI_PROGRAM_STATUS=0`) get today's screen and provider detection unchanged. The
-producer's own variables are the escape hatch; Prowl has no setting for this.
+`PI_PROGRAM_STATUS=0`, Oh My Pi's `terminal.programStatus: false`) get today's screen and provider detection unchanged. The
+available producer controls are the escape hatch; Codex 0.163.0 has none for OSC.
+Prowl has no setting for this.
 
 Independently of the support table, Ghostty's shell integration tells Prowl when the
 foreground command finished (OSC 133). Detection then probes the process at once,
@@ -353,7 +372,10 @@ usual six consecutive misses, so a normal exit or a `kill -9` of any agent clear
 Agents within about a hundred milliseconds. Panes without shell integration (nested
 shells, `--shell-integration=none`, ssh, tmux) keep the slower six-miss release. A
 finished nested shell inside a running agent releases nothing: the probe still finds the
-agent.
+agent. Oh My Pi writes its own OSC 133 marks around each user message it draws, which
+uses up the shell's command timer: once it has drawn one (a turn, or a resumed session's
+history) its exit takes the six-miss release (2–3.5 s), and a `prowl send` waiting for the
+`omp` command returns as soon as Oh My Pi draws its first user message.
 
 Use `status` to decide whether intervention is needed. A blocked `screen_reason`
 with Idle status can be a stale prompt fenced by completion; do not send Enter

@@ -255,7 +255,7 @@ private struct WorktreeToolbarPreview: View {
         ),
         agentsLauncherItems: [],
         statusToast: nil,
-        githubRateLimitedUntil: nil,
+        githubRateLimit: nil,
         workflowStatus: WorkflowStatusCenterPresentation(
           state: WorkflowRunsFeature.State(),
           selectedWorktreeID: nil,
@@ -320,7 +320,8 @@ private struct WorktreeToolbarPreview: View {
         onRunWorkflow: { _ in },
         onRunWorkflowWithOptions: { _ in },
         onShowWorkflowDetails: { _ in },
-        onWorkflowIntent: { _ in }
+        onWorkflowIntent: { _ in },
+        onRetryGithubRateLimit: {}
       )
     }
     .environment(commandKeyObserver)

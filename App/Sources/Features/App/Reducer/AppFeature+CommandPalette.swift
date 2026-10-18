@@ -145,13 +145,13 @@ extension AppFeature {
       return .send(.repositories(.requestCanvasCommand(.toggleExpand)))
 
     case .arrangeCanvasCards:
-      return .send(.repositories(.requestCanvasCommand(.arrange)))
+      return .send(.repositories(.requestCanvasCommand(.layout(.arrange))))
 
     case .organizeCanvasCards:
-      return .send(.repositories(.requestCanvasCommand(.organize)))
+      return .send(.repositories(.requestCanvasCommand(.layout(.organize))))
 
     case .tileCanvasCards:
-      return .send(.repositories(.requestCanvasCommand(.tile)))
+      return .send(.repositories(.requestCanvasCommand(.layout(.tile))))
 
     case .selectAllCanvasCards:
       return .send(.repositories(.requestCanvasCommand(.selectAll)))

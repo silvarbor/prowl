@@ -221,7 +221,7 @@ struct RepositoriesFeature {
     case repositoryPullRequestRefreshCompleted(Repository.ID)
     case pullRequestRefreshBatchCountResolved(
       repositoryID: Repository.ID,
-      count: Int,
+      hosts: Set<String>,
       remotePriorities: [String: Int]
     )
     case repositoryPullRequestsLoaded(
@@ -232,7 +232,8 @@ struct RepositoriesFeature {
     case setMergedWorktreeAction(MergedWorktreeAction?)
     case pullRequestAction(Worktree.ID, PullRequestAction)
     case pullRequestRefreshBatchOutcome(PullRequestRefreshCoordinator.Outcome)
-    case rateLimitRetryTimeChanged(Date?)
+    case rateLimitBlocksChanged([GithubRateLimitBlock])
+    case retryRateLimitedRequests
   }
 
   @CasePathable
@@ -361,9 +362,10 @@ struct RepositoriesFeature {
     /// Marks a sent refresh carries until GitHub answers for their branches. Whatever is left when
     /// the refresh completes, because it failed or never reached GitHub, is marked again.
     var sentPullRequestRefreshMarks: [Repository.ID: Set<Worktree.ID>] = [:]
-    /// While GitHub is refusing the account for its rate limit, the time Prowl sends its next
-    /// request; nil while requests flow.
-    var githubRateLimitedUntil: Date?
+    /// The hosts and APIs that GitHub is refusing for their rate limit; empty while requests flow.
+    var githubRateLimitBlocks: [GithubRateLimitBlock] = []
+    /// The GitHub hosts of each repository's remotes, as its last pull request refresh found them.
+    var githubHostsByRepositoryID: [Repository.ID: Set<String>] = [:]
     var pendingPullRequestRefreshByRepositoryID: [Repository.ID: PendingPullRequestRefresh] = [:]
     var inFlightPullRequestRefreshRepositoryIDs: Set<Repository.ID> = []
     var prRefreshBatchCountsByRepositoryID: [Repository.ID: Int] = [:]
@@ -401,6 +403,9 @@ struct RepositoriesFeature {
     var pendingCanvasFocusRequest: CanvasFocusRequest?
     var nextCanvasCommandRequestID = 0
     var pendingCanvasCommandRequest: CanvasCommandRequest?
+    /// The last request Canvas actually ran (not dropped), so a caller can tell
+    /// its request ran rather than being replaced or discarded.
+    var lastPerformedCanvasCommandRequestID: Int?
     var activeAgents = ActiveAgentsFeature.State()
     /// `in <workflow> · <role>` labels for panes bound to an active run, synced by AppFeature
     /// from WorkflowRunsFeature state (docs-ai 063 C2).
@@ -449,8 +454,9 @@ struct RepositoriesFeature {
     case loadPersistedRepositories
     case pinnedWorktreeIDsLoaded([Worktree.ID])
     case archivedWorktreesLoaded([ArchivedWorktree])
-    case setArchivedAutoDeletePeriod(AutoDeletePeriod?)
+    case setArchivedAutoDeletePeriod(AutoDeletePeriod?, initialTargets: [ArchivedAutoDeleteTarget]? = nil)
     case autoDeleteExpiredArchivedWorktrees
+    case deleteExpiredArchivedWorktree(ArchivedAutoDeleteTarget, period: AutoDeletePeriod)
     case repositoryOrderIDsLoaded([Repository.ID])
     case worktreeOrderByRepositoryLoaded([Repository.ID: [Worktree.ID]])
     case lastFocusedWorktreeIDLoaded(Worktree.ID?)
@@ -487,6 +493,8 @@ struct RepositoriesFeature {
     case consumeCanvasFocusRequest(Int)
     case requestCanvasCommand(CanvasCommandRequest.Command)
     case consumeCanvasCommandRequest(Int)
+    /// Canvas closed without running the pending request.
+    case dropCanvasCommandRequest(Int)
     case worktreeHistoryBack
     case worktreeHistoryForward
     case revealSelectedWorktreeInSidebar
@@ -540,7 +548,21 @@ struct RepositoriesFeature {
   enum SnapshotPersistencePhase: Equatable {
     case idle
     case restoring
+    /// The first live load finished, but some repositories failed. The cached snapshot
+    /// stays as is until a complete load, so it does not lose the failed repositories.
+    case withheld
     case active
+
+    /// Whether the live load replaced the cached snapshot in the repository list.
+    var hasLoadedLiveRepositories: Bool {
+      self == .withheld || self == .active
+    }
+
+    /// The phase after a live load finished with these failures.
+    func afterLiveLoad(hasFailures: Bool) -> Self {
+      if !hasFailures { return .active }
+      return self == .restoring ? .withheld : self
+    }
   }
 
   enum Alert: Equatable {

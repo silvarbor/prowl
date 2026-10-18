@@ -30,7 +30,7 @@ and opens that section's root.
 | **General** | Application language (Follow System, 简体中文, English; the same per-app setting as System Settings → Language & Region → Applications; takes effect on next launch), appearance (system/light/dark), terminal config (share Ghostty's config files or use a dedicated file; Open Config, Reload), default app for opening worktrees, diff tool, confirm-before-quit, default view mode, window chrome tint, automatic repository icon detection, toolbar buttons (Run / Open-in-editor), dim unfocused splits. |
 | **Notifications** | In-app alerts, notification sound picker (Never / system sounds / Prowl Classic), macOS system notifications, move-notified-to-top, command-finished notification + threshold, Dock badge & bounce. → [notifications](notifications.md) |
 | **Shortcuts** | Remap app keyboard shortcuts; view defaults; resolve conflicts. → [keyboard-shortcuts](../reference/keyboard-shortcuts.md) |
-| **Worktree** | Worktree creation/deletion defaults: prompt on create, fetch before create, base directory, copy ignored/untracked files, automatic local-branch cleanup, merged-worktree action, archived auto-delete period. |
+| **Worktree** | Worktree creation/deletion defaults: prompt on create, fetch before create, base directory, copy ignored/untracked files, automatic local-branch cleanup, merged-worktree action, archived auto-delete period (asks for confirmation when the new period would delete archived worktrees right away). |
 | **Updates** | Auto-check toggle, "Check for Updates Now". → [updates](updates.md) |
 | **GitHub** | Enable GitHub integration (uses the `gh` CLI). → [github-pull-requests](github-pull-requests.md) |
 | **Commands** | Global Custom Commands. Enabled commands appear in the window toolbar; each repo can independently hide a Global command. → [custom-actions](custom-actions.md) |
@@ -121,6 +121,13 @@ same status as `prowl skills list`.
   as Not installed. Project-scope links are CLI-only (`prowl skills install --scope project`).
 - A Debug build that was not built with `make build-app` has no staged skills; the section
   then reports that the bundled skills are unavailable.
+
+## Archived auto-delete confirmation
+
+When changing the archived auto-delete period, the confirmation lists the worktrees eligible for immediate deletion.
+Prowl checks again when you confirm: if another worktree has expired or a repository refresh reveals another eligible
+worktree, it updates the warning and asks you to confirm again. The first cleanup uses the accepted targets only;
+worktrees unarchived or removed before cleanup are skipped. Later automatic cleanup continues to follow the selected period.
 
 ## Gotchas for agents
 

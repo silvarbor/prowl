@@ -344,6 +344,10 @@ struct WorkflowReadCommand: ParsableCommand {
   @Option(name: .long, help: "Byte offset from the previous response; reads at most 256 KiB.") var offset: Int64 = 0
   @Option(name: .customLong("run"), help: "Assigned workflow run UUID.") var runID: String
   @Option(name: .long, help: "Assigned invocation number.") var invocation: Int
+  @Option(
+    name: .long,
+    help: "Step delivery token for when Prowl cannot identify this pane; defaults to $PROWL_WORKFLOW_TOKEN.")
+  var token: String?
   @OptionGroup var options: GlobalOptions
 
   mutating func run() throws {
@@ -351,7 +355,8 @@ struct WorkflowReadCommand: ParsableCommand {
       CommandEnvelope(
         output: options.outputMode,
         command: .workflow(WorkflowInput(
-          action: .read, invocation: invocation, contentOffset: offset, contentResource: resource, runID: runID)))
+          action: .read, invocation: invocation, contentOffset: offset, contentResource: resource, runID: runID,
+          token: token ?? ProcessInfo.processInfo.environment[WorkflowSchema.tokenEnvironmentKey])))
     }
   }
 }

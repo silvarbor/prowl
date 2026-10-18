@@ -2,7 +2,7 @@ import Foundation
 
 /// How far Prowl trusts a producer's OSC 7501 reports (docs-ai 079). A static table,
 /// not a setting: a producer either reports or it does not, and a verified one is
-/// trusted whenever it reports. The producer's own variables are the escape hatch.
+/// trusted whenever it reports. Available producer controls can disable reporting.
 nonisolated enum ProgramStatusSupport: Equatable, Sendable {
   /// Reports are stored, fenced, and resolved, but only compared with the live
   /// decision; disagreements are logged. The legacy decision is published.
@@ -11,11 +11,12 @@ nonisolated enum ProgramStatusSupport: Equatable, Sendable {
   case verified
 
   /// A producer is flipped once its baseline has replayed inside Prowl: Claude Code
-  /// (2.1.295 and later, docs-ai 079.004) in slice 3 and Pi (1.1.0 and later,
-  /// docs-ai 079.005) in slice 4.
+  /// (2.1.295 and later, docs-ai 079.004) in slice 3, Pi (1.1.0 and later,
+  /// docs-ai 079.005) in slice 4, Oh My Pi (18.8.7 and later, docs-ai 079.006),
+  /// and Codex (0.163.0 and later, docs-ai 079.007).
   static func level(for agent: DetectedAgent) -> ProgramStatusSupport {
     switch agent {
-    case .claude, .pi: .verified
+    case .claude, .pi, .omp, .codex: .verified
     default: .unverified
     }
   }
@@ -29,6 +30,8 @@ extension DetectedAgent {
     switch self {
     case .claude: "claude-code"
     case .pi: "pi"
+    case .omp: "omp"
+    case .codex: "codex"
     default: nil
     }
   }

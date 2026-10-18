@@ -8,6 +8,7 @@
 | 2026-09-28 | Spike: TUI session log `client_user_message_id` ↔ rollout `client_id` maps panes to daemon threads | branch `spike/codex-daemon-log-detection` |
 | 2026-09-29 | Isolated `CODEX_HOME` checks of daemon environment inheritance and ancestry | this entry |
 | 2026-09-29 | Ancestry cut, `CODEX_THREAD_ID` mapping, `list` caller, skill and manual updates | #839 |
+| 2026-10-14 | Profile launches add `--no-daemon` (Codex ≥ 0.156) even when the managed notifier degrades; workflow `read`/`deliver` accept the step token without a pane | #911 |
 
 ## Outcome & current state (as of 2026-09-29)
 
@@ -59,3 +60,8 @@ by pane X's Codex, so its parent chain reaches X's shell):
   variables; a Codex change would silently disable mapping (callers then get
   `SOURCE_REQUIRED`, never a wrong pane).
 - Daemon-mode Codex log detection can reuse `CodexDaemonThreadMapper`; tracked as follow-up.
+- Issue #911: a long-running daemon stopped mapping every pane until `codex app-server
+  daemon restart`; not reproduced. The mapper returns nil for all panes when the fd inventory
+  is incomplete, a held rollout cannot be read, one rollout exceeds the read budget, or two
+  rollouts share a client id, and it logs none of these. A profile launch reached the daemon
+  only because its notifier preparation degraded (1 s login-shell probe or `config/read`).

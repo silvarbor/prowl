@@ -393,9 +393,6 @@ struct ProwlApp: App {
       send: { command in
         terminalManager.handleCommand(command)
       },
-      createTabInDirectory: { worktree, directory in
-        terminalManager.createTabInDirectory(worktree, directory: directory)
-      },
       launchAgentProfile: { worktree, request in
         switch await terminalManager.prepareAgentProfileLaunch(request, in: worktree) {
         case .success(let preparation):
@@ -491,7 +488,7 @@ struct ProwlApp: App {
 
       return BranchNameSuggestionContext(
         repositoryName: repositoryName,
-        existingBranchNames: Array(existingBranchNames.prefix(10)),
+        existingBranchNames: existingBranchNames,
         terminalContexts: hints,
         llmAvailable: FoundationModelLLMService().isAvailable
       )
@@ -620,7 +617,7 @@ struct ProwlApp: App {
       processGroupID: surface.bridge.foregroundProcessGroupID(),
       childPID: surface.bridge.childPID()
     )
-    guard let identified = job.flatMap(identifyAgentInJob), identified.agent == detectedAgent else {
+    guard let identified = job.flatMap(identifyAgentInJob)?.local, identified.agent == detectedAgent else {
       return .failure(.agentNotFound("Pane '\(pane)' no longer hosts the selected agent."))
     }
 
@@ -1005,7 +1002,7 @@ struct ProwlApp: App {
         return nil
       }
       if focus {
-        selectCLIWorktreeContext(
+        selectCLIWorktreeContextForNewTab(
           worktreeID: target.worktreeID,
           appStore: appStore,
           terminalManager: terminalManager
@@ -1170,7 +1167,66 @@ struct ProwlApp: App {
       closeHandler: lifecycleHandler,
       tabHandler: tabHandler,
       paneHandler: paneHandler,
-      workflowHandler: workflowHandler
+      workflowHandler: workflowHandler,
+      canvasHandler: makeCanvasHandler(appStore: appStore, terminalManager: terminalManager)
+    )
+  }
+
+  /// Poll `condition` until it holds or `timeout` passes. Canvas takes a
+  /// request on its next render; a few seconds covers a view switch on a busy
+  /// app. Returns false at once when the task is cancelled (the CLI hung up),
+  /// so a cancelled wait never spins the main actor.
+  @MainActor
+  static func pollUntil<C: Clock<Duration>>(
+    _ condition: @MainActor () -> Bool,
+    timeout: Duration = .seconds(3),
+    interval: Duration = .milliseconds(50),
+    clock: C
+  ) async -> Bool {
+    let deadline = clock.now.advanced(by: timeout)
+    while !condition() {
+      guard clock.now < deadline else { return false }
+      do {
+        try await clock.sleep(for: interval)
+      } catch {
+        return false
+      }
+    }
+    return true
+  }
+
+  @MainActor
+  static func makeCanvasHandler(
+    appStore: StoreOf<AppFeature>,
+    terminalManager: WorktreeTerminalManager
+  ) -> CanvasCommandHandler {
+    CanvasCommandHandler(
+      snapshot: {
+        let repositories = appStore.state.repositories
+        let cardCount = terminalManager.activeWorktreeStates.reduce(0) { count, state in
+          count + state.tabManager.tabs.count { state.hasCanvasCard($0.id) }
+        }
+        return CanvasCLISnapshot(
+          isShowing: repositories.isShowingCanvas,
+          layoutMode: CanvasLayoutStore.storedMode(),
+          cardCount: cardCount,
+          pendingCommandRequestID: repositories.pendingCanvasCommandRequest?.id,
+          lastPerformedCommandRequestID: repositories.lastPerformedCanvasCommandRequestID
+        )
+      },
+      perform: { operation in
+        switch operation {
+        case .show, .hide:
+          appStore.send(.repositories(.toggleCanvas))
+          return nil
+        case .command(let command):
+          appStore.send(.repositories(.requestCanvasCommand(command)))
+          return appStore.state.repositories.pendingCanvasCommandRequest?.id
+        }
+      },
+      waitUntil: { condition in
+        await pollUntil(condition, clock: ContinuousClock())
+      }
     )
   }
 
@@ -1552,11 +1608,19 @@ struct ProwlApp: App {
     }
 
     if !request.background {
-      selectCLIWorktreeContext(
-        worktreeID: request.target.worktreeID,
-        appStore: appStore,
-        terminalManager: terminalManager
-      )
+      if case .tab = preparation.context.request.placement {
+        selectCLIWorktreeContextForNewTab(
+          worktreeID: request.target.worktreeID,
+          appStore: appStore,
+          terminalManager: terminalManager
+        )
+      } else {
+        selectCLIWorktreeContext(
+          worktreeID: request.target.worktreeID,
+          appStore: appStore,
+          terminalManager: terminalManager
+        )
+      }
       terminalManager.state(for: worktree).selectTab(launched.tabID)
     }
     let resolver = makeTargetResolver(appStore: appStore, terminalManager: terminalManager)
@@ -1633,6 +1697,19 @@ struct ProwlApp: App {
       appStore.send(.repositories(.selectRepository(worktreeID)))
     }
     terminalManager.handleCommand(.setSelectedWorktreeID(worktreeID))
+  }
+
+  /// Context for a tab the CLI creates in the foreground. Outside Canvas the
+  /// worktree is selected so the tab shows. In Canvas the new card takes focus
+  /// and is revealed on its own (`CanvasView.followNewCard`); selecting the
+  /// worktree would leave Canvas.
+  static func selectCLIWorktreeContextForNewTab(
+    worktreeID: Worktree.ID,
+    appStore: StoreOf<AppFeature>,
+    terminalManager: WorktreeTerminalManager
+  ) {
+    guard !appStore.state.repositories.isShowingCanvas else { return }
+    selectCLIWorktreeContext(worktreeID: worktreeID, appStore: appStore, terminalManager: terminalManager)
   }
 
   private static func bringMainWindowToFront() -> Bool {

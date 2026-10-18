@@ -60,314 +60,12 @@ struct CanvasCardLayout: Codable, Equatable, Hashable, Sendable {
   }
 }
 
-// MARK: - Card Packing
-
-struct CanvasCardPacker {
-  var spacing: CGFloat
-  var titleBarHeight: CGFloat
-
-  struct CardInfo {
-    var key: String
-    var size: CGSize
-  }
-
-  struct PackResult {
-    var layouts: [String: CanvasCardLayout]
-    var boundingSize: CGSize
-  }
-
-  /// The maximum card count for exhaustive row-break enumeration.
-  private static let exhaustiveLimit = 20
-
-  /// Pack cards to maximize the fitToView scale — cards appear as large as
-  /// possible on screen.
-  ///
-  /// Two strategies compete: **waterfall** (equal-width columns, cards drop
-  /// into the shortest column — great for varying heights) and **row-break**
-  /// (cards flow left-to-right with centered rows — great for varying widths).
-  /// The configuration with the highest `min(vW/bW, vH/bH)` wins.
-  func pack(cards: [CardInfo], targetRatio: CGFloat) -> PackResult {
-    guard !cards.isEmpty, targetRatio > 0 else {
-      return PackResult(layouts: [:], boundingSize: .zero)
-    }
-
-    let columnWidth = cards.map(\.size.width).max()!
-    var bestScale: CGFloat = -1
-    var bestArea = CGFloat.infinity
-    // Positive = waterfall column count, negative = row-break mask (offset by -1).
-    var bestTag = 1
-
-    // Strategy 1: Waterfall — try all column counts.
-    for cols in 1...cards.count {
-      let (boxW, boxH) = waterfallBoundingSize(cards: cards, columns: cols, columnWidth: columnWidth)
-      let scale = min(targetRatio / boxW, 1.0 / boxH)
-      let area = boxW * boxH
-      if scale > bestScale || (scale == bestScale && area < bestArea) {
-        bestScale = scale
-        bestArea = area
-        bestTag = cols
-      }
-    }
-
-    // Strategy 2: Row-break — try all row configurations (exhaustive for small N).
-    if cards.count <= Self.exhaustiveLimit {
-      for mask in 0..<(1 << (cards.count - 1)) {
-        let (boxW, boxH) = rowBreakBoundingSize(cards: cards, breakMask: mask)
-        let scale = min(targetRatio / boxW, 1.0 / boxH)
-        let area = boxW * boxH
-        if scale > bestScale || (scale == bestScale && area < bestArea) {
-          bestScale = scale
-          bestArea = area
-          bestTag = -(mask + 1)
-        }
-      }
-    }
-
-    if bestTag > 0 {
-      return waterfallPack(cards: cards, columns: bestTag, columnWidth: columnWidth)
-    } else {
-      return rowBreakLayout(cards: cards, breakMask: -(bestTag + 1))
-    }
-  }
-
-  // MARK: - Waterfall layout
-
-  /// Compute bounding size for a waterfall layout without building layouts.
-  private func waterfallBoundingSize(
-    cards: [CardInfo],
-    columns: Int,
-    columnWidth: CGFloat
-  ) -> (CGFloat, CGFloat) {
-    var colHeights = Array(repeating: spacing, count: columns)
-    for card in cards {
-      let col = colHeights.enumerated().min(by: { $0.element < $1.element })!.offset
-      colHeights[col] += card.size.height + titleBarHeight + spacing
-    }
-    let totalWidth = spacing + CGFloat(columns) * (columnWidth + spacing)
-    let totalHeight = colHeights.max() ?? spacing
-    return (totalWidth, totalHeight)
-  }
-
-  /// Place cards into equal-width columns, each card going to the shortest
-  /// column. Cards are horizontally centered within their column.
-  private func waterfallPack(
-    cards: [CardInfo],
-    columns: Int,
-    columnWidth: CGFloat
-  ) -> PackResult {
-    var colHeights = Array(repeating: spacing, count: columns)
-    var layouts: [String: CanvasCardLayout] = [:]
-
-    for card in cards {
-      let col = colHeights.enumerated().min(by: { $0.element < $1.element })!.offset
-      let cardHeight = card.size.height + titleBarHeight
-      let colLeft = spacing + CGFloat(col) * (columnWidth + spacing)
-
-      layouts[card.key] = CanvasCardLayout(
-        position: CGPoint(
-          x: colLeft + columnWidth / 2,
-          y: colHeights[col] + cardHeight / 2
-        ),
-        size: card.size
-      )
-
-      colHeights[col] += cardHeight + spacing
-    }
-
-    let totalWidth = spacing + CGFloat(columns) * (columnWidth + spacing)
-    let totalHeight = colHeights.max() ?? spacing
-
-    return PackResult(
-      layouts: layouts,
-      boundingSize: CGSize(width: totalWidth, height: totalHeight)
-    )
-  }
-
-  // MARK: - Row-break layout
-
-  /// Compute bounding size for a row-break configuration without allocating.
-  private func rowBreakBoundingSize(cards: [CardInfo], breakMask: Int) -> (CGFloat, CGFloat) {
-    var maxWidth = spacing
-    var totalHeight = spacing
-    var rowWidth = spacing
-    var rowHeight: CGFloat = 0
-
-    for idx in 0..<cards.count {
-      if idx > 0 && (breakMask & (1 << (idx - 1))) != 0 {
-        maxWidth = max(maxWidth, rowWidth)
-        totalHeight += rowHeight + spacing
-        rowWidth = spacing
-        rowHeight = 0
-      }
-      rowWidth += cards[idx].size.width + spacing
-      rowHeight = max(rowHeight, cards[idx].size.height + titleBarHeight)
-    }
-
-    maxWidth = max(maxWidth, rowWidth)
-    totalHeight += rowHeight + spacing
-    return (maxWidth, totalHeight)
-  }
-
-  /// Build card layouts from a row-break mask. Rows are centered horizontally.
-  private func rowBreakLayout(cards: [CardInfo], breakMask: Int) -> PackResult {
-    var rows: [[Int]] = [[0]]
-    for idx in 1..<cards.count {
-      if breakMask & (1 << (idx - 1)) != 0 {
-        rows.append([idx])
-      } else {
-        rows[rows.count - 1].append(idx)
-      }
-    }
-
-    let rowWidths = rows.map { row -> CGFloat in
-      row.reduce(spacing) { $0 + cards[$1].size.width + spacing }
-    }
-    let maxRowWidth = rowWidths.max() ?? 0
-
-    var layouts: [String: CanvasCardLayout] = [:]
-    var posY = spacing
-
-    for (rowIndex, row) in rows.enumerated() {
-      let rowHeight = row.map { cards[$0].size.height + titleBarHeight }.max() ?? 0
-      let xOffset = (maxRowWidth - rowWidths[rowIndex]) / 2
-      var posX = spacing + xOffset
-
-      for idx in row {
-        let card = cards[idx]
-        let cardHeight = card.size.height + titleBarHeight
-        layouts[card.key] = CanvasCardLayout(
-          position: CGPoint(
-            x: posX + card.size.width / 2,
-            y: posY + cardHeight / 2
-          ),
-          size: card.size
-        )
-        posX += card.size.width + spacing
-      }
-
-      posY += rowHeight + spacing
-    }
-
-    return PackResult(
-      layouts: layouts,
-      boundingSize: CGSize(width: maxRowWidth, height: posY)
-    )
-  }
-}
-
-// MARK: - Tile Layout
-
-/// Resizes cards to tile and fill the entire viewport, like an automatic window
-/// manager. Cards are laid into a balanced grid whose orientation follows the
-/// viewport: wide viewports spread cards into rows (left-to-right), tall
-/// viewports stack them into columns (top-to-bottom). Each line independently
-/// fills its full extent, so a 2-card row gets ½-width cards while a 3-card row
-/// gets ⅓-width cards — maximizing the area every card uses.
-struct CanvasTileLayout {
-  var spacing: CGFloat
-  var titleBarHeight: CGFloat
-
-  /// Distribute `count` cards across `floor(√count)` lines, packing the extra
-  /// cards into the later lines. e.g. 5 → `[2, 3]`, 7 → `[3, 4]`, 9 → `[3, 3, 3]`.
-  static func lineCounts(for count: Int) -> [Int] {
-    guard count > 0 else { return [] }
-    let lines = max(1, Int(Double(count).squareRoot().rounded(.down)))
-    let base = count / lines
-    let remainder = count % lines
-    // Earlier lines get `base`; the last `remainder` lines get one extra.
-    return (0..<lines).map { index in index < lines - remainder ? base : base + 1 }
-  }
-
-  /// Resize and position `keys` to tile and fill `viewport`. Returns an empty
-  /// dictionary when there is nothing to lay out (the caller treats this as a
-  /// no-op, matching `CanvasCardPacker.pack`).
-  ///
-  /// The layout is built in a `viewport × zoom` frame and laid out edge-to-edge,
-  /// so `fitToView` reproduces a scale of `1 / zoom`. `zoom` stays `1` (native
-  /// scale, identical to single-card framing) while the tiled cards are already
-  /// at least `comfortableSize`; once the grid shrinks cards below that, `zoom`
-  /// grows so each card keeps a comfortable terminal surface (more rows/columns
-  /// at smaller on-screen text) instead of a few oversized glyphs. The constant
-  /// `spacing` lives in this scaled frame, so the on-screen gap (`spacing × scale`)
-  /// tightens automatically as more cards are tiled.
-  func layout(keys: [String], viewport: CGSize, comfortableSize: CGSize) -> [String: CanvasCardLayout] {
-    guard !keys.isEmpty, viewport.width > 0, viewport.height > 0 else { return [:] }
-
-    let counts = Self.lineCounts(for: keys.count)
-    let landscape = viewport.width >= viewport.height
-    let lineCount = CGFloat(counts.count)
-    let maxPerLine = CGFloat(counts.max() ?? 1)
-
-    // Enlarge the frame so the smallest card surface reaches `comfortableSize`;
-    // `fitToView` later scales the whole frame back down to the viewport.
-    let zoom: CGFloat
-    if landscape {
-      // Lines are rows: a card's width ≈ frameWidth / maxPerLine, height ≈ frameHeight / lineCount.
-      zoom = max(
-        1,
-        max(comfortableSize.width * maxPerLine / viewport.width, comfortableSize.height * lineCount / viewport.height)
-      )
-    } else {
-      // Lines are columns: width ≈ frameWidth / lineCount, height ≈ frameHeight / maxPerLine.
-      zoom = max(
-        1,
-        max(comfortableSize.width * lineCount / viewport.width, comfortableSize.height * maxPerLine / viewport.height)
-      )
-    }
-    let frame = CGSize(width: viewport.width * zoom, height: viewport.height * zoom)
-
-    var layouts: [String: CanvasCardLayout] = [:]
-    var cursor = 0
-
-    if landscape {
-      // Lines are rows: split the height evenly, fill each row's width.
-      let rows = counts.count
-      let rowVisualHeight = (frame.height - CGFloat(rows + 1) * spacing) / CGFloat(rows)
-      var originY = spacing
-      for cardsInRow in counts {
-        let cardWidth = (frame.width - CGFloat(cardsInRow + 1) * spacing) / CGFloat(cardsInRow)
-        var originX = spacing
-        for _ in 0..<cardsInRow {
-          layouts[keys[cursor]] = CanvasCardLayout(
-            position: CGPoint(x: originX + cardWidth / 2, y: originY + rowVisualHeight / 2),
-            size: CGSize(width: cardWidth, height: rowVisualHeight - titleBarHeight)
-          )
-          originX += cardWidth + spacing
-          cursor += 1
-        }
-        originY += rowVisualHeight + spacing
-      }
-    } else {
-      // Lines are columns: split the width evenly, fill each column's height.
-      let cols = counts.count
-      let colVisualWidth = (frame.width - CGFloat(cols + 1) * spacing) / CGFloat(cols)
-      var originX = spacing
-      for cardsInColumn in counts {
-        let cardVisualHeight = (frame.height - CGFloat(cardsInColumn + 1) * spacing) / CGFloat(cardsInColumn)
-        var originY = spacing
-        for _ in 0..<cardsInColumn {
-          layouts[keys[cursor]] = CanvasCardLayout(
-            position: CGPoint(x: originX + colVisualWidth / 2, y: originY + cardVisualHeight / 2),
-            size: CGSize(width: colVisualWidth, height: cardVisualHeight - titleBarHeight)
-          )
-          originY += cardVisualHeight + spacing
-          cursor += 1
-        }
-        originX += colVisualWidth + spacing
-      }
-    }
-
-    return layouts
-  }
-}
+// MARK: - Layout Store
 
 @MainActor
 @Observable
 final class CanvasLayoutStore {
   private static let storageKey = "canvasCardLayouts"
-
-  /// Whether auto-arrange has run in this app session. Resets on app launch.
-  static var hasAutoArrangedInSession = false
 
   private let defaults: UserDefaults
   private let initiallyLoadedCardKeys: Set<String>
@@ -380,11 +78,21 @@ final class CanvasLayoutStore {
     didSet { save() }
   }
 
+  /// The remembered layout mode; nil until the canvas first lays out cards.
+  /// Layouts stored before modes existed load as `freeform`, so upgrading never
+  /// rearranges a canvas the user arranged.
+  var mode: CanvasLayoutMode? {
+    didSet {
+      if mode != oldValue { save() }
+    }
+  }
+
   init(defaults: UserDefaults = .standard) {
     self.defaults = defaults
     let stored = Self.load(from: defaults)
     cardLayouts = stored.cardLayouts
     zOrder = stored.zOrder
+    mode = stored.mode ?? (stored.cardLayouts.isEmpty ? nil : .freeform)
     initiallyLoadedCardKeys = Set(stored.cardLayouts.keys)
   }
 
@@ -392,14 +100,42 @@ final class CanvasLayoutStore {
   // hit the TaskLocal invalid-free bug in older system Swift runtimes (swiftlang/swift#85204).
   nonisolated deinit {}
 
-  func shouldAutoArrangeOnInitialEntry(for cardKeys: [String]) -> Bool {
-    guard !cardKeys.isEmpty else { return false }
-    return !cardKeys.contains { initiallyLoadedCardKeys.contains($0) }
+  /// Resolve the layout for entering Canvas with `cardKeys` on screen. A canvas
+  /// that never chose a mode starts in `defaultKind`, and so does a freeform
+  /// canvas whose cards were all unknown when it loaded (there is nothing left
+  /// of the arrangement). A remembered automatic layout always applies: it
+  /// does not depend on card positions. Returns the automatic layout to apply,
+  /// or nil in freeform.
+  func layoutForEntry(cardKeys: [String], defaultKind: CanvasLayoutKind) -> CanvasLayoutKind? {
+    guard !cardKeys.isEmpty else { return nil }
+    let isFreshCanvas = !cardKeys.contains { initiallyLoadedCardKeys.contains($0) }
+    if mode == nil || (mode == .freeform && isFreshCanvas) {
+      mode = .automatic(defaultKind)
+    }
+    return mode?.automaticKind
+  }
+
+  /// The mode saved by the last Canvas, without loading a store — for status
+  /// reports while Canvas is hidden.
+  static func storedMode(defaults: UserDefaults = .standard) -> CanvasLayoutMode? {
+    let stored = load(from: defaults)
+    return stored.mode ?? (stored.cardLayouts.isEmpty ? nil : .freeform)
   }
 
   func setCardLayouts(_ layouts: [String: CanvasCardLayout], zOrder newZOrder: [String]? = nil) {
     cardLayouts = layouts
     zOrder = normalizedZOrder(newZOrder ?? zOrder, visibleKeys: Array(layouts.keys))
+  }
+
+  /// Store the result of an automatic layout. `layouts` replaces the entries of
+  /// the cards it covers; entries for other cards (not on the canvas right now)
+  /// are kept. `order` becomes the stacking order of the laid-out cards, above
+  /// any card the layout did not cover.
+  func applyLayouts(_ layouts: [String: CanvasCardLayout], order: [String]) {
+    let merged = cardLayouts.merging(layouts) { _, new in new }
+    let laidOut = Set(order)
+    let untouched = zOrder.filter { !laidOut.contains($0) && merged[$0] != nil }
+    setCardLayouts(merged, zOrder: untouched + order)
   }
 
   func ensureZOrder(for visibleKeys: [String]) {
@@ -430,7 +166,8 @@ final class CanvasLayoutStore {
     if let payload = try? JSONDecoder().decode(CanvasLayoutStoragePayload.self, from: data) {
       return CanvasLayoutStoragePayload(
         cardLayouts: payload.cardLayouts,
-        zOrder: normalizedZOrder(payload.zOrder, visibleKeys: Array(payload.cardLayouts.keys))
+        zOrder: normalizedZOrder(payload.zOrder, visibleKeys: Array(payload.cardLayouts.keys)),
+        mode: payload.mode
       )
     }
 
@@ -444,7 +181,8 @@ final class CanvasLayoutStore {
   private func save() {
     let payload = CanvasLayoutStoragePayload(
       cardLayouts: cardLayouts,
-      zOrder: Self.normalizedZOrder(zOrder, visibleKeys: Array(cardLayouts.keys))
+      zOrder: Self.normalizedZOrder(zOrder, visibleKeys: Array(cardLayouts.keys)),
+      mode: mode
     )
     if let data = try? JSONEncoder().encode(payload) {
       defaults.set(data, forKey: Self.storageKey)
@@ -472,4 +210,19 @@ final class CanvasLayoutStore {
 private struct CanvasLayoutStoragePayload: Codable, Equatable {
   var cardLayouts: [String: CanvasCardLayout]
   var zOrder: [String]
+  var mode: CanvasLayoutMode?
+
+  init(cardLayouts: [String: CanvasCardLayout], zOrder: [String], mode: CanvasLayoutMode? = nil) {
+    self.cardLayouts = cardLayouts
+    self.zOrder = zOrder
+    self.mode = mode
+  }
+
+  init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    cardLayouts = try container.decode([String: CanvasCardLayout].self, forKey: .cardLayouts)
+    zOrder = try container.decode([String].self, forKey: .zOrder)
+    // A mode written by a newer version must not discard the card layouts.
+    mode = try? container.decodeIfPresent(CanvasLayoutMode.self, forKey: .mode)
+  }
 }

@@ -81,7 +81,7 @@ struct WorktreeSettingsView: View {
             }
           }
           VStack(alignment: .leading) {
-            Picker(selection: $store.archivedAutoDeletePeriod) {
+            Picker(selection: $store.displayedArchivedAutoDeletePeriod.sending(\.archivedAutoDeletePeriodSelected)) {
               Text("Never").tag(AutoDeletePeriod?.none)
               ForEach(AutoDeletePeriod.allCases) { period in
                 Text(period.label).tag(AutoDeletePeriod?.some(period))

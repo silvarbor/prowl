@@ -28,17 +28,14 @@ struct BranchNameSuggestionClient: Sendable {
 
 extension BranchNameSuggestionClient {
   nonisolated static func buildPrompt(from context: BranchNameSuggestionContext) -> String {
+    // Prefixes come from every branch, as in `BranchNameSanitizer.validate`; only the
+    // listed names are capped to keep the prompt short.
     let branches = context.existingBranchNames.prefix(10)
-    let prefixedBranches = branches.filter { $0.contains("/") }
+    let prefixes = BranchNameSanitizer.branchPrefixes(in: context.existingBranchNames)
+      .prefix(5)
+      .map(\.prefix)
     let prefixNote: String
-    if !prefixedBranches.isEmpty {
-      let prefixes = Array(
-        Set(
-          prefixedBranches.compactMap { name -> String? in
-            guard let idx = name.firstIndex(of: "/") else { return nil }
-            return String(name[...idx])
-          }
-        ))
+    if !prefixes.isEmpty {
       prefixNote =
         "IMPORTANT: Existing branches use prefixes: \(prefixes.joined(separator: ", ")). "
         + "You MUST use one of these prefixes."
@@ -98,7 +95,7 @@ extension BranchNameSuggestionClient {
       gatherContext: { repositoryName, _, existingBranchNames in
         BranchNameSuggestionContext(
           repositoryName: repositoryName,
-          existingBranchNames: Array(existingBranchNames.prefix(10)),
+          existingBranchNames: existingBranchNames,
           terminalContexts: [],
           llmAvailable: llmService.isAvailable
         )

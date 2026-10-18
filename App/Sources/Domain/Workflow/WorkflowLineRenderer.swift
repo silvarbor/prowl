@@ -148,10 +148,11 @@ nonisolated enum WorkflowTypedLine {
   static func prompt(_ grant: WorkflowTaskContent, completion: WorkflowCompletionCommand?)
     throws(WorkflowRenderedTextError) -> String
   {
-    let inline = grant.text + (grant.resources.isEmpty ? "" : " " + grant.guidance)
+    let guidance = grant.guidance(token: completion?.token)
+    let inline = grant.text + (grant.resources.isEmpty ? "" : " " + guidance)
     let line = prefix + inline + (completion?.typedSuffix ?? "")
     if line.utf8.count <= 4096 && WorkflowRenderedText.isSingleLine(line) { return line }
-    return try text(grant.guidance, completion: completion)
+    return try text(guidance, completion: completion)
   }
 
   /// The panel's "Ask again" after a provisional delivery: what was missing, and the command.

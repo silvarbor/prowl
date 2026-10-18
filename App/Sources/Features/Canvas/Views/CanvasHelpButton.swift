@@ -85,6 +85,14 @@ struct CanvasHelpButton: View {
           title: "Expand / restore card",
           detail: expandDetail
         )
+        canvasHelpRow(
+          icon: "rectangle.split.2x1",
+          title: "Keep a layout",
+          detail: """
+            The highlighted layout button stays on as cards are added or closed. \
+            Drag or resize a card to place cards freely.
+            """
+        )
         if !navKeys.isEmpty {
           canvasHelpRow(
             icon: "arrow.up.and.down.and.arrow.left.and.right",

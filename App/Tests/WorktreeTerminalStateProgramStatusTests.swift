@@ -186,7 +186,7 @@ struct WorktreeTerminalStateProgramStatusTests {
     #expect(fixture.state.tabAgentBusyById[fixture.tabID] == true)
     #expect(emitted.map(\.displayState) == [.working])
     // Pid, session, and launch metadata are merged, not replaced.
-    #expect(pane?.agentProcessID == getpid())
+    #expect(pane?.agentProcess == .local(getpid()))
   }
 
   @Test func doneAndErrorEarnTheBadgeButIdleDoesNot() async {
@@ -216,10 +216,8 @@ struct WorktreeTerminalStateProgramStatusTests {
     #expect(fixture.state.programStatusStoresBySurface[fixture.surfaceID]?.root?.state == .working)
   }
 
-  /// The production table (docs-ai 079 slices 3 and 4): a Claude Code root and a Pi root
-  /// decide the published state and delegate the schedule; an unverified agent's root
-  /// still publishes nothing.
-  @Test func productionTableVerifiesClaudeCodeAndPi() async {
+  /// Verified roots decide the published state and delegate the schedule.
+  @Test func productionTableVerifiesKnownProducers() async {
     let claudeProbe = Probe()
     let claude = makeFixture(support: nil, probe: claudeProbe)
     await bind(claude, probe: claudeProbe)
@@ -252,6 +250,26 @@ struct WorktreeTerminalStateProgramStatusTests {
     #expect(piFixture.state.agentDetectionCoordinators[piFixture.surfaceID]?.isDelegated == true)
     #expect(piFixture.state.nextScheduleAfterTick(surfaceID: piFixture.surfaceID, hasAgent: true) == .delegated)
 
+    let ompProbe = Probe()
+    let ompFixture = makeFixture(support: nil, probe: ompProbe)
+    ompProbe.job = ForegroundJob(
+      processGroupID: getpid(),
+      processes: [
+        ForegroundProcess(pid: getpid(), parentProcessID: getppid(), name: "omp", argv0: "omp", cmdline: "omp")
+      ])
+    ompFixture.state.lastAgentScreenScanBySurface[ompFixture.surfaceID] = WorktreeTerminalState.AgentScreenScan(
+      agent: .omp, text: "", detection: AgentScreenDetection(state: .idle, reason: .legacyDetector))
+    #expect(await detect(ompFixture))
+    #expect(ompFixture.state.surfaceAgentStates[ompFixture.surfaceID]?.detectedAgent == .omp)
+
+    ompFixture.state.handleProgramStatus(report(.working, app: "omp"), surfaceID: ompFixture.surfaceID)
+
+    let ompPane = ompFixture.state.surfaceAgentStates[ompFixture.surfaceID]
+    #expect(ompPane?.state == .working)
+    #expect(ompPane?.decision?.reason.identifier == "osc.working")
+    #expect(ompFixture.state.agentDetectionCoordinators[ompFixture.surfaceID]?.isDelegated == true)
+    #expect(ompFixture.state.nextScheduleAfterTick(surfaceID: ompFixture.surfaceID, hasAgent: true) == .delegated)
+
     let codexProbe = Probe()
     let codex = makeFixture(support: nil, probe: codexProbe)
     codexProbe.job = ForegroundJob(
@@ -263,13 +281,19 @@ struct WorktreeTerminalStateProgramStatusTests {
       agent: .codex, text: "", detection: AgentScreenDetection(state: .idle, reason: .legacyDetector))
     #expect(await detect(codex))
     #expect(codex.state.surfaceAgentStates[codex.surfaceID]?.detectedAgent == .codex)
-    let before = codex.state.surfaceAgentStates[codex.surfaceID]
 
     codex.state.handleProgramStatus(report(.working, app: "codex"), surfaceID: codex.surfaceID)
 
-    #expect(codex.state.surfaceAgentStates[codex.surfaceID] == before)
-    #expect(codex.state.agentDetectionCoordinators[codex.surfaceID]?.isDelegated == false)
-    #expect(codex.state.nextScheduleAfterTick(surfaceID: codex.surfaceID, hasAgent: true) == .active)
+    #expect(codex.state.surfaceAgentStates[codex.surfaceID]?.decision?.reason.identifier == "osc.working")
+    #expect(codex.state.agentDetectionCoordinators[codex.surfaceID]?.isDelegated == true)
+    #expect(codex.state.nextScheduleAfterTick(surfaceID: codex.surfaceID, hasAgent: true) == .delegated)
+
+    codex.state.handleProgramStatus(report(.blocked, app: "codex"), surfaceID: codex.surfaceID)
+    #expect(codex.state.surfaceAgentStates[codex.surfaceID]?.state == .blocked)
+    #expect(
+      codex.state.surfaceAgentStates[codex.surfaceID]?.decision?.reason.identifier == "osc.blocked.unspecified")
+    codex.state.handleProgramStatus(report(.idle, app: "codex"), surfaceID: codex.surfaceID)
+    #expect(codex.state.surfaceAgentStates[codex.surfaceID]?.displayState == .idle)
   }
 
   @Test func withdrawalPublishesNothingUntilAnObserveThatStartedAfterIt() async {
@@ -416,9 +440,11 @@ struct WorktreeTerminalStateProgramStatusTests {
     // The screen was read (the memo holds the live frame) and the rebound coordinator
     // re-derived the evidence against the new generation.
     #expect(fixture.state.lastAgentScreenScanBySurface[fixture.surfaceID]?.text == "")
-    #expect(fixture.state.surfaceAgentStates[fixture.surfaceID]?.agentProcessID == engine.processIdentifier)
+    #expect(fixture.state.surfaceAgentStates[fixture.surfaceID]?.agentProcess == .local(engine.processIdentifier))
     #expect(fixture.state.surfaceAgentStates[fixture.surfaceID]?.decision?.reason.identifier == "osc.working")
-    #expect(fixture.state.agentDetectionCoordinators[fixture.surfaceID]?.boundProcess?.pid == engine.processIdentifier)
+    #expect(
+      fixture.state.agentDetectionCoordinators[fixture.surfaceID]?.boundProcess?.localGeneration?.pid
+        == engine.processIdentifier)
   }
 
   @Test func nextScheduleFollowsDelegation() {
@@ -487,6 +513,133 @@ struct WorktreeTerminalStateProgramStatusTests {
     #expect(fixture.state.programStatusStoresBySurface[fixture.surfaceID]?.root?.state == .working)
   }
 
+  @Test func originChangeRetiresTheLaunchContextAndTheLocalBinding() async throws {
+    let probe = Probe()
+    let fixture = makeFixture(probe: probe)
+    var emitted: [ActiveAgentEntry] = []
+    fixture.state.onAgentEntryChanged = { emitted.append($0) }
+    await bind(fixture, probe: probe)
+    fixture.state.launchProfilesBySurface[fixture.surfaceID] = WorktreeTerminalState.SurfaceLaunchProfile(
+      profileID: UUID(), name: "Claude · Bound", runtime: .claude, dedicatedHome: nil)
+    fixture.state.handleProgramStatus(report(.working), surfaceID: fixture.surfaceID)
+
+    // Inside the presence hold the same agent appears on a remote host with the same pid.
+    let remote = ProcessRef.remote(
+      RemoteProcessRef(
+        connection: ConnectionKey(user: "onevcat", hostname: "mini.local"), bootID: "boot", pid: getpid(),
+        startToken: "t1"))
+    probe.job = ForegroundJob(
+      processGroupID: getpid(),
+      processes: [ForegroundProcess(ref: remote, parentPID: 1, name: "claude", argv0: "claude", cmdline: "claude")])
+    emitted.removeAll()
+    #expect(await detect(fixture))
+
+    let pane = fixture.state.surfaceAgentStates[fixture.surfaceID]
+    #expect(pane?.agentProcess == remote)
+    #expect(pane?.launchProcess == remote)
+    #expect(fixture.state.launchProfilesBySurface[fixture.surfaceID] == nil)
+    #expect(emitted.last?.launchProfileName == nil)
+    // The local root record does not count for the remote generation.
+    #expect(
+      fixture.state.agentDetectionCoordinators[fixture.surfaceID]?.boundProcess
+        == .remote(
+          RemoteProcessRef(
+            connection: ConnectionKey(user: "onevcat", hostname: "mini.local"), bootID: "boot", pid: getpid(),
+            startToken: "t1")))
+    #expect(fixture.state.agentDetectionCoordinators[fixture.surfaceID]?.isDelegated == false)
+    #expect(pane?.decision?.reason.identifier != "osc.working")
+  }
+
+  @Test func recordsFromADepartedOriginNeverDecideForTheReturningLocalAgent() async throws {
+    let probe = Probe()
+    let fixture = makeFixture(probe: probe)
+    await bind(fixture, probe: probe)
+    // The local agent is suspended; the same agent runs on a remote host and reports.
+    let remote = ProcessRef.remote(
+      RemoteProcessRef(
+        connection: ConnectionKey(user: "onevcat", hostname: "mini.local"), bootID: "boot", pid: 7,
+        startToken: "t1"))
+    probe.job = ForegroundJob(
+      processGroupID: 7,
+      processes: [ForegroundProcess(ref: remote, parentPID: 1, name: "claude", argv0: "claude", cmdline: "claude")])
+    #expect(await detect(fixture))
+    fixture.state.handleProgramStatus(report(.done), surfaceID: fixture.surfaceID)
+    fixture.state.handleProgramStatus(report(.blocked, id: "child"), surfaceID: fixture.surfaceID)
+
+    // Back to the original local process, whose start predates the remote report.
+    probe.job = claudeJob()
+    fixture.state.lastAgentScreenScanBySurface[fixture.surfaceID] = WorktreeTerminalState.AgentScreenScan(
+      agent: .claude, text: "", detection: AgentScreenDetection(state: .working, reason: .legacyDetector))
+    #expect(await detect(fixture))
+    let coordinator = try #require(fixture.state.agentDetectionCoordinators[fixture.surfaceID])
+    #expect(!coordinator.isDelegated)
+    #expect(fixture.state.surfaceAgentStates[fixture.surfaceID]?.decision?.reason.identifier != "osc.done")
+    #expect(fixture.state.surfaceAgentStates[fixture.surfaceID]?.state == .working)
+
+    // A report from the local process after the return decides again; the remote
+    // blocked child does not veto it.
+    fixture.state.handleProgramStatus(report(.idle), surfaceID: fixture.surfaceID)
+    #expect(fixture.state.surfaceAgentStates[fixture.surfaceID]?.decision?.reason.identifier == "osc.idle")
+    #expect(fixture.state.surfaceAgentStates[fixture.surfaceID]?.state == .idle)
+  }
+
+  @Test func departedOriginReportsDuringTheReturningProbeNeverDecide() async throws {
+    let probe = Probe()
+    let fixture = makeFixture(probe: probe)
+    await bind(fixture, probe: probe)
+    let remote = ProcessRef.remote(
+      RemoteProcessRef(
+        connection: ConnectionKey(user: "onevcat", hostname: "mini.local"), bootID: "boot", pid: 7,
+        startToken: "t1"))
+    probe.job = ForegroundJob(
+      processGroupID: 7,
+      processes: [ForegroundProcess(ref: remote, parentPID: 1, name: "claude", argv0: "claude", cmdline: "claude")])
+    #expect(await detect(fixture))
+
+    // The poll that will see the local agent again starts; the remote reports are still
+    // in flight and land while its probe runs.
+    fixture.state.lastAgentScreenScanBySurface[fixture.surfaceID] = WorktreeTerminalState.AgentScreenScan(
+      agent: .claude, text: "", detection: AgentScreenDetection(state: .working, reason: .legacyDetector))
+    let entered = AsyncStream<Void>.makeStream()
+    probe.entered = entered.continuation
+    let tick = Task { await self.detect(fixture) }
+    var iterator = entered.stream.makeAsyncIterator()
+    _ = await iterator.next()
+    fixture.state.handleProgramStatus(report(.done), surfaceID: fixture.surfaceID)
+    fixture.state.handleProgramStatus(report(.blocked, id: "child"), surfaceID: fixture.surfaceID)
+    probe.job = claudeJob()
+    probe.gate?.resume()
+    #expect(await tick.value)
+
+    #expect(fixture.state.agentDetectionCoordinators[fixture.surfaceID]?.isDelegated == false)
+    #expect(fixture.state.surfaceAgentStates[fixture.surfaceID]?.state == .working)
+    fixture.state.handleProgramStatus(report(.idle), surfaceID: fixture.surfaceID)
+    #expect(fixture.state.surfaceAgentStates[fixture.surfaceID]?.decision?.reason.identifier == "osc.idle")
+  }
+
+  @Test func remoteLaunchNeverWearsALocalProfile() async throws {
+    // The Profile's agent never appeared; the user ran `ssh host claude` in its pane.
+    let probe = Probe()
+    let fixture = makeFixture(probe: probe)
+    fixture.state.launchProfilesBySurface[fixture.surfaceID] = WorktreeTerminalState.SurfaceLaunchProfile(
+      profileID: UUID(), name: "Claude · Bound", runtime: .claude, dedicatedHome: nil)
+    let remote = ProcessRef.remote(
+      RemoteProcessRef(
+        connection: ConnectionKey(user: "onevcat", hostname: "mini.local"), bootID: "boot", pid: 7,
+        startToken: "t1"))
+    probe.job = ForegroundJob(
+      processGroupID: 7,
+      processes: [ForegroundProcess(ref: remote, parentPID: 1, name: "claude", argv0: "claude", cmdline: "claude")])
+    fixture.state.lastAgentScreenScanBySurface[fixture.surfaceID] = WorktreeTerminalState.AgentScreenScan(
+      agent: .claude, text: "", detection: AgentScreenDetection(state: .idle, reason: .legacyDetector))
+    var emitted: [ActiveAgentEntry] = []
+    fixture.state.onAgentEntryChanged = { emitted.append($0) }
+    #expect(await detect(fixture))
+
+    #expect(fixture.state.launchProfilesBySurface[fixture.surfaceID] == nil)
+    #expect(emitted.last?.launchProfileName == nil)
+  }
+
   @Test func successorAfterTheFinishedOwnerRetiresTheLaunchContextAndKeepsItsOwnRecords() async throws {
     let probe = Probe()
     let fixture = makeFixture(probe: probe)
@@ -511,7 +664,7 @@ struct WorktreeTerminalStateProgramStatusTests {
 
     #expect(removed == [fixture.surfaceID])
     #expect(fixture.state.launchProfilesBySurface[fixture.surfaceID] == nil)
-    #expect(fixture.state.surfaceAgentStates[fixture.surfaceID]?.agentProcessID == successor)
+    #expect(fixture.state.surfaceAgentStates[fixture.surfaceID]?.agentProcess == .local(successor))
     #expect(emitted.last?.launchProfileName == nil)
     // The successor's root arrived after the D and survived the scoped cleanup, so it
     // drives the successor's decision without another report.
@@ -574,8 +727,8 @@ struct WorktreeTerminalStateProgramStatusTests {
     let launcher = IdentifiedAgentProcess(
       agent: .claude, name: "claude",
       process: ForegroundProcess(pid: 101, parentProcessID: 100, name: "claude", argv0: "claude", cmdline: nil),
-      launchProcessID: 100)
-    let sameOwner = PaneAgentState(detectedAgent: .claude, agentProcessID: 101, launchProcessID: 100)
+      launchProcess: .local(100))
+    let sameOwner = PaneAgentState(detectedAgent: .claude, agentProcess: .local(101), launchProcess: .local(100))
     #expect(
       WorktreeTerminalState.commandFinishedOutcome(
         identified: launcher, previous: sameOwner, isLiveAncestor: { _, _ in false })
@@ -584,11 +737,11 @@ struct WorktreeTerminalStateProgramStatusTests {
     let replaced = IdentifiedAgentProcess(
       agent: .claude, name: "claude",
       process: ForegroundProcess(pid: 102, parentProcessID: 102, name: "claude", argv0: "claude", cmdline: nil),
-      launchProcessID: 102)
+      launchProcess: .local(102))
     #expect(
       WorktreeTerminalState.commandFinishedOutcome(
         identified: replaced, previous: sameOwner,
-        isLiveAncestor: { ancestor, descendant in ancestor == 100 && descendant == 102 })
+        isLiveAncestor: { ancestor, descendant in ancestor == .local(100) && descendant == .local(102) })
         == .sameOwner)
     // A successor launch: nothing links it to the finished owner.
     #expect(

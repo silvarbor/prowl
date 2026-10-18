@@ -17,6 +17,9 @@ nonisolated struct AgentManagedHookPreparation: Equatable, Sendable {
   let forwardingArgv: [String]?
   var pendingSettingsFile: PendingManagedHookSettingsFile?
   let warning: LifecycleCommandWarning?
+  /// What to launch instead of the plan's invocation when no managed hook applies. Codex uses it
+  /// to keep a degraded launch out of the shared daemon (`CodexDaemonOptOut`).
+  var fallbackInvocation: AgentInvocation?
 }
 
 nonisolated enum AgentManagedHookPreparer {
@@ -24,6 +27,7 @@ nonisolated enum AgentManagedHookPreparer {
     let promptIndex: Int?
     let shellEnvironment: CodexShellLaunchEnvironment?
     let configReadProcess: CodexConfigReadProcess
+    let versionQuery: CodexVersionQuery
   }
 
   private struct CodexRenderingOptions {
@@ -46,6 +50,7 @@ nonisolated enum AgentManagedHookPreparer {
     @Sendable (URL, String?) async -> DroidSettingsEnvironmentProbe.Resolution
   typealias OpenCodeEnvironmentResolver =
     @Sendable (URL, String?) async -> ShellEnvironmentProbe.Resolution
+  typealias CodexVersionQuery = @Sendable (URL) async -> String?
 
   static func prepare(
     plan: AgentProfileLaunchPlan,
@@ -53,6 +58,7 @@ nonisolated enum AgentManagedHookPreparer {
     resources: AgentHookResources?,
     codexShellEnvironment: CodexShellLaunchEnvironment? = nil,
     codexConfigReadProcess: CodexConfigReadProcess = CodexConfigReadProcess(),
+    codexVersionQuery: @escaping CodexVersionQuery = { await CodexVersionProbe.query(executableURL: $0) },
     droidSettingsEnvironmentResolver: DroidSettingsEnvironmentResolver? = nil,
     settingsReadFile: (@Sendable (URL, Int) -> ClaudeSettingsReadResult)? = nil,
     openCodeEnvironmentResolver: OpenCodeEnvironmentResolver? = nil
@@ -101,7 +107,8 @@ nonisolated enum AgentManagedHookPreparer {
         options: CodexPreparationOptions(
           promptIndex: promptIndex,
           shellEnvironment: codexShellEnvironment,
-          configReadProcess: codexConfigReadProcess
+          configReadProcess: codexConfigReadProcess,
+          versionQuery: codexVersionQuery
         )
       )
     case .copilot:
@@ -578,9 +585,22 @@ nonisolated enum AgentManagedHookPreparer {
         message: "The effective Codex shell environment could not be resolved."
       )
     }
+    // The opt-out is decided before the notifier, so a degraded launch keeps it too.
+    var arguments = plan.invocation.arguments
+    var promptIndex = options.promptIndex
+    var fallbackInvocation: AgentInvocation?
+    if CodexDaemonOptOut.applies(to: arguments, promptArgumentIndex: promptIndex),
+      let version = await options.versionQuery(shellEnvironment.executableURL),
+      CodexDaemonOptOut.isSupported(versionOutput: version)
+    {
+      let optedOut = CodexDaemonOptOut.applying(to: plan.invocation, promptArgumentIndex: promptIndex)
+      arguments = optedOut.invocation.arguments
+      promptIndex = optedOut.promptArgumentIndex
+      fallbackInvocation = optedOut.invocation
+    }
     let invocation = AgentInvocation(
       executable: shellEnvironment.executableURL.path(percentEncoded: false),
-      arguments: plan.invocation.arguments
+      arguments: arguments
     )
     let context: CodexLaunchContext
     do {
@@ -589,51 +609,45 @@ nonisolated enum AgentManagedHookPreparer {
         inheritedCWD: inheritedCWD,
         dedicatedHome: plan.dedicatedHome,
         environment: shellEnvironment.processEnvironment,
-        promptArgumentIndex: options.promptIndex
+        promptArgumentIndex: promptIndex
       )
     } catch {
       return degraded(
         plan: plan,
         capability: capability,
         launchCWD: inheritedCWD,
-        message: "The effective Codex launch context could not be resolved."
+        message: "The effective Codex launch context could not be resolved.",
+        fallbackInvocation: fallbackInvocation
       )
     }
     let resolver = CodexEffectiveNotifyResolver(
       bundledCLIPath: resources.bundledCLIPath,
       query: options.configReadProcess.usingExecutable(shellEnvironment.executableURL).query
     )
+    let forwardingArgv: [String]?
     switch await resolver.resolve(context) {
     case .absent:
-      return preparedCodex(
-        invocation: invocation,
-        capability: capability,
-        context: context,
-        resources: resources,
-        options: CodexRenderingOptions(
-          promptIndex: options.promptIndex,
-          forwardingArgv: nil
-        )
-      )
+      forwardingArgv = nil
     case .present(let argv):
-      return preparedCodex(
-        invocation: invocation,
-        capability: capability,
-        context: context,
-        resources: resources,
-        options: CodexRenderingOptions(
-          promptIndex: options.promptIndex,
-          forwardingArgv: argv
-        )
-      )
+      forwardingArgv = argv
     case .degraded(let message):
       return degraded(
         plan: plan,
         capability: capability,
         launchCWD: context.effectiveCWD,
-        message: message
+        message: message,
+        fallbackInvocation: fallbackInvocation
       )
     }
+    var preparation = preparedCodex(
+      invocation: invocation,
+      capability: capability,
+      context: context,
+      resources: resources,
+      options: CodexRenderingOptions(promptIndex: promptIndex, forwardingArgv: forwardingArgv)
+    )
+    preparation.fallbackInvocation = fallbackInvocation
+    return preparation
   }
 
   private static func preparedCodex(
@@ -661,7 +675,8 @@ nonisolated enum AgentManagedHookPreparer {
     plan: AgentProfileLaunchPlan,
     capability: AgentSignalHookCapability,
     launchCWD: URL,
-    message: String
+    message: String,
+    fallbackInvocation: AgentInvocation? = nil
   ) -> AgentManagedHookPreparation {
     AgentManagedHookPreparation(
       preparedInvocation: nil,
@@ -673,7 +688,8 @@ nonisolated enum AgentManagedHookPreparer {
         code: .managedHookDegraded,
         runtime: plan.runtime.rawValue,
         message: message
-      )
+      ),
+      fallbackInvocation: fallbackInvocation
     )
   }
 }

@@ -22,6 +22,7 @@
 | 2026-06-19 | Stable Debug identity (`Prowl Debug` / `com.onevcat.prowl.debug`) at Xcode project level; `install-dev-build` back to plain `ditto` | PR #479 — see [004](004-debug-identity-and-dev-loop.md) |
 | 2026-06-20 | `run-app` accelerated: `-showBuildSettings` cache + `SWIFT_COMPILATION_MODE=incremental` for Debug | PR #482 — see [004](004-debug-identity-and-dev-loop.md) |
 | 2026-06-24 | Trailing-comma lint violations on `main` fixed (`make check` red while CI green) | PR #503 — see [002](002-format-lint-alignment.md) |
+| 2026-10-13 | CI runs `make format-lint` in the parallel checks task; setup-macos puts Xcode's `swift-format` on `PATH` | Issue #575 — see [002](002-format-lint-alignment.md) |
 
 ## Outcome & current state (as of 2026-07-12)
 
@@ -81,9 +82,9 @@
 
 ## Open questions
 
-- CI still runs only `make lint`, not `make format-lint`, so `main` can again turn red for
+- ~~CI still runs only `make lint`, not `make format-lint`, so `main` can again turn red for
   `make check` while CI stays green — exactly the gap #503 patched around rather than
-  closed.
+  closed.~~ Closed by #575: CI now runs `make format-lint`.
 - The Ghostty cache payload still includes `.ghostty_hash` / `.ghostty_build_stamp` (#142),
   but the later unconditional "Sync ghostty marker files" step rewrites both after every
   restore, making the cached copies redundant — harmless leftover, never cleaned up.
