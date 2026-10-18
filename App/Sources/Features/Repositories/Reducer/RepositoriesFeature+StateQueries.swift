@@ -681,7 +681,8 @@ extension RepositoriesFeature.State {
 
   /// The position of each worktree in the order the Active Agents panel lists agents: pinned
   /// worktrees of every repository first (repository order, then pin order), then the rest in
-  /// sidebar order (repository order, main worktree, unpinned worktrees).
+  /// sidebar order (repository order, main worktree, unpinned worktrees; a folder or workspace
+  /// ranks by its own ID).
   func worktreeRanks() -> [Worktree.ID: Int] {
     let repositoriesByID = Dictionary(
       repositories.map { ($0.id, $0) },
@@ -694,6 +695,11 @@ extension RepositoriesFeature.State {
       pinned.append(contentsOf: pinnedWorktrees.map(\.id))
       let pinnedIDs = Set(pinnedWorktrees.map(\.id))
       others.append(contentsOf: orderedWorktrees(in: repository).map(\.id).filter { !pinnedIDs.contains($0) })
+      // A runnable folder or workspace has no worktrees; its terminals run under a synthesized
+      // worktree whose ID is the repository ID (see `terminalWorktree(for:)`).
+      if repository.capabilities.supportsRunnableFolderActions, !repository.capabilities.supportsWorktrees {
+        others.append(repository.id)
+      }
     }
     var ranks: [Worktree.ID: Int] = [:]
     for (rank, id) in (pinned + others).enumerated() {

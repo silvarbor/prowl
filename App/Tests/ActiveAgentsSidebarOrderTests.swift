@@ -44,6 +44,43 @@ struct ActiveAgentsSidebarOrderTests {
     #expect(rankedIDs(state) == [betaMain.id, alphaMain.id, alphaTwo.id, alphaOne.id])
   }
 
+  @Test func foldersAndWorkspacesRankAtTheirRepositoryPosition() {
+    let main = worktree("/git", repo: "/git")
+    var state = makeState(
+      repositories: [
+        repository("/git", [main]),
+        repository("/folder", [], kind: .plain),
+      ]
+    )
+    state.repositoryOrderIDs = ["/folder", "/git"]
+
+    #expect(rankedIDs(state) == ["/folder", main.id])
+  }
+
+  @Test func folderAgentSortsBeforeAGitWorktreeAgentWhenItsFolderComesFirst() async {
+    let main = worktree("/git", repo: "/git")
+    var state = makeState(
+      repositories: [
+        repository("/git", [main]),
+        repository("/folder", [], kind: .plain),
+      ]
+    )
+    state.repositoryOrderIDs = ["/folder", "/git"]
+    let inGit = entry(1, worktree: main.id)
+    let inFolder = entry(2, worktree: "/folder")
+    let store = TestStore(initialState: state) { RepositoriesFeature() }
+
+    await store.send(.activeAgents(.agentEntryChanged(inGit, autoShowPanel: false))) {
+      $0.activeAgents.entries = [inGit]
+    }
+    await store.receive(\.activeAgents.worktreeRanksChanged) {
+      $0.activeAgents.worktreeRanks = ["/folder": 0, main.id: 1]
+    }
+    await store.send(.activeAgents(.agentEntryChanged(inFolder, autoShowPanel: false))) {
+      $0.activeAgents.entries = [inFolder, inGit]
+    }
+  }
+
   @Test func archivedWorktreeHasNoRank() {
     let main = worktree("/alpha", repo: "/alpha")
     let archived = worktree("/alpha-1", repo: "/alpha")
@@ -273,12 +310,12 @@ struct ActiveAgentsSidebarOrderTests {
     )
   }
 
-  private func repository(_ id: String, _ worktrees: [Worktree]) -> Repository {
+  private func repository(_ id: String, _ worktrees: [Worktree], kind: Repository.Kind = .git) -> Repository {
     Repository(
       id: id,
       rootURL: URL(fileURLWithPath: id),
       name: URL(fileURLWithPath: id).lastPathComponent,
-      kind: .git,
+      kind: kind,
       worktrees: IdentifiedArray(uniqueElements: worktrees),
       workspace: nil
     )
