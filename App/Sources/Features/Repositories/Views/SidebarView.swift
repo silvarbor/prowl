@@ -17,7 +17,7 @@ struct SidebarView: View {
       repositoryIDs: repositoryIDs,
       expandedRepoIDs: expandedRepoIDs
     )
-    let visibleHotkeyRows = state.orderedWorktreeRows(includingRepositoryIDs: expandedRepoIDs)
+    let visibleHotkeyRows = state.navigableWorktreeRows(includingRepositoryIDs: expandedRepoIDs)
     let visibleWorktreeIDs = Set(visibleHotkeyRows.map(\.id))
     let effectiveSelectedRows = selectedRows(state: state)
     let confirmWorktreeAction = makeConfirmWorktreeAction(state: state)

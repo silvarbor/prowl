@@ -103,6 +103,18 @@ struct AppearanceSettingsView: View {
             .font(.callout)
             .foregroundStyle(.secondary)
         }
+        Section("Sidebar") {
+          Toggle(
+            "Fold worktrees with no open tab",
+            isOn: $store.foldInactiveWorktrees
+          )
+          .help(
+            """
+            Group worktrees that have no open terminal tab into a collapsed Inactive row \
+            at the bottom of each repository in the sidebar.
+            """
+          )
+        }
         Section("Repository Icons") {
           Toggle(
             "Detect project icons automatically",

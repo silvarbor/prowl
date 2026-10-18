@@ -210,6 +210,7 @@ struct RepositoriesFeature {
     case worktreeNotificationReceived(Worktree.ID)
     case setSidebarDragActive(Bool)
     case setMoveNotifiedWorktreeToTop(Bool)
+    case setFoldInactiveWorktrees(Bool)
   }
 
   @CasePathable
@@ -330,6 +331,7 @@ struct RepositoriesFeature {
     var archivedAutoDeletePeriod: AutoDeletePeriod?
     var mergedWorktreeAction: MergedWorktreeAction?
     var moveNotifiedWorktreeToTop = true
+    var foldInactiveWorktrees = false
     var lastFocusedWorktreeID: Worktree.ID?
     var preCanvasWorktreeID: Worktree.ID?
     var preCanvasTerminalTargetID: Worktree.ID?
@@ -411,6 +413,9 @@ struct RepositoriesFeature {
     /// from WorkflowRunsFeature state (docs-ai 063 C2).
     var workflowRoleBadgesBySurfaceID: [UUID: String] = [:]
     @Shared(.appStorage("sidebarCollapsedRepositoryIDs")) var collapsedRepositoryIDs: [Repository.ID] = []
+    /// Repositories whose "Inactive (N)" group is expanded. Absent means folded.
+    @Shared(.appStorage("sidebarExpandedInactiveRepositoryIDs"))
+    var expandedInactiveRepositoryIDs: [Repository.ID] = []
     @Presents var worktreeCreationPrompt: WorktreeCreationPromptFeature.State?
     @Presents var workspaceEditor: WorkspaceEditorFeature.State?
     @Presents var alert: AlertState<Alert>?
@@ -498,6 +503,7 @@ struct RepositoriesFeature {
     case worktreeHistoryBack
     case worktreeHistoryForward
     case revealSelectedWorktreeInSidebar
+    case toggleInactiveWorktreesExpanded(Repository.ID)
     case consumePendingSidebarReveal(Int)
     case requestRenameBranchPrompt(Worktree.ID)
     case consumePendingRenameBranchRequest(Int)
