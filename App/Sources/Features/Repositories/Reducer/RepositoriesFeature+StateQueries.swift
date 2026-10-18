@@ -675,6 +675,10 @@ extension RepositoriesFeature.State {
     )
   }
 
+  var worktreeRankTrigger: WorktreeRankTrigger {
+    WorktreeRankTrigger(inputs: worktreeRankInputs, hasAgents: !activeAgents.entries.isEmpty)
+  }
+
   /// The position of each worktree in the order the Active Agents panel lists agents: pinned
   /// worktrees of every repository first (repository order, then pin order), then the rest in
   /// sidebar order (repository order, main worktree, unpinned worktrees).
@@ -723,6 +727,13 @@ struct WorktreeRankInputs: Equatable {
   var pinnedWorktreeIDs: [Worktree.ID]
   var worktreeOrderByRepository: [Repository.ID: [Worktree.ID]]
   var archivedWorktrees: [ArchivedWorktree]
+}
+
+/// What decides whether the Active Agents panel needs the sidebar ranks: the sidebar inputs, and
+/// whether the panel lists any agent at all.
+struct WorktreeRankTrigger: Equatable {
+  var inputs: WorktreeRankInputs
+  var hasAgents: Bool
 }
 
 struct WorktreeRowSections: Equatable {

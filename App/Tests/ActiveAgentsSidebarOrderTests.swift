@@ -199,6 +199,28 @@ struct ActiveAgentsSidebarOrderTests {
     }
   }
 
+  @Test func agentUpdatesNeitherRebuildNorRefreshTheRanks() async {
+    let main = worktree("/alpha", repo: "/alpha")
+    let feature = worktree("/alpha-1", repo: "/alpha")
+    var state = makeState(repositories: [repository("/alpha", [main, feature])])
+    let inMain = entry(1, worktree: main.id)
+    state.activeAgents.entries = [inMain]
+    // A rank map that differs from the sidebar: only a rebuild would notice and replace it.
+    let stale = [main.id: 5]
+    state.activeAgents.worktreeRanks = stale
+    let store = TestStore(initialState: state) { RepositoriesFeature() }
+    var updated = inMain
+    updated.paneTitle = "renamed"
+
+    await store.send(.activeAgents(.agentEntryChanged(updated, autoShowPanel: false))) {
+      $0.activeAgents.entries = [updated]
+    }
+    await store.send(.activeAgents(.agentEntryRemoved(inMain.id))) {
+      $0.activeAgents.entries = []
+    }
+    #expect(store.state.activeAgents.worktreeRanks == stale)
+  }
+
   @Test func pinningAWorktreeMovesItsAgentToTheTop() async {
     let main = worktree("/alpha", repo: "/alpha")
     let feature = worktree("/alpha-1", repo: "/alpha")

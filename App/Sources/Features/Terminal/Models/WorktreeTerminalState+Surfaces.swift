@@ -890,7 +890,14 @@ extension WorktreeTerminalState {
   }
 
   func updateTree(_ tree: SplitTree<GhosttySurfaceView>, for tabId: TerminalTabID) {
+    let previousPaneIDs = trees[tabId]?.leaves().map(\.id)
     trees[tabId] = tree
+    // An agent entry carries its pane position, which orders it in the Active Agents panel.
+    // A drop, split, or close moves panes without touching any agent's state, so nothing else
+    // republishes the entries. Resizes keep the order and republish nothing.
+    if let previousPaneIDs, previousPaneIDs != tree.leaves().map(\.id) {
+      refreshAgentEntriesForTitleChange(in: tabId)
+    }
     syncFocusIfNeeded()
   }
 

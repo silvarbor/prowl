@@ -120,6 +120,40 @@ struct AgentEntryEmissionDedupTests {
     #expect(received.map(\.tabIndex) == [0])
   }
 
+  @Test func movingAPaneRepublishesTheAgentsWhosePositionChanged() throws {
+    let fixture = makeFixture()
+    let other = GhosttySurfaceView(
+      runtime: fixture.state.runtime,
+      workingDirectory: URL(fileURLWithPath: "/tmp/repo/worktree", isDirectory: true),
+      fontSize: nil,
+      context: GHOSTTY_SURFACE_CONTEXT_SPLIT,
+      skipsSurfaceCreationForTesting: true
+    )
+    fixture.state.surfaces[other.id] = other
+    let paneState = PaneAgentState(detectedAgent: .claude, state: .working)
+    let original = try SplitTree<GhosttySurfaceView>(view: fixture.pane)
+      .inserting(view: other, at: fixture.pane, direction: .right)
+    fixture.state.updateTree(original, for: fixture.tabId)
+    fixture.state.surfaceAgentStates[fixture.pane.id] = paneState
+    fixture.state.surfaceAgentStates[other.id] = paneState
+    fixture.state.emitAgentEntry(surfaceID: fixture.pane.id, tabId: fixture.tabId, state: paneState)
+    fixture.state.emitAgentEntry(surfaceID: other.id, tabId: fixture.tabId, state: paneState)
+    var received: [ActiveAgentEntry] = []
+    fixture.state.onAgentEntryChanged = { received.append($0) }
+
+    // A resize keeps the pane order and republishes nothing.
+    fixture.state.updateTree(original.equalized(), for: fixture.tabId)
+    #expect(received.isEmpty)
+
+    let swapped = try SplitTree<GhosttySurfaceView>(view: other)
+      .inserting(view: fixture.pane, at: other, direction: .right)
+    fixture.state.updateTree(swapped, for: fixture.tabId)
+
+    #expect(Set(received.map(\.surfaceID)) == [fixture.pane.id, other.id])
+    #expect(received.first { $0.surfaceID == fixture.pane.id }?.paneIndex == 2)
+    #expect(received.first { $0.surfaceID == other.id }?.paneIndex == 1)
+  }
+
   /// `equalsIgnoringRawState` normalizes one field and compares the rest through
   /// the synthesized `==`. Nothing structural stops a later edit from
   /// normalizing a second field, and the damage would be silent: the helper
