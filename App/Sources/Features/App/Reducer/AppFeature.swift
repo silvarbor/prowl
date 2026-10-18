@@ -548,6 +548,15 @@ struct AppFeature {
             )
           ),
           .send(
+            .repositories(
+              .worktreeOrdering(
+                .setFoldInactiveWorktrees(
+                  settings.foldInactiveWorktrees
+                )
+              )
+            )
+          ),
+          .send(
             .updates(
               .applySettings(
                 automaticallyChecks: settings.updatesAutomaticallyCheckForUpdates

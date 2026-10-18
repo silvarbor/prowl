@@ -51,6 +51,16 @@ struct NotificationsSettingsView: View {
             isOn: $store.moveNotifiedWorktreeToTop
           )
           .help("Bring the worktree to the top when the terminal receives a notification")
+          Toggle(
+            "Fold worktrees with no open tab",
+            isOn: $store.foldInactiveWorktrees
+          )
+          .help(
+            """
+            Group worktrees that have no open terminal tab into a collapsed Inactive row \
+            at the bottom of each repository in the sidebar.
+            """
+          )
           Picker(
             "Bounce dock icon",
             selection: $store.dockBounceMode

@@ -54,6 +54,7 @@ reads have no scheduled removal date.
 | `systemNotificationsEnabled` | Bool | `false` | macOS system banners. |
 | `muteNotificationsForActiveSurface` | Bool | `true` | Suppress the banner, sound, and dock bounce when the notification's pane is the one you're actively viewing (selected worktree, focused pane, key + visible window). Workflow status-edge notices use selected-worktree visibility because their status is worktree-level. |
 | `moveNotifiedWorktreeToTop` | Bool | `true` | Float a notified worktree to top. |
+| `foldInactiveWorktrees` | Bool | `false` | Fold worktrees with no open terminal tab into a collapsed "Inactive (N)" row at the bottom of each repository. The main, pinned, pending, and selected worktrees never fold. |
 | `commandFinishedNotificationEnabled` | Bool | `true` | Notify when a long command finishes. |
 | `commandFinishedNotificationThreshold` | Int (seconds) | `10` | Minimum duration before that notification fires. |
 | `analyticsEnabled` | Bool | `true` | Send usage analytics (PostHog; off in Debug). |

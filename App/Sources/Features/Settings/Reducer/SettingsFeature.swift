@@ -28,6 +28,7 @@ struct SettingsFeature {
     var systemNotificationsEnabled: Bool
     var muteNotificationsForActiveSurface: Bool
     var moveNotifiedWorktreeToTop: Bool
+    var foldInactiveWorktrees: Bool
     var commandFinishedNotificationEnabled: Bool
     var commandFinishedNotificationThreshold: Int
     var analyticsEnabled: Bool
@@ -116,6 +117,7 @@ struct SettingsFeature {
       systemNotificationsEnabled = settings.systemNotificationsEnabled
       muteNotificationsForActiveSurface = settings.muteNotificationsForActiveSurface
       moveNotifiedWorktreeToTop = settings.moveNotifiedWorktreeToTop
+      foldInactiveWorktrees = settings.foldInactiveWorktrees
       commandFinishedNotificationEnabled = settings.commandFinishedNotificationEnabled
       commandFinishedNotificationThreshold = settings.commandFinishedNotificationThreshold
       analyticsEnabled = settings.analyticsEnabled
@@ -187,6 +189,7 @@ struct SettingsFeature {
         systemNotificationsEnabled: systemNotificationsEnabled,
         muteNotificationsForActiveSurface: muteNotificationsForActiveSurface,
         moveNotifiedWorktreeToTop: moveNotifiedWorktreeToTop,
+        foldInactiveWorktrees: foldInactiveWorktrees,
         commandFinishedNotificationEnabled: commandFinishedNotificationEnabled,
         commandFinishedNotificationThreshold: commandFinishedNotificationThreshold,
         analyticsEnabled: analyticsEnabled,
@@ -348,6 +351,7 @@ struct SettingsFeature {
         state.systemNotificationsEnabled = normalizedSettings.systemNotificationsEnabled
         state.muteNotificationsForActiveSurface = normalizedSettings.muteNotificationsForActiveSurface
         state.moveNotifiedWorktreeToTop = normalizedSettings.moveNotifiedWorktreeToTop
+        state.foldInactiveWorktrees = normalizedSettings.foldInactiveWorktrees
         state.commandFinishedNotificationEnabled = normalizedSettings.commandFinishedNotificationEnabled
         state.commandFinishedNotificationThreshold = normalizedSettings.commandFinishedNotificationThreshold
         state.analyticsEnabled = normalizedSettings.analyticsEnabled

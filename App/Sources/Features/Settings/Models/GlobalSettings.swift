@@ -9,6 +9,7 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   var systemNotificationsEnabled: Bool
   var muteNotificationsForActiveSurface: Bool
   var moveNotifiedWorktreeToTop: Bool
+  var foldInactiveWorktrees: Bool
   var commandFinishedNotificationEnabled: Bool
   var commandFinishedNotificationThreshold: Int
   var analyticsEnabled: Bool
@@ -110,6 +111,7 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     systemNotificationsEnabled: Bool = false,
     muteNotificationsForActiveSurface: Bool = true,
     moveNotifiedWorktreeToTop: Bool,
+    foldInactiveWorktrees: Bool = false,
     commandFinishedNotificationEnabled: Bool = true,
     commandFinishedNotificationThreshold: Int = 10,
     analyticsEnabled: Bool,
@@ -157,6 +159,7 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.systemNotificationsEnabled = systemNotificationsEnabled
     self.muteNotificationsForActiveSurface = muteNotificationsForActiveSurface
     self.moveNotifiedWorktreeToTop = moveNotifiedWorktreeToTop
+    self.foldInactiveWorktrees = foldInactiveWorktrees
     self.commandFinishedNotificationEnabled = commandFinishedNotificationEnabled
     self.commandFinishedNotificationThreshold = commandFinishedNotificationThreshold
     self.analyticsEnabled = analyticsEnabled
@@ -207,6 +210,7 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     try container.encode(systemNotificationsEnabled, forKey: .systemNotificationsEnabled)
     try container.encode(muteNotificationsForActiveSurface, forKey: .muteNotificationsForActiveSurface)
     try container.encode(moveNotifiedWorktreeToTop, forKey: .moveNotifiedWorktreeToTop)
+    try container.encode(foldInactiveWorktrees, forKey: .foldInactiveWorktrees)
     try container.encode(commandFinishedNotificationEnabled, forKey: .commandFinishedNotificationEnabled)
     try container.encode(commandFinishedNotificationThreshold, forKey: .commandFinishedNotificationThreshold)
     try container.encode(analyticsEnabled, forKey: .analyticsEnabled)
@@ -260,6 +264,7 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     case systemNotificationsEnabled
     case muteNotificationsForActiveSurface
     case moveNotifiedWorktreeToTop
+    case foldInactiveWorktrees
     case commandFinishedNotificationEnabled
     case commandFinishedNotificationThreshold
     case analyticsEnabled
@@ -330,6 +335,8 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     moveNotifiedWorktreeToTop =
       try container.decodeIfPresent(Bool.self, forKey: .moveNotifiedWorktreeToTop)
       ?? Self.default.moveNotifiedWorktreeToTop
+    foldInactiveWorktrees =
+      try container.decodeIfPresent(Bool.self, forKey: .foldInactiveWorktrees) ?? Self.default.foldInactiveWorktrees
     commandFinishedNotificationEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .commandFinishedNotificationEnabled)
       ?? Self.default.commandFinishedNotificationEnabled

@@ -75,6 +75,8 @@ top of its section. **Jump to Latest Unread** (`⌘⌥U`) takes you straight to 
   still happens. Workflow status-edge notices are worktree-level rather than pane-
   level, so the selected worktree in a key, visible window counts as currently viewed.
 - `moveNotifiedWorktreeToTop` — float notified worktree to top.
+- `foldInactiveWorktrees` (default off) — fold worktrees with no open tab into an
+  "Inactive (N)" row at the bottom of each repository.
 - `commandFinishedNotificationEnabled` + `commandFinishedNotificationThreshold` —
   long-command notifications and their minimum duration.
 - `showNotificationDotOnDock`, `dockBounceMode` — Dock badge & bounce.

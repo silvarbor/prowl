@@ -228,6 +228,7 @@ extension RepositoriesFeature {
       )
       state.repositoryRoots = roots
       state.isInitialLoadComplete = true
+      pruneExpandedInactiveRepositoryIDs(state: &state)
       state.loadFailuresByID = Dictionary(
         failures.map { ($0.rootID, $0.message) },
         uniquingKeysWith: { first, _ in first }
@@ -747,6 +748,16 @@ extension RepositoriesFeature {
         id: state.nextPendingSidebarRevealID,
         worktreeID: worktreeID
       )
+      return .none
+
+    case .toggleInactiveWorktreesExpanded(let repositoryID):
+      state.$expandedInactiveRepositoryIDs.withLock {
+        if let index = $0.firstIndex(of: repositoryID) {
+          $0.remove(at: index)
+        } else {
+          $0.append(repositoryID)
+        }
+      }
       return .none
 
     case .consumePendingSidebarReveal(let revealID):

@@ -16,7 +16,10 @@ branches are live on disk at once — ideal for giving each agent its own branch
 
 Within a repository, worktrees are grouped: **Main** (the repo root), **Pinned**,
 **Pending** (being created), and the rest. Each row shows the name, branch detail,
-an unread-notification bell, and run/agent status.
+an unread-notification bell, and run/agent status. With `foldInactiveWorktrees`
+on, the rest splits again: worktrees with an open tab stay in place, and the
+others fold into a collapsed **Inactive (N)** row at the bottom (see
+[Folding inactive worktrees](#folding-inactive-worktrees)).
 
 ## Repository kinds
 
@@ -140,6 +143,28 @@ active, Prowl also refreshes every 30 seconds as a fallback.
   expanding a git repo moves the count onto the individual worktree rows
   (hidden at zero). Workspaces and plain folders always show the count on the
   header.
+
+
+## Folding inactive worktrees
+
+A repository that other tools also drive can accumulate worktrees you never open
+in Prowl. Turn on **Settings → Notifications → Fold worktrees with no open tab**
+(`foldInactiveWorktrees`, default off) to gather them into one row.
+
+- **Inactive** means the worktree has no open terminal tab in Prowl. Agent
+  detection plays no part, so a row does not move when an agent starts or exits.
+- Each repository shows a collapsed **Inactive (N)** row after its other
+  worktrees. Click it to expand or fold the group; the state is remembered per
+  repository. Folded rows keep their context menu, badges, and archive and delete
+  actions. Opening one (click, command palette, CLI) gives it a tab, and it
+  moves back among the active rows.
+- **Never folded:** the main worktree, pinned worktrees, worktrees being created,
+  and selected worktrees.
+- Folded rows are skipped by `⌘⌃↑` / `⌘⌃↓` and by `⌃1`–`⌃9`, like the rows of a
+  collapsed repository. They count again while the group is expanded. The
+  command palette lists every worktree either way.
+- Dragging stays inside a group. Both groups share the repository's one stored
+  order.
 
 ## Archiving a worktree
 

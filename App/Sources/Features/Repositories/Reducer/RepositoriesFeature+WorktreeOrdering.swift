@@ -186,6 +186,10 @@ extension RepositoriesFeature {
     case .setMoveNotifiedWorktreeToTop(let isEnabled):
       state.moveNotifiedWorktreeToTop = isEnabled
       return .none
+
+    case .setFoldInactiveWorktrees(let isEnabled):
+      state.foldInactiveWorktrees = isEnabled
+      return .none
     }
   }
 

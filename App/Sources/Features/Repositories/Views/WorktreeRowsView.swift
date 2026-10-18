@@ -17,6 +17,7 @@ struct WorktreeRowsView: View {
   @State private var contextMenuHighlightedWorktreeID: Worktree.ID?
   @State private var targetedPinnedDropDestination: Int?
   @State private var targetedUnpinnedDropDestination: Int?
+  @State private var targetedInactiveDropDestination: Int?
 
   var body: some View {
     if isExpanded {
@@ -40,9 +41,11 @@ struct WorktreeRowsView: View {
       textByID: shortcutHintTextByID,
       isVisible: commandKeyObserver.isPressed
     )
-    let rowIDs = sections.allRows.map(\.id)
+    let isInactiveExpanded = state.isInactiveWorktreesExpanded(in: repository.id)
+    let rowIDs = sections.navigableRows(isInactiveExpanded: isInactiveExpanded).map(\.id)
     return rowsGroup(
       sections: sections,
+      isInactiveExpanded: isInactiveExpanded,
       isRepositoryRemoving: isRepositoryRemoving,
       shortcutHints: shortcutHints
     )
@@ -55,6 +58,7 @@ struct WorktreeRowsView: View {
   @ViewBuilder
   private func rowsGroup(
     sections: WorktreeRowSections,
+    isInactiveExpanded: Bool,
     isRepositoryRemoving: Bool,
     shortcutHints: WorktreeShortcutHints
   ) -> some View {
@@ -88,6 +92,48 @@ struct WorktreeRowsView: View {
       isRepositoryRemoving: isRepositoryRemoving,
       shortcutHints: shortcutHints
     )
+    if !sections.inactive.isEmpty {
+      inactiveGroupHeader(count: sections.inactive.count, isExpanded: isInactiveExpanded)
+      if isInactiveExpanded {
+        movableRowsGroup(
+          rows: sections.inactive,
+          section: .inactive,
+          targetedDestination: $targetedInactiveDropDestination,
+          isRepositoryRemoving: isRepositoryRemoving,
+          shortcutHints: shortcutHints
+        )
+      }
+    }
+  }
+
+  private func inactiveGroupHeader(count: Int, isExpanded: Bool) -> some View {
+    let help =
+      isExpanded
+      ? String(localized: "Hide worktrees with no open tab")
+      : String(localized: "Show worktrees with no open tab")
+    return Button {
+      _ = withAnimation(.easeOut(duration: 0.2)) {
+        store.send(.toggleInactiveWorktreesExpanded(repository.id))
+      }
+    } label: {
+      HStack(spacing: 6) {
+        Image(systemName: "chevron.right")
+          .font(.caption2.weight(.semibold))
+          .rotationEffect(.degrees(isExpanded ? 90 : 0))
+          .accessibilityHidden(true)
+        Text("Inactive (\(count))")
+          .font(.caption)
+        Spacer(minLength: 0)
+      }
+      .foregroundStyle(.secondary)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .help(help)
+    .padding(.leading, 14)
+    .padding(.trailing, 8)
+    .padding(.vertical, 4)
+    .accessibilityValue(isExpanded ? Text("Expanded") : Text("Collapsed"))
   }
 
   @ViewBuilder
@@ -328,6 +374,7 @@ struct WorktreeRowsView: View {
     draggingWorktreeIDs = []
     targetedPinnedDropDestination = nil
     targetedUnpinnedDropDestination = nil
+    targetedInactiveDropDestination = nil
     store.send(.worktreeOrdering(.setSidebarDragActive(false)))
   }
 
@@ -339,8 +386,21 @@ struct WorktreeRowsView: View {
     switch section {
     case .pinned:
       store.send(.worktreeOrdering(.pinnedWorktreesMoved(repositoryID: repository.id, offsets, destination)))
-    case .unpinned:
-      store.send(.worktreeOrdering(.unpinnedWorktreesMoved(repositoryID: repository.id, offsets, destination)))
+    case .unpinned, .inactive:
+      // The sections split one stored order, so the move maps back to it.
+      guard
+        let move = store.state.fullUnpinnedOrderMove(
+          in: repository,
+          section: section,
+          offsets: offsets,
+          destination: destination
+        )
+      else { return }
+      store.send(
+        .worktreeOrdering(
+          .unpinnedWorktreesMoved(repositoryID: repository.id, move.offsets, move.destination)
+        )
+      )
     }
   }
 
