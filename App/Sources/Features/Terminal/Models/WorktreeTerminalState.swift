@@ -243,6 +243,17 @@ final class WorktreeTerminalState {
   @ObservationIgnored var pendingCommandFinishedBySurface: [UUID: PendingCommandFinished] = [:]
   /// Unmapped `app` values already reported once per surface.
   @ObservationIgnored var programStatusUnmappedAppsLoggedBySurface: [UUID: Set<String>] = [:]
+  /// One tracker per pane whose foreground is an `ssh` (docs-ai 082, L0).
+  @ObservationIgnored var remotePaneTrackers: [UUID: RemotePaneTracker] = [:]
+  /// The remote OSC fence per surface and `ssh` generation (a pane can hold several
+  /// suspended `ssh` clients), kept as long as the surface's record store so an undone close
+  /// restores it with the records it fences.
+  @ObservationIgnored var remoteFenceHistoryBySurface: [UUID: [LocalProcessGeneration: RemoteFenceHistory]] = [:]
+  @ObservationIgnored var remoteSnapshotSourceForTesting: RemoteSnapshotSource?
+  @ObservationIgnored var remoteAgentDetectionEnabledForTesting: Bool?
+  var remoteAgentDetectionEnabled: Bool {
+    remoteAgentDetectionEnabledForTesting ?? RemoteAgentDetection.isEnabled
+  }
   /// Test seams: the process probe, the OSC support table, and the diagnostics sink.
   @ObservationIgnored var agentProcessProbeForTesting: AgentProcessProbeOverride?
   @ObservationIgnored var programStatusSupportForTesting: ((DetectedAgent) -> ProgramStatusSupport)?
