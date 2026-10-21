@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 
 @testable import Prowl
@@ -266,6 +267,74 @@ struct CodexDaemonThreadMapperTests {
     try Data([start, submit, reset, submitB, ""].joined(separator: "\n").utf8).write(to: logURL)
     let selected = await mapper.bindingLookup(surfaceID: Self.paneA, daemonPID: 1, tuiStartedAt: tuiStart)
     #expect(selected.binding?.rootID == "main")
+  }
+
+  @Test func panesPollingWithinTheReuseIntervalShareOneDaemonScan() async throws {
+    let directory = FileManager.default.temporaryDirectory.appending(path: "codex-scan-\(UUID().uuidString)")
+    let logs = directory.appending(path: "logs")
+    try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    func header(_ id: String) -> String {
+      #"{"type":"session_meta","payload":{"id":""# + id + #"","source":"vscode"}}"#
+    }
+    func user(_ id: String) -> String {
+      #"{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","client_id":""# + id
+        + #""}}}"#
+    }
+    func submit(_ id: String, _ second: Int) -> String {
+      #"{"ts":"2026-09-28T14:25:0\#(second).000Z","kind":"op","payload":{"UserTurn":{"client_user_message_id":""#
+        + id + #""}}}"#
+    }
+    let start = #"{"ts":"2026-09-28T14:25:00.000Z","kind":"session_start"}"#
+    let first = directory.appending(path: "rollout-t1.jsonl")
+    let second = directory.appending(path: "rollout-t2.jsonl")
+    try Data([header("t1"), user("a1"), ""].joined(separator: "\n").utf8).write(to: first)
+    try Data([header("t2"), user("b1"), ""].joined(separator: "\n").utf8).write(to: second)
+    let logA = CodexTUISessionLog.url(for: Self.paneA, in: logs)
+    try Data([start, submit("a1", 1), ""].joined(separator: "\n").utf8).write(to: logA)
+    try Data([start, submit("b1", 1), ""].joined(separator: "\n").utf8).write(
+      to: CodexTUISessionLog.url(for: Self.paneB, in: logs))
+    let open = [first, second].map { $0.path(percentEncoded: false) }
+    let scans = Mutex(0)
+    let clock = Mutex<TimeInterval>(0)
+    let mapper = CodexDaemonThreadMapper(
+      sessionLogDirectory: logs,
+      openFilePaths: { _ in
+        scans.withLock { $0 += 1 }
+        return open
+      },
+      scanReuseInterval: 0.25,
+      uptime: { clock.withLock { $0 } })
+    let tuiStart = Date(timeIntervalSince1970: 1_790_605_490)
+
+    #expect(await mapper.binding(surfaceID: Self.paneA, daemonPID: 1, tuiStartedAt: tuiStart)?.rootID == "t1")
+    #expect(await mapper.binding(surfaceID: Self.paneB, daemonPID: 1, tuiStartedAt: tuiStart)?.rootID == "t2")
+    #expect(await mapper.pane(threadID: "t2", daemonPID: 1)?.surfaceID == Self.paneB)
+    #expect(scans.withLock { $0 } == 1)
+
+    // Pane A moves to t2. Within the interval the shared scan has not seen the new message yet,
+    // so the binding stays on t1, as it would for a turn the daemon has not written.
+    let handle = try FileHandle(forWritingTo: second)
+    try handle.seekToEnd()
+    try handle.write(contentsOf: Data((user("a2") + "\n").utf8))
+    try handle.close()
+    try Data([start, submit("a1", 1), submit("a2", 2), ""].joined(separator: "\n").utf8).write(to: logA)
+    clock.withLock { $0 = 0.2 }
+    #expect(await mapper.binding(surfaceID: Self.paneA, daemonPID: 1, tuiStartedAt: tuiStart)?.rootID == "t1")
+    #expect(scans.withLock { $0 } == 1)
+
+    clock.withLock { $0 = 0.3 }
+    #expect(await mapper.binding(surfaceID: Self.paneA, daemonPID: 1, tuiStartedAt: tuiStart)?.rootID == "t2")
+    #expect(await mapper.binding(surfaceID: Self.paneB, daemonPID: 1, tuiStartedAt: tuiStart)?.rootID == "t2")
+    #expect(scans.withLock { $0 } == 2)
+
+    // A different daemon never reuses another daemon's scan, and does not evict it: panes on
+    // two daemons polled in turn each keep their own daemon's scan for the interval.
+    _ = await mapper.binding(surfaceID: Self.paneA, daemonPID: 2, tuiStartedAt: tuiStart)
+    #expect(scans.withLock { $0 } == 3)
+    #expect(await mapper.binding(surfaceID: Self.paneA, daemonPID: 1, tuiStartedAt: tuiStart)?.rootID == "t2")
+    _ = await mapper.binding(surfaceID: Self.paneB, daemonPID: 2, tuiStartedAt: tuiStart)
+    #expect(scans.withLock { $0 } == 3)
   }
 
   @Test func preparingTheLogDirectoryRemovesOnlyStaleLogs() throws {
