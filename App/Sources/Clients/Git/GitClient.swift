@@ -76,7 +76,8 @@ struct GitClient {
           detail: detail,
           workingDirectory: worktreeURL,
           repositoryRootURL: repositoryRootURL,
-          createdAt: createdAt
+          createdAt: createdAt,
+          isDetached: entry.branch.isEmpty
         ),
         createdAt: sortDate,
         index: index

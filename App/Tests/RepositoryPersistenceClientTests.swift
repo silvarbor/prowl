@@ -167,6 +167,31 @@ struct RepositoryPersistenceClientTests {
     #expect(restored == [repository])
   }
 
+  @Test func repositorySnapshotPayloadKeepsDetachedWorktrees() {
+    let repoRoot = "/tmp/repo"
+    let worktree = Worktree(
+      id: "\(repoRoot)/review-3",
+      name: "review-3",
+      detail: "review-3",
+      workingDirectory: URL(fileURLWithPath: "\(repoRoot)/review-3"),
+      repositoryRootURL: URL(fileURLWithPath: repoRoot),
+      isDetached: true
+    )
+    let repository = Repository(
+      id: repoRoot,
+      rootURL: URL(fileURLWithPath: repoRoot),
+      name: "repo",
+      worktrees: IdentifiedArray(uniqueElements: [worktree])
+    )
+
+    let payload = RepositorySnapshotCachePayload(repositories: [repository])
+    let restored = payload.restoreRepositories { path in
+      [repoRoot, "\(repoRoot)/review-3"].contains(path)
+    }
+
+    #expect(restored?.first?.worktrees.map(\.isDetached) == [true])
+  }
+
   @Test func repositorySnapshotPayloadDeduplicatesRestoredWorktreeIDs() throws {
     let payloadData = Data(
       """
@@ -203,6 +228,7 @@ struct RepositoryPersistenceClientTests {
     }
 
     #expect(restored?.first?.worktrees.map(\.name) == ["feature"])
+    #expect(restored?.first?.worktrees.map(\.isDetached) == [false])
   }
 
   @Test func repositorySnapshotPayloadRejectsMissingWorktreePath() {

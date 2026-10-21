@@ -7,6 +7,8 @@ nonisolated struct Worktree: Identifiable, Hashable, Sendable {
   let workingDirectory: URL
   let repositoryRootURL: URL
   let createdAt: Date?
+  /// HEAD is detached, so `name` is the directory name rather than a branch.
+  let isDetached: Bool
   let isMain: Bool
 
   nonisolated init(
@@ -15,7 +17,8 @@ nonisolated struct Worktree: Identifiable, Hashable, Sendable {
     detail: String,
     workingDirectory: URL,
     repositoryRootURL: URL,
-    createdAt: Date? = nil
+    createdAt: Date? = nil,
+    isDetached: Bool = false
   ) {
     self.id = id
     self.name = name
@@ -23,6 +26,7 @@ nonisolated struct Worktree: Identifiable, Hashable, Sendable {
     self.workingDirectory = workingDirectory
     self.repositoryRootURL = repositoryRootURL
     self.createdAt = createdAt
+    self.isDetached = isDetached
     // Pre-compute the main-worktree flag at construction time so that hot SwiftUI
     // paths never call the expensive `URL.standardizedFileURL` getter during view
     // updates. The fast equality check covers the common case where callers

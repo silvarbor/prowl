@@ -4803,6 +4803,21 @@ struct RepositoriesFeatureTests {
         == createdAt)
   }
 
+  @Test func worktreeBranchNameLoadedMarksADetachedHead() async {
+    let worktree = makeWorktree(id: "/tmp/wt", name: "eagle")
+    let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(.worktreeBranchNameLoaded(worktreeID: worktree.id, name: "HEAD"))
+    #expect(store.state.repositories[id: repository.id]?.worktrees[id: worktree.id]?.isDetached == true)
+
+    await store.send(.worktreeBranchNameLoaded(worktreeID: worktree.id, name: "eagle"))
+    #expect(store.state.repositories[id: repository.id]?.worktrees[id: worktree.id]?.isDetached == false)
+  }
+
   @Test func orderedWorktreeRowsAreGlobal() {
     let repoA = makeRepository(
       id: "/tmp/repo-a",

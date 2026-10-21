@@ -323,12 +323,14 @@ extension RepositorySnapshotCachePayload {
     let detail: String
     let workingDirectoryPath: String
     let createdAt: Date?
+    let isDetached: Bool?
 
     init(worktree: Worktree) {
       name = worktree.name
       detail = worktree.detail
       workingDirectoryPath = worktree.workingDirectory.path(percentEncoded: false)
       createdAt = worktree.createdAt
+      isDetached = worktree.isDetached
     }
 
     func restore(
@@ -346,7 +348,8 @@ extension RepositorySnapshotCachePayload {
         detail: detail,
         workingDirectory: worktreeURL,
         repositoryRootURL: repositoryRootURL,
-        createdAt: createdAt
+        createdAt: createdAt,
+        isDetached: isDetached ?? false
       )
     }
   }

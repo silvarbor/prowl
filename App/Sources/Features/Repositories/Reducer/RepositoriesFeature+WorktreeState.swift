@@ -238,7 +238,9 @@ func updateWorktreeName(
       detail: worktree.detail,
       workingDirectory: worktree.workingDirectory,
       repositoryRootURL: worktree.repositoryRootURL,
-      createdAt: worktree.createdAt
+      createdAt: worktree.createdAt,
+      // `branchName(for:)` reports a detached HEAD as "HEAD", a name Git refuses for a branch.
+      isDetached: name == "HEAD"
     )
     repository = Repository(
       id: repository.id,
