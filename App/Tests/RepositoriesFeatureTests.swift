@@ -4818,6 +4818,26 @@ struct RepositoriesFeatureTests {
     #expect(store.state.repositories[id: repository.id]?.worktrees[id: worktree.id]?.isDetached == false)
   }
 
+  @Test func worktreeBranchNameLoadedAttachesADetachedWorktreeOfTheSameName() async {
+    // A detached worktree is named after its directory; here it switches to the branch of that name.
+    let worktree = Worktree(
+      id: "/tmp/wt",
+      name: "wt",
+      detail: "detail",
+      workingDirectory: URL(fileURLWithPath: "/tmp/wt"),
+      repositoryRootURL: URL(fileURLWithPath: "/tmp/repo"),
+      isDetached: true
+    )
+    let repository = makeRepository(id: "/tmp/repo", worktrees: [worktree])
+    let store = TestStore(initialState: makeState(repositories: [repository])) {
+      RepositoriesFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(.worktreeBranchNameLoaded(worktreeID: worktree.id, name: "wt"))
+    #expect(store.state.repositories[id: repository.id]?.worktrees[id: worktree.id]?.isDetached == false)
+  }
+
   @Test func orderedWorktreeRowsAreGlobal() {
     let repoA = makeRepository(
       id: "/tmp/repo-a",

@@ -196,7 +196,7 @@ struct RepositoryPersistenceClientTests {
     let payloadData = Data(
       """
       {
-        "version": 2,
+        "version": 3,
         "repositories": [
           {
             "rootPath": "/tmp/repo",
@@ -207,13 +207,15 @@ struct RepositoryPersistenceClientTests {
                 "name": "feature",
                 "detail": ".worktrees/feature",
                 "workingDirectoryPath": "/tmp/repo/.worktrees/feature",
-                "createdAt": null
+                "createdAt": null,
+                "isDetached": false
               },
               {
                 "name": "duplicate",
                 "detail": ".worktrees/feature",
                 "workingDirectoryPath": "/tmp/repo/.worktrees/./feature",
-                "createdAt": null
+                "createdAt": null,
+                "isDetached": false
               }
             ]
           }
@@ -229,6 +231,34 @@ struct RepositoryPersistenceClientTests {
 
     #expect(restored?.first?.worktrees.map(\.name) == ["feature"])
     #expect(restored?.first?.worktrees.map(\.isDetached) == [false])
+  }
+
+  @Test func repositorySnapshotPayloadRejectsSnapshotsWithoutDetachedState() throws {
+    let payloadData = Data(
+      """
+      {
+        "version": 2,
+        "repositories": [
+          {
+            "rootPath": "/tmp/repo",
+            "name": "repo",
+            "kind": "git",
+            "worktrees": [
+              {
+                "name": "review-3",
+                "detail": "review-3",
+                "workingDirectoryPath": "/tmp/repo/review-3",
+                "createdAt": null
+              }
+            ]
+          }
+        ]
+      }
+      """.utf8
+    )
+    let payload = try JSONDecoder().decode(RepositorySnapshotCachePayload.self, from: payloadData)
+
+    #expect(payload.restoreRepositories { _ in true } == nil)
   }
 
   @Test func repositorySnapshotPayloadRejectsMissingWorktreePath() {
