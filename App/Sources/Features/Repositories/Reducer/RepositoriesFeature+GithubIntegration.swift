@@ -1094,6 +1094,10 @@ extension RepositoriesFeature {
     _ pullRequest: GithubPullRequest?,
     for worktree: Worktree
   ) -> GithubPullRequest? {
+    // A refresh sent before the worktree detached answers for a branch it no longer has.
+    if worktree.isDetached {
+      return nil
+    }
     if worktree.isMain, pullRequest?.state.uppercased() == "MERGED" {
       return nil
     }
