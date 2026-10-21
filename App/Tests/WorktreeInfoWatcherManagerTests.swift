@@ -18,7 +18,7 @@ struct WorktreeInfoWatcherManagerTests {
     manager.handleCommand(.setWorktrees([tempWorktree.worktree]))
 
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: tempWorktree.worktree.id) == 1)
+    #expect(collector.filesChangedCount(worktreeID: tempWorktree.worktree.id) == 1)
 
     manager.handleCommand(.stop)
     await task.value
@@ -42,23 +42,23 @@ struct WorktreeInfoWatcherManagerTests {
     manager.handleCommand(.setPullRequestTrackingEnabled(false))
     manager.handleCommand(.setWorktrees([firstWorktree]))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: firstWorktree.id) == 1)
+    #expect(collector.filesChangedCount(worktreeID: firstWorktree.id) == 1)
 
     manager.handleCommand(.setWorktrees([firstWorktree, secondWorktree]))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: secondWorktree.id) == 0)
+    #expect(collector.filesChangedCount(worktreeID: secondWorktree.id) == 0)
 
     await clock.advance(by: .milliseconds(79))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: secondWorktree.id) == 0)
+    #expect(collector.filesChangedCount(worktreeID: secondWorktree.id) == 0)
 
     await clock.advance(by: .milliseconds(1))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: secondWorktree.id) == 1)
+    #expect(collector.filesChangedCount(worktreeID: secondWorktree.id) == 1)
 
     await clock.advance(by: .milliseconds(80))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: secondWorktree.id) == 1)
+    #expect(collector.filesChangedCount(worktreeID: secondWorktree.id) == 1)
 
     manager.handleCommand(.stop)
     await task.value
@@ -84,7 +84,7 @@ struct WorktreeInfoWatcherManagerTests {
     manager.handleCommand(.setWorktrees([tempWorktree.worktree, duplicate]))
 
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: tempWorktree.worktree.id) == 1)
+    #expect(collector.filesChangedCount(worktreeID: tempWorktree.worktree.id) == 1)
 
     manager.handleCommand(.stop)
     await task.value
@@ -118,35 +118,35 @@ struct WorktreeInfoWatcherManagerTests {
     manager.handleCommand(.setPullRequestTrackingEnabled(false))
     manager.handleCommand(.setWorktrees([firstWorktree]))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: firstWorktree.id) == 1)
+    #expect(collector.filesChangedCount(worktreeID: firstWorktree.id) == 1)
 
     manager.handleCommand(.setWorktrees([firstWorktree, secondWorktree, thirdWorktree]))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: secondWorktree.id) == 0)
-    #expect(await collector.filesChangedCount(worktreeID: thirdWorktree.id) == 0)
+    #expect(collector.filesChangedCount(worktreeID: secondWorktree.id) == 0)
+    #expect(collector.filesChangedCount(worktreeID: thirdWorktree.id) == 0)
 
     await clock.advance(by: .milliseconds(89))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: secondWorktree.id) == 0)
-    #expect(await collector.filesChangedCount(worktreeID: thirdWorktree.id) == 0)
+    #expect(collector.filesChangedCount(worktreeID: secondWorktree.id) == 0)
+    #expect(collector.filesChangedCount(worktreeID: thirdWorktree.id) == 0)
 
     await clock.advance(by: .milliseconds(1))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: secondWorktree.id) == 1)
-    #expect(await collector.filesChangedCount(worktreeID: thirdWorktree.id) == 0)
+    #expect(collector.filesChangedCount(worktreeID: secondWorktree.id) == 1)
+    #expect(collector.filesChangedCount(worktreeID: thirdWorktree.id) == 0)
 
     await clock.advance(by: .milliseconds(29))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: thirdWorktree.id) == 0)
+    #expect(collector.filesChangedCount(worktreeID: thirdWorktree.id) == 0)
 
     await clock.advance(by: .milliseconds(1))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: thirdWorktree.id) == 1)
+    #expect(collector.filesChangedCount(worktreeID: thirdWorktree.id) == 1)
 
     await clock.advance(by: .milliseconds(120))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: secondWorktree.id) == 1)
-    #expect(await collector.filesChangedCount(worktreeID: thirdWorktree.id) == 1)
+    #expect(collector.filesChangedCount(worktreeID: secondWorktree.id) == 1)
+    #expect(collector.filesChangedCount(worktreeID: thirdWorktree.id) == 1)
 
     manager.handleCommand(.stop)
     await task.value
@@ -174,8 +174,8 @@ struct WorktreeInfoWatcherManagerTests {
     manager.handleCommand(.setPullRequestTrackingEnabled(false))
     manager.handleCommand(.setWorktrees([activeWorktree, inactiveWorktree]))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: activeWorktree.id) == 1)
-    #expect(await collector.filesChangedCount(worktreeID: inactiveWorktree.id) == 1)
+    #expect(collector.filesChangedCount(worktreeID: activeWorktree.id) == 1)
+    #expect(collector.filesChangedCount(worktreeID: inactiveWorktree.id) == 1)
     #expect(monitorStore.monitor(for: activeWorktree.id) == nil)
     #expect(monitorStore.monitor(for: inactiveWorktree.id) == nil)
 
@@ -186,12 +186,12 @@ struct WorktreeInfoWatcherManagerTests {
     monitor.emit()
     await clock.advance(by: .milliseconds(79))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: activeWorktree.id) == 1)
+    #expect(collector.filesChangedCount(worktreeID: activeWorktree.id) == 1)
 
     await clock.advance(by: .milliseconds(1))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: activeWorktree.id) == 2)
-    #expect(await collector.filesChangedCount(worktreeID: inactiveWorktree.id) == 1)
+    #expect(collector.filesChangedCount(worktreeID: activeWorktree.id) == 2)
+    #expect(collector.filesChangedCount(worktreeID: inactiveWorktree.id) == 1)
 
     manager.handleCommand(.stop)
     await task.value
@@ -218,15 +218,15 @@ struct WorktreeInfoWatcherManagerTests {
     manager.handleCommand(.setWorktrees([worktree]))
     manager.handleCommand(.setOpenedWorktreeIDs([worktree.id]))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: worktree.id) == 1)
+    #expect(collector.filesChangedCount(worktreeID: worktree.id) == 1)
 
     await clock.advance(by: .milliseconds(79))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: worktree.id) == 1)
+    #expect(collector.filesChangedCount(worktreeID: worktree.id) == 1)
 
     await clock.advance(by: .milliseconds(1))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: worktree.id) == 2)
+    #expect(collector.filesChangedCount(worktreeID: worktree.id) == 2)
 
     manager.handleCommand(.stop)
     await task.value
@@ -251,17 +251,17 @@ struct WorktreeInfoWatcherManagerTests {
     manager.handleCommand(.setPullRequestTrackingEnabled(false))
     manager.handleCommand(.setWorktrees(tempRepository.worktrees))
     await drainAsyncEvents(120)
-    #expect(await collector.repositoryWorktreesChangedCount(repositoryRootURL: tempRepository.tempRoot) == 0)
+    #expect(collector.repositoryWorktreesChangedCount(repositoryRootURL: tempRepository.tempRoot) == 0)
 
     let monitor = try #require(registryMonitorStore.monitor(for: tempRepository.tempRoot))
     monitor.emit()
     await clock.advance(by: .milliseconds(79))
     await drainAsyncEvents(120)
-    #expect(await collector.repositoryWorktreesChangedCount(repositoryRootURL: tempRepository.tempRoot) == 0)
+    #expect(collector.repositoryWorktreesChangedCount(repositoryRootURL: tempRepository.tempRoot) == 0)
 
     await clock.advance(by: .milliseconds(1))
     await drainAsyncEvents(120)
-    #expect(await collector.repositoryWorktreesChangedCount(repositoryRootURL: tempRepository.tempRoot) == 1)
+    #expect(collector.repositoryWorktreesChangedCount(repositoryRootURL: tempRepository.tempRoot) == 1)
 
     manager.handleCommand(.stop)
     await task.value
@@ -285,17 +285,17 @@ struct WorktreeInfoWatcherManagerTests {
 
     manager.handleCommand(.setWorktrees(tempRepository.worktrees))
     await drainAsyncEvents(120)
-    #expect(await collector.repositoryRemoteConfigurationChangedCount(repositoryRootURL: tempRepository.tempRoot) == 0)
+    #expect(collector.repositoryRemoteConfigurationChangedCount(repositoryRootURL: tempRepository.tempRoot) == 0)
 
     let monitor = try #require(remoteConfigMonitorStore.monitor(for: tempRepository.tempRoot))
     monitor.emit()
     await clock.advance(by: .milliseconds(79))
     await drainAsyncEvents(120)
-    #expect(await collector.repositoryRemoteConfigurationChangedCount(repositoryRootURL: tempRepository.tempRoot) == 0)
+    #expect(collector.repositoryRemoteConfigurationChangedCount(repositoryRootURL: tempRepository.tempRoot) == 0)
 
     await clock.advance(by: .milliseconds(1))
     await drainAsyncEvents(120)
-    #expect(await collector.repositoryRemoteConfigurationChangedCount(repositoryRootURL: tempRepository.tempRoot) == 1)
+    #expect(collector.repositoryRemoteConfigurationChangedCount(repositoryRootURL: tempRepository.tempRoot) == 1)
 
     manager.handleCommand(.stop)
     await task.value
@@ -357,26 +357,26 @@ struct WorktreeInfoWatcherManagerTests {
 
     manager.handleCommand(.setWorktrees([firstWorktree, secondWorktree]))
     await drainAsyncEvents(120)
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: firstRepository.tempRoot) == 1)
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: secondRepository.tempRoot) == 1)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: firstRepository.tempRoot) == 1)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: secondRepository.tempRoot) == 1)
 
     await clock.advance(by: .milliseconds(89))
     await drainAsyncEvents(120)
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: firstRepository.tempRoot) == 1)
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: secondRepository.tempRoot) == 1)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: firstRepository.tempRoot) == 1)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: secondRepository.tempRoot) == 1)
 
     await clock.advance(by: .milliseconds(1))
     await drainAsyncEvents(120)
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: firstRepository.tempRoot) == 2)
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: secondRepository.tempRoot) == 1)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: firstRepository.tempRoot) == 2)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: secondRepository.tempRoot) == 1)
 
     await clock.advance(by: .milliseconds(29))
     await drainAsyncEvents(120)
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: secondRepository.tempRoot) == 1)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: secondRepository.tempRoot) == 1)
 
     await clock.advance(by: .milliseconds(1))
     await drainAsyncEvents(120)
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: secondRepository.tempRoot) == 2)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: secondRepository.tempRoot) == 2)
 
     manager.handleCommand(.stop)
     await task.value
@@ -398,19 +398,19 @@ struct WorktreeInfoWatcherManagerTests {
 
     manager.handleCommand(.setWorktrees([firstWorktree] + otherRepository.worktrees))
     await drainAsyncEvents()
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: changedRepository.tempRoot) == 1)
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: otherRepository.tempRoot) == 1)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: changedRepository.tempRoot) == 1)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: otherRepository.tempRoot) == 1)
 
     manager.handleCommand(.setWorktrees(changedRepository.worktrees + otherRepository.worktrees))
     await drainAsyncEvents()
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: changedRepository.tempRoot) == 2)
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: otherRepository.tempRoot) == 1)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: changedRepository.tempRoot) == 2)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: otherRepository.tempRoot) == 1)
 
     // An unchanged worktree set refreshes nothing.
     manager.handleCommand(.setWorktrees(changedRepository.worktrees + otherRepository.worktrees))
     await drainAsyncEvents()
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: changedRepository.tempRoot) == 2)
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: otherRepository.tempRoot) == 1)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: changedRepository.tempRoot) == 2)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: otherRepository.tempRoot) == 1)
 
     manager.handleCommand(.stop)
     await task.value
@@ -431,16 +431,16 @@ struct WorktreeInfoWatcherManagerTests {
 
     manager.handleCommand(.setWorktrees(tempRepository.worktrees))
     await drainAsyncEvents(120)
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: tempRepository.tempRoot) == 1)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: tempRepository.tempRoot) == 1)
 
     // Three worktrees at 100 ms each: the sweep runs every 300 ms, not every 80 ms.
     await clock.advance(by: .milliseconds(299))
     await drainAsyncEvents(120)
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: tempRepository.tempRoot) == 1)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: tempRepository.tempRoot) == 1)
 
     await clock.advance(by: .milliseconds(1))
     await drainAsyncEvents(120)
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: tempRepository.tempRoot) == 2)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: tempRepository.tempRoot) == 2)
 
     manager.handleCommand(.stop)
     await task.value
@@ -461,7 +461,7 @@ struct WorktreeInfoWatcherManagerTests {
 
     manager.handleCommand(.setWorktrees(steadyRepository.worktrees))
     await drainAsyncEvents(120)
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: steadyRepository.tempRoot) == 1)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: steadyRepository.tempRoot) == 1)
 
     // A second worktree elsewhere raises the sweep interval from 100 ms to 200 ms; the steady
     // repository's refresh that was already due at 100 ms still runs then.
@@ -470,15 +470,15 @@ struct WorktreeInfoWatcherManagerTests {
     await drainAsyncEvents(120)
     await clock.advance(by: .milliseconds(40))
     await drainAsyncEvents(120)
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: steadyRepository.tempRoot) == 2)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: steadyRepository.tempRoot) == 2)
 
     // After that refresh, the new interval applies.
     await clock.advance(by: .milliseconds(199))
     await drainAsyncEvents(120)
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: steadyRepository.tempRoot) == 2)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: steadyRepository.tempRoot) == 2)
     await clock.advance(by: .milliseconds(1))
     await drainAsyncEvents(120)
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: steadyRepository.tempRoot) == 3)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: steadyRepository.tempRoot) == 3)
 
     manager.handleCommand(.stop)
     await task.value
@@ -501,7 +501,7 @@ struct WorktreeInfoWatcherManagerTests {
     // Three worktrees: the sweep runs every 300 ms.
     manager.handleCommand(.setWorktrees(steadyRepository.worktrees + shrinkingRepository.worktrees))
     await drainAsyncEvents(120)
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: steadyRepository.tempRoot) == 1)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: steadyRepository.tempRoot) == 1)
 
     // Down to one worktree at 40 ms: the steady repository's refresh moves from 300 ms to 100 ms.
     await clock.advance(by: .milliseconds(40))
@@ -509,10 +509,10 @@ struct WorktreeInfoWatcherManagerTests {
     await drainAsyncEvents(120)
     await clock.advance(by: .milliseconds(59))
     await drainAsyncEvents(120)
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: steadyRepository.tempRoot) == 1)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: steadyRepository.tempRoot) == 1)
     await clock.advance(by: .milliseconds(1))
     await drainAsyncEvents(120)
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: steadyRepository.tempRoot) == 2)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: steadyRepository.tempRoot) == 2)
 
     manager.handleCommand(.stop)
     await task.value
@@ -533,7 +533,7 @@ struct WorktreeInfoWatcherManagerTests {
 
     manager.handleCommand(.setWorktrees(tempRepository.worktrees))
     await drainAsyncEvents()
-    let baselineCount = await collector.pullRequestRefreshCount(repositoryRootURL: tempRepository.tempRoot)
+    let baselineCount = collector.pullRequestRefreshCount(repositoryRootURL: tempRepository.tempRoot)
     #expect(baselineCount == 1)
     let firstWorktree = try #require(tempRepository.worktrees.first)
     let secondWorktree = try #require(tempRepository.worktrees.dropFirst().first)
@@ -544,17 +544,17 @@ struct WorktreeInfoWatcherManagerTests {
     // Selecting first worktree triggers immediate refresh.
     manager.handleCommand(.setSelectedWorktreeID(firstWorktree.id))
     await drainAsyncEvents()
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: tempRepository.tempRoot) == baselineCount + 1)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: tempRepository.tempRoot) == baselineCount + 1)
 
     // Switching to a different worktree cancels cooldown and triggers immediate refresh.
     manager.handleCommand(.setSelectedWorktreeID(secondWorktree.id))
     await drainAsyncEvents()
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: tempRepository.tempRoot) == baselineCount + 2)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: tempRepository.tempRoot) == baselineCount + 2)
 
     // Switching back to first worktree also triggers immediate refresh (different worktree).
     manager.handleCommand(.setSelectedWorktreeID(firstWorktree.id))
     await drainAsyncEvents()
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: tempRepository.tempRoot) == baselineCount + 3)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: tempRepository.tempRoot) == baselineCount + 3)
 
     manager.handleCommand(.stop)
     await task.value
@@ -574,7 +574,7 @@ struct WorktreeInfoWatcherManagerTests {
 
     manager.handleCommand(.setWorktrees(tempRepository.worktrees))
     await drainAsyncEvents()
-    let baselineCount = await collector.pullRequestRefreshCount(repositoryRootURL: tempRepository.tempRoot)
+    let baselineCount = collector.pullRequestRefreshCount(repositoryRootURL: tempRepository.tempRoot)
     #expect(baselineCount == 1)
     let firstWorktree = try #require(tempRepository.worktrees.first)
 
@@ -584,14 +584,14 @@ struct WorktreeInfoWatcherManagerTests {
     // Selecting worktree triggers immediate refresh and starts cooldown.
     manager.handleCommand(.setSelectedWorktreeID(firstWorktree.id))
     await drainAsyncEvents()
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: tempRepository.tempRoot) == baselineCount + 1)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: tempRepository.tempRoot) == baselineCount + 1)
 
     // Deselect then re-select the same worktree within cooldown — should NOT refresh.
     manager.handleCommand(.setSelectedWorktreeID(nil))
     await drainAsyncEvents()
     manager.handleCommand(.setSelectedWorktreeID(firstWorktree.id))
     await drainAsyncEvents()
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: tempRepository.tempRoot) == baselineCount + 1)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: tempRepository.tempRoot) == baselineCount + 1)
 
     // After cooldown expires, re-selecting the same worktree should refresh.
     await clock.advance(by: .milliseconds(500))
@@ -600,7 +600,7 @@ struct WorktreeInfoWatcherManagerTests {
     await drainAsyncEvents()
     manager.handleCommand(.setSelectedWorktreeID(firstWorktree.id))
     await drainAsyncEvents()
-    #expect(await collector.pullRequestRefreshCount(repositoryRootURL: tempRepository.tempRoot) == baselineCount + 2)
+    #expect(collector.pullRequestRefreshCount(repositoryRootURL: tempRepository.tempRoot) == baselineCount + 2)
 
     manager.handleCommand(.stop)
     await task.value
@@ -650,18 +650,18 @@ struct WorktreeInfoWatcherManagerTests {
     manager.handleCommand(.setWorktrees([worktree]))
     manager.handleCommand(.setOpenedWorktreeIDs([worktree.id]))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: worktree.id) == 1)
+    #expect(collector.filesChangedCount(worktreeID: worktree.id) == 1)
 
     let monitor = try #require(monitorStore.monitor(for: worktree.id))
     monitor.emit()
 
     await clock.advance(by: largeTiming.eventDebounce - .milliseconds(1))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: worktree.id) == 1)
+    #expect(collector.filesChangedCount(worktreeID: worktree.id) == 1)
 
     await clock.advance(by: .milliseconds(1))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: worktree.id) == 2)
+    #expect(collector.filesChangedCount(worktreeID: worktree.id) == 2)
 
     manager.handleCommand(.stop)
     await task.value
@@ -726,27 +726,27 @@ struct WorktreeInfoWatcherManagerTests {
     await drainAsyncEvents()
     await clock.advance(by: .seconds(1))
     await drainAsyncEvents(120)
-    #expect(await collector.plainRepositoryGitEventCount(rootURL: root) == 1)
+    #expect(collector.plainRepositoryGitEventCount(rootURL: root) == 1)
 
     monitor.emit()
     await drainAsyncEvents()
     await clock.advance(by: .seconds(1))
     await drainAsyncEvents(120)
-    #expect(await collector.plainRepositoryGitEventCount(rootURL: root) == 1)
+    #expect(collector.plainRepositoryGitEventCount(rootURL: root) == 1)
 
     try FileManager.default.removeItem(at: dotGitURL)
     monitor.emit()
     await drainAsyncEvents()
     await clock.advance(by: .seconds(1))
     await drainAsyncEvents(120)
-    #expect(await collector.plainRepositoryGitEventCount(rootURL: root) == 1)
+    #expect(collector.plainRepositoryGitEventCount(rootURL: root) == 1)
 
     try FileManager.default.createDirectory(at: dotGitURL, withIntermediateDirectories: true)
     monitor.emit()
     await drainAsyncEvents()
     await clock.advance(by: .seconds(1))
     await drainAsyncEvents(120)
-    #expect(await collector.plainRepositoryGitEventCount(rootURL: root) == 2)
+    #expect(collector.plainRepositoryGitEventCount(rootURL: root) == 2)
 
     manager.handleCommand(.stop)
     await task.value
@@ -774,18 +774,18 @@ struct WorktreeInfoWatcherManagerTests {
     manager.handleCommand(.setWorktrees([worktree]))
     manager.handleCommand(.setOpenedWorktreeIDs([worktree.id]))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: worktree.id) == 1)
+    #expect(collector.filesChangedCount(worktreeID: worktree.id) == 1)
 
     let monitor = try #require(monitorStore.monitor(for: worktree.id))
     monitor.emit()
 
     await clock.advance(by: mediumTiming.eventDebounce - .milliseconds(1))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: worktree.id) == 1)
+    #expect(collector.filesChangedCount(worktreeID: worktree.id) == 1)
 
     await clock.advance(by: .milliseconds(1))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: worktree.id) == 2)
+    #expect(collector.filesChangedCount(worktreeID: worktree.id) == 2)
 
     manager.handleCommand(.stop)
     await task.value
@@ -805,7 +805,7 @@ struct WorktreeInfoWatcherManagerTests {
 
     manager.handleCommand(.setWorktrees(tempRepository.worktrees))
     await drainAsyncEvents()
-    let baselineCount = await collector.pullRequestRefreshCount(repositoryRootURL: tempRepository.tempRoot)
+    let baselineCount = collector.pullRequestRefreshCount(repositoryRootURL: tempRepository.tempRoot)
     #expect(baselineCount == 1)
 
     let firstWorktree = try #require(tempRepository.worktrees.first)
@@ -813,7 +813,7 @@ struct WorktreeInfoWatcherManagerTests {
 
     manager.handleCommand(.setSelectedWorktreeID(firstWorktree.id))
     await drainAsyncEvents()
-    let afterFirstSelectionCount = await collector.pullRequestRefreshCount(
+    let afterFirstSelectionCount = collector.pullRequestRefreshCount(
       repositoryRootURL: tempRepository.tempRoot
     )
     #expect(afterFirstSelectionCount == baselineCount + 1)
@@ -822,7 +822,7 @@ struct WorktreeInfoWatcherManagerTests {
     manager.handleCommand(.setPullRequestTrackingEnabled(true))
     manager.handleCommand(.setSelectedWorktreeID(secondWorktree.id))
     await drainAsyncEvents()
-    let afterReplacementCooldownCount = await collector.pullRequestRefreshCount(
+    let afterReplacementCooldownCount = collector.pullRequestRefreshCount(
       repositoryRootURL: tempRepository.tempRoot
     )
     #expect(afterReplacementCooldownCount == afterFirstSelectionCount + 2)
@@ -831,7 +831,7 @@ struct WorktreeInfoWatcherManagerTests {
     manager.handleCommand(.setSelectedWorktreeID(firstWorktree.id))
     await drainAsyncEvents()
     #expect(
-      await collector.pullRequestRefreshCount(repositoryRootURL: tempRepository.tempRoot)
+      collector.pullRequestRefreshCount(repositoryRootURL: tempRepository.tempRoot)
         == afterReplacementCooldownCount + 1
     )
 
@@ -861,17 +861,17 @@ struct WorktreeInfoWatcherManagerTests {
     // Load only the first worktree initially — second will be deferred when added.
     manager.handleCommand(.setWorktrees([firstWorktree]))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: firstWorktree.id) == 1)
+    #expect(collector.filesChangedCount(worktreeID: firstWorktree.id) == 1)
 
     // Add second worktree — it goes into deferredLineChangeIDs, no filesChanged yet.
     manager.handleCommand(.setWorktrees([firstWorktree, secondWorktree]))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: secondWorktree.id) == 0)
+    #expect(collector.filesChangedCount(worktreeID: secondWorktree.id) == 0)
 
     // Selecting the deferred worktree clears the deferred flag and emits immediately.
     manager.handleCommand(.setSelectedWorktreeID(secondWorktree.id))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: secondWorktree.id) == 1)
+    #expect(collector.filesChangedCount(worktreeID: secondWorktree.id) == 1)
 
     manager.handleCommand(.stop)
     await task.value
@@ -898,11 +898,11 @@ struct WorktreeInfoWatcherManagerTests {
     manager.handleCommand(.setPullRequestTrackingEnabled(false))
     manager.handleCommand(.setWorktrees([firstWorktree]))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: firstWorktree.id) == 1)
+    #expect(collector.filesChangedCount(worktreeID: firstWorktree.id) == 1)
 
     manager.handleCommand(.setWorktrees([firstWorktree, secondWorktree]))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: secondWorktree.id) == 0)
+    #expect(collector.filesChangedCount(worktreeID: secondWorktree.id) == 0)
 
     let monitor = try #require(headMonitorStore.monitor(for: secondWorktree.id))
     monitor.emit(.write)
@@ -910,11 +910,11 @@ struct WorktreeInfoWatcherManagerTests {
 
     await clock.advance(by: .milliseconds(79))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: secondWorktree.id) == 0)
+    #expect(collector.filesChangedCount(worktreeID: secondWorktree.id) == 0)
 
     await clock.advance(by: .milliseconds(1))
     await drainAsyncEvents(120)
-    #expect(await collector.filesChangedCount(worktreeID: secondWorktree.id) == 1)
+    #expect(collector.filesChangedCount(worktreeID: secondWorktree.id) == 1)
 
     manager.handleCommand(.stop)
     await task.value
@@ -923,7 +923,10 @@ struct WorktreeInfoWatcherManagerTests {
 
 }
 
-actor EventCollector {
+// Main-actor isolated, so delivering an event never hops off the main actor and a bounded
+// number of yields is enough for the collecting task to record it.
+@MainActor
+final class EventCollector {
   private var events: [WorktreeInfoWatcherClient.Event] = []
 
   func append(_ event: WorktreeInfoWatcherClient.Event) {
@@ -1040,7 +1043,7 @@ private func startCollecting(
       if Task.isCancelled {
         break
       }
-      await collector.append(event)
+      collector.append(event)
     }
   }
   return (collector, task)

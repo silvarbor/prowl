@@ -22,8 +22,7 @@ Create a new entry only when the work is either:
 
 Do **not** create an entry merely because the work is detailed, takes time, or produces useful
 findings. Skip reviews, code or post-release audits, routine research/investigations and
-debugging, status reports, test runs, pure formatting or dependency bumps, routine upstream
-ports already recorded in the upstream ledger (`docs-ai/017-upstream-sync-process/upstream-ledger.md`), and docs-only changes. A user may explicitly request a record for an otherwise
+debugging, status reports, test runs, pure formatting or dependency bumps, and docs-only changes. A user may explicitly request a record for an otherwise
 non-qualifying task. When in doubt, do not write one.
 
 ## Workflow
@@ -123,12 +122,13 @@ What was done. | ## Refs: PR #x | ## Current state (optional)
   40–120 lines, actions 30–100 — long enough to be useful, short enough to be read.
 - Every repo-relative file path you write must exist (verify with Glob/Grep before
   writing). Facts you can't verify belong under **Open questions**, not in prose.
-- Reference fork PRs as `#123`, upstream PRs as `upstream #123`, files as inline code.
+- Reference fork PRs as `#123`, files as inline code. Older entries cite `upstream #123` for
+  `supabitapp/supacode` PRs.
   Cross-link sibling entries with relative links.
 - `docs-ai/` is the curated home for fork history plus fork-internal product, design, and
   operational docs. It is not a task journal.
   Numbered files are immutable history; **non-numbered** files inside an entry folder
-  (e.g. `001-.../release-runbook.md`, `017-.../upstream-ledger.md`,
+  (e.g. `001-.../release-runbook.md`,
   `013-prowl-cli/contracts/`, `020-observability/runbook.md`) are living documents —
   update them in place when the process/contract they describe changes, and link them
   instead of duplicating their content.

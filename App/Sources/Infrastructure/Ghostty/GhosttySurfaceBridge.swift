@@ -105,8 +105,11 @@ final class GhosttySurfaceBridge {
     surfaceView?.readViewportContentsForCLI()
   }
 
+  /// Test seam: the screen text a test surface (which has no terminal) reports.
+  var activeTextForTesting: String?
+
   func readActiveText() -> String? {
-    surfaceView?.readActiveContentsForCLI()
+    activeTextForTesting ?? surfaceView?.readActiveContentsForCLI()
   }
 
   func childPID() -> pid_t? {

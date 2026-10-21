@@ -31,6 +31,7 @@ struct RepositoriesFeatureWorkspaceEditingTests {
     } withDependencies: {
       $0.uuid = .incrementing
     }
+    store.timeout = .realWorkTestStoreTimeout
 
     let loaded = try #require(ProjectWorkspace.load(from: rootURL))
     await store.send(.workspaceEditing(.promptRequested(repositoryID, removingChildID: nil)))
@@ -69,6 +70,7 @@ struct RepositoriesFeatureWorkspaceEditingTests {
     } withDependencies: {
       $0.uuid = .incrementing
     }
+    store.timeout = .realWorkTestStoreTimeout
     store.exhaustivity = .off
     let apiPath = rootURL.appending(path: "api").standardizedFileURL.path(percentEncoded: false)
 
@@ -158,6 +160,7 @@ struct RepositoriesFeatureWorkspaceEditingTests {
       $0.repositoryPersistence.saveRepositoryEntries = { _ in }
       $0.repositoryPersistence.saveRepositorySnapshot = { _ in }
     }
+    store.timeout = .realWorkTestStoreTimeout
     store.exhaustivity = .off
 
     let request = ProjectWorkspaceUpdateRequest(
@@ -175,7 +178,7 @@ struct RepositoriesFeatureWorkspaceEditingTests {
     }
     // The toast and the reload are merged effects with no ordering guarantee,
     // so only the reload is awaited explicitly (non-exhaustive skips the rest).
-    await store.receive(\.repositoriesLoaded, timeout: .seconds(5))
+    await store.receive(\.repositoriesLoaded)
     await store.finish()
 
     #expect(ProjectWorkspace.load(from: rootURL)?.title == "After")
@@ -222,6 +225,7 @@ struct RepositoriesFeatureWorkspaceEditingTests {
       $0.repositoryPersistence.saveRepositoryEntries = { _ in }
       $0.repositoryPersistence.saveRepositorySnapshot = { _ in }
     }
+    store.timeout = .realWorkTestStoreTimeout
     store.exhaustivity = .off
 
     let ext = try #require(loaded.repositories.first { $0.id == "ext" })
@@ -283,6 +287,7 @@ struct RepositoriesFeatureWorkspaceEditingTests {
       $0.repositoryPersistence.saveRepositoryEntries = { _ in }
       $0.repositoryPersistence.saveRepositorySnapshot = { _ in }
     }
+    store.timeout = .realWorkTestStoreTimeout
     store.exhaustivity = .off
 
     let api = try #require(loaded.repositories.first { $0.id == "api" })

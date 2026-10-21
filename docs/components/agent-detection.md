@@ -100,12 +100,137 @@ stays Working.
 Antigravity currently uses screen state and cooperative delivery, without a
 managed hook channel or transcript reader.
 
+### TraeCode CLI
+
+TraeCode CLI (`traecli`, verified 0.201.7) is a Codex-CLI fork: it reuses Codex's
+session-store shape under `~/.trae/cli/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl`,
+held open for the life of an interactive session, so the open rollout file
+identifies the session exactly. `TRAE_HOME` relocates the whole `~/.trae` tree
+(verified: an isolated run wrote its config and sessions under the relocated
+`cli/sessions`), so a managed Agent Profile binds the account through `TRAE_HOME`.
+
+The detector reads the whole active screen — not a bottom tail — and resolves the live
+region by position: the composer box (a column-0 `❯` prompt row whose wrapped input
+continues on indented rows, the `─` separator that draft run ends on, and the status row
+directly below it) and a live dialog are both searched, and the lower of the two
+decides. The box is delimited by its own rows, never by a width measured against the
+rest of the screen: the pane's text is read non-rectangularly and soft-wrapped lines are
+joined, so a historical *logical* line — the agent's own output leaving a rule behind —
+can be wider than the live border, and sizing that border by the longest rule on screen
+lost the whole box (an idle `❯ Draft` read unknown instead of idle, and a numbered draft
+fell through to the dialog shapes as if it were approval options). The
+transcript quotes both shapes, so a quoted composer above current approval options must
+not hide the dialog, and a quoted dialog above the live composer must not read as
+Blocked. Everything inside the box is the user's draft, so a quoted transcript above it
+— even a verbatim dialog — is not evidence while the box is the active region. The live
+block above the box is read as a single blank-bounded run with no row cap, so a tall
+todo checklist cannot push the running hint out of view: an `esc to interrupt`-style
+hint in that run is **Working**, except traecli's startup MCP boot progress line
+(`Starting MCP servers (n/m): … esc to interrupt`), which reuses that footer but is
+startup work, not a turn. That exclusion is applied to the whole block, not to one row:
+the progress line is logical, so a terminal that wraps it puts the footer on a
+continuation row with none of the header. (Captured on 0.209.1 in a 40-column PTY,
+traecli *clips* that line instead — the server list ends in `…` and the hint is cut
+with it — so the wrapped form is a defensive case rather than one observed today.) With
+no such hint, the composer's own status row — `<model> · Context <n>% left · <cwd> ▧
+Workspace Edit` — is **Idle**, and an unrecognized status row under a live composer is
+also **Idle** rather than unknown, so a running turn's Working never lingers. That
+status row is identical in both states, which leaves the running footer as the only
+mark that separates them, and traecli repaints the live region on its own clock
+(0.209.1 draws as slowly as once a second while a turn streams). A lone **Idle** frame
+over a **Working** pane is therefore held instead of published, and only settles the
+turn once the Idle verdict has kept arriving for
+`AgentStateMachine.confirmedIdleWindow` (2 s, above the ~1 s gap traecli was observed to
+drop its footer for): the frame can be a repaint gap, and reading it flipped the pane
+Working → Idle → Working (and earned a spurious Done badge on an unviewed pane). The
+window is measured in time, not in observations, because a repaint gap yields several
+Idle frames at the poll cadence and repeated reads of one frame — `prowl agents read`
+polls the pane outside the detection cadence — arrive back to back. A Working or
+Blocked frame drops the hold, and an unreadable frame neither confirms nor cancels it.
+Idle → Working, Working → Blocked, and settling from unknown stay immediate, so a
+starting turn and a dialog are never delayed.
+
+traecli clips that footer to the pane width before it reaches the terminal, so a wide
+live-block header arrives with its tail cut off: `✦ <streaming snippet> (42m 53s • ↑
+183K tokens …` keeps neither `esc to interrupt` nor the `/ps` chrome, and the running
+turn then reads as a settled composer (captured live on 0.209.1 at the moment the
+badge flipped). Two guards cover that frame. The detector treats a clipped header as
+the running hint: a column-0 live glyph (the rotating sparkle marks, `✦ ✧ ❖ ◆ ◈ ⋄ …`)
+followed by the elapsed-time chrome `(<elapsed> •` — in a narrow pane the clip can
+fall right after the bullet (`✦ Working… (2s •…`). Prose, tool output, and quoted
+chrome cannot forge it — `└ Run finished (2s · timeout 2m)` is indented and uses `·`,
+not `•` — so a transcript line only qualifies when it opens with that glyph. Clipping
+can cut even the elapsed opener off, and a pane scrolled into history or caught mid
+repaint can drop the live block entirely, so an **Idle** screen verdict is also
+corroborated against the pane's terminal title: traecli animates a braille spinner
+ahead of the thread title while a turn runs (`⠋ Fix iOS H5 input keyboard issue`)
+and drops it when the turn settles — a background shell left running does not keep it
+up — so a spinning title turns an Idle screen verdict into Working, reported as
+`screen.titleSpinner`. The TUI writes that mark itself, so unlike the composer it
+survives clipping, scrolling, and slow repaints. Working, Blocked, and unknown
+verdicts pass through unchanged: the corroboration only prevents a false Idle (and the
+spurious Done it earns on an unviewed pane).
+
+traecli 0.209.1 can also hold **background shells** (`/ps to manage`). While one runs,
+a *settled* turn's footer becomes `◇ <n> background shell running… you can still chat ·
+/ps to manage` — the interrupt hint and the elapsed counter are both gone — so the pane
+reads **Idle** with work still in flight, and it returns to Working only when the agent
+starts the turn that collects the shell. That is deliberate, not a miss: the agent has
+handed control back, only the shell is running, and a running background shell is
+therefore not Working evidence. A turn that is *still* streaming keeps its hint and
+appends the same segment (`… esc to interrupt) · 1 shell running… · /ps to manage`).
+
+A live dialog that replaces the composer is **Blocked**. Four shapes are matched by
+shape, not column: a numbered option row marked with `❯` beside an unselected sibling;
+a form whose only chrome is its submit/navigate footer; a bracketed y/n confirmation
+(`… [y/N]`); and the interactive login/auth screens (a verified header phrase plus its
+Enter/Esc chrome). Most dialogs render inside the live block's two-space gutter, but
+the first-run trust prompt and the login screens render their question and choices at
+column 0, so the region is delimited by what it *stops* at instead of by indentation:
+the composer box (its prompt row, its `─` rules, the status bar under it),
+the live block's or transcript's own glyph-headed rows, and the welcome banner that the
+trust prompt renders under, capped at 16 rows so a
+transcript running straight into a dialog cannot hand `agents read` unbounded history.
+A dialog that renders *below* a composer box supersedes it — the box is then quoted
+transcript — while a dialog above the live composer stays transcript. Anything else is
+**unknown**, never Idle, so a screen without the live composer cannot forge an idle
+reading.
+
+The chrome is matched by its structure, not by a phrase inside it. A footer row has to
+carry its cancel/navigate chrome as well as the submit or navigate phrase
+(`enter to submit | esc to cancel`, `↑/↓ to navigate fields   esc to cancel` on the
+on-prem build; key hints such as `enter confirm  |  esc cancel` on the public 0.209.1
+build, which need both an `enter` and an `esc` segment), the
+running interrupt mark has to be parenthesized (`(esc to interrupt)`,
+`(23s • esc to interrupt)`), and the auth chrome has to open with its key chord
+(`Press Esc to cancel`). The composer's status bar — `<model> · Context <n>% left ·
+<cwd> ▧ Workspace Edit` — is dynamic chrome and never counts as dialog, footer, or
+running chrome, because it carries the working directory: without both rules a
+checkout at `/tmp/how to submit` read as a form footer and turned a settled composer
+into Blocked, and `/tmp/how to interrupt` turned it into Working.
+
+A typed screen profile is still deferred — the working signature is the binary-verified
+`to interrupt` hint — but `prowl agents read` extracts the live dialog text as its
+blocker for a TraeCode CLI pane. The extraction reads the same region the detector
+resolved, so the two cannot disagree about where the dialog starts, and it keeps the
+whole dialog, from the question through the tool's command or parameters to the option
+rows and their footer, spanning the blank lines traecli renders inside it: a caller has
+to be able to see what it would be approving.
+
+TraeCode CLI currently uses screen state and cooperative delivery, without a
+managed hook channel or transcript reader. Its TUI notification is off by
+default, so a Prowl-launched session has `tui.notifications=true`,
+`tui.notification_method=osc9`, and `tui.notification_condition=always` injected
+as `-c` overrides; otherwise a finished turn never reaches the notification
+inbox (see [notifications](notifications.md)). A manually launched `traecli`
+needs the same values under `[tui]` in `~/.trae/traecli.toml`.
+
 ## Agents it recognizes
 
 Claude (Claude Code), Codex, Gemini, Cursor, Cline, OpenCode, GitHub Copilot,
 Kimi, Droid, Amp, Pi (`pi`), Oh My Pi (`omp`, `oh-my-pi`), Qoder CLI (`qodercli`),
-Qwen Code (`qwen`), Grok Build (`grok`), Devin (`devin`), and Antigravity
-(`agy`). Detection covers
+Qwen Code (`qwen`), Grok Build (`grok`), Devin (`devin`), Antigravity
+(`agy`), and TraeCode CLI (`traecli`). Detection covers
 common wrappers (node, python, bun, bash, etc.) so agents launched indirectly are
 still found. Pi and Oh My Pi are independent detected agents. Pi recognizes its
 own minimal working/idle cues, including its built-in braille-prefixed `Working...`
@@ -262,9 +387,10 @@ at a `~/.grok/` install (so Cursor's own `agent` entrypoint stays Cursor).
    no OSC-specific opt-out; older versions remain on the existing fallback path.
 
    Claude reads the detected PID's native registry under its configured root
-   (`~/.claude/sessions` by default). `busy` and `shell` mean **Working**, including
-   assigned child and background shell work; `waiting` means **Blocked**, and `idle`
-   means **Idle**. Process generation is checked before and after each read.
+   (`~/.claude/sessions` by default). `busy` means **Working**, including assigned
+   child work; `waiting` means **Blocked**; `idle` means **Idle**, and so does `shell`,
+   where the turn has ended and the composer accepts input while background shells
+   still run. Process generation is checked before and after each read.
    `/new` and resume use the registry's current session. Two processes sharing a
    transcript retain independent states. Missing, partial, stale, or unsupported
    records fall back to the screen. The registry's `sessionId` is also the pane's
@@ -391,18 +517,37 @@ a successful read reports recovery once after any failure, including a throttled
 Continuity-loss warnings report the post-reset cursor count and a bounded error kind/code. These logs contain no transcript or screen content.
 
 Detection tolerates several consecutive process-probe misses before declaring an
-agent gone. Screen-only state is deterministic: a recognized Working, Blocked, or
-Idle frame takes effect on the next active scan, without a time-based Working hold or
-generic screen-motion inference. Viewer overlays (Claude's transcript / history-search
-views) are an explicit exception: their chrome covers the live status area, so those
-frames keep the last trusted state instead of forcing Idle.
+agent gone. Screen-only state is deterministic: a recognized Working or Blocked frame
+takes effect on the next active scan, without a time-based Working hold or generic
+screen-motion inference. One exception covers agents whose Working evidence is
+screen-only (`DetectedAgent.requiresConfirmedIdleScreen`, currently `trae`): an Idle
+frame over a Working pane is applied only once Idle has kept arriving for
+`AgentStateMachine.confirmedIdleWindow`, so neither a single mid-repaint frame nor a
+burst of them can end a turn; the TraeCode CLI section above adds the clipped-header
+and title-spinner corroboration. Viewer overlays (Claude's transcript /
+history-search views) are another exception: their chrome covers the live status area,
+so those frames keep the last trusted state instead of forcing Idle.
 
 ## Remote agents over SSH
 
-When a pane's foreground command is a local `ssh`, Prowl can show the agent that runs on
-the host (docs-ai 082, L0). Until this ships on by default, launch Prowl with
-`PROWL_REMOTE_AGENT_DETECTION=1` to enable it. Prowl installs nothing on the host and
-edits no rc file.
+When a pane's foreground command is a local `ssh`, Prowl shows the agent that runs on the
+host (docs-ai 082, L0). Prowl installs nothing on the host and edits no rc file.
+
+- **Consent.** Prowl does not connect to a host before you agree. The first `ssh` that
+  Prowl can read shows "Detect agents on <host>?" in the toolbar status, with its panel
+  open. The panel does not take keyboard focus, so you can finish a password or code
+  prompt first. **Turn On** starts detection in the open `ssh` panes at once, **Not Now**
+  asks again after Prowl restarts, and **Turn Off** stops asking. Until you choose, Prowl
+  opens no connection. Settings › Agents › Display › **Detect agents in SSH sessions**
+  holds the answer; the switch shows on until you turn it off. The environment variable
+  `PROWL_REMOTE_AGENT_DETECTION` overrides the setting and never asks: `0` turns the
+  feature off, any other value turns it on.
+- **Toolbar status.** While the focused pane's `ssh` uses Prowl's own connection, the
+  toolbar status shows the host and "Agent detection on", or "Agents not detected" with a
+  warning glyph. Hover (or click) for a panel that tells what the extra connection does,
+  why agents are not detected, and a button to the setting. The consent question ranks
+  above workflow runs there; this status ranks below workflow runs and rate limits, and
+  above the pull request.
 
 - **How.** Prowl opens its own SSH connection to the same target (`ssh -G` resolves user,
   host name, port, `ProxyJump` and `-F`). It runs a read-only probe over that connection:
@@ -411,6 +556,16 @@ edits no rc file.
   `SendEnv`/`AcceptEnv` settings forward, and reads the session's foreground process. A
   verified producer's OSC 7501 reports decide the state, as they do locally; otherwise the
   screen decides.
+- **Pane and tab.** A pane whose foreground `ssh` reaches a host shows `user@host` in its
+  bottom-trailing corner, and its tab shows a network glyph before the title (the tooltip
+  names the hosts). Five seconds after the label appears or changes, only its glyph stays;
+  the pointer on the glyph shows the host again. When that `ssh` exits and the pane is back in its local shell, the
+  corner reads "Disconnected from user@host" for five seconds. A suspended `ssh` (still
+  running) only removes the label. When Prowl cannot read the pane's agents (the host has
+  no session for the pane, the side channel fails, or the `ssh` command is not supported),
+  the label shows a yellow warning glyph instead, whether or not an agent is listed. Its
+  tooltip gives the reason, and says that only agents that report their own status
+  (OSC 7501) are detected.
 - **Host label and health.** The Active Agents row shows `user@host` with a network
   glyph. Connection health is shown apart from the agent's state. If no snapshot has
   confirmed the agent for 10 s, the row keeps the last state, greys it out, and adds
@@ -425,6 +580,25 @@ edits no rc file.
   In that case a verified producer's OSC 7501 report still lists the agent, with
   `heuristic` confidence. Only the `ssh` exit releases such an agent. When its producer is
   quiet for 10 s, it becomes stale.
+- **Inside tmux.** When the remote session's foreground is a tmux client, Prowl maps that
+  client to its active pane through the tmux server (never through inherited environment
+  variables). It identifies the agent from that pane's foreground job, and reads the
+  agent's state from the pane's visible screen (`tmux capture-pane`), not from the local
+  screen. The local screen also shows the tmux status line, other panes, and copy mode.
+  tmux drops OSC 7501, so screen rules decide the state there. Copy mode does not change
+  the state. Switching to another pane releases the agent, and switching back shows it
+  again within a few seconds. A second client attached to the same pane shows the same
+  agent in its own Prowl pane. A changing local screen asks for a fresh capture, with at
+  most one probe in flight. A screen larger than 64 KiB keeps its last lines. When many
+  panes are captured at once, the screens of Prowl panes come first, and a screen past
+  the probe's budget leaves that agent's state unknown for that probe.
+- **tmux limits.** Prowl looks for tmux servers only in `${TMUX_TMPDIR:-/tmp}/tmux-<uid>/`.
+  When it cannot reach the server of a client (for example a server started with
+  `tmux -S <path>`, or a removed socket), the pane badge shows a warning and
+  `remote.correlation` is `tmux_unreachable`. An agent that was already listed stays
+  listed, and its state becomes unknown after 10 s; it is not released. Prowl follows
+  one level of tmux only: a tmux inside a tmux pane, or a program in a `display-popup`,
+  is not read.
 - **Release.** A probed agent is released after two complete fresh snapshots without it
   (about 2–3 s after it exits), or at once when the `ssh` exits.
 - **Limits.** A remote agent cannot be a `prowl agents dispatch` target that needs a

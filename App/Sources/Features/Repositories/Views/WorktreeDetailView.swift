@@ -19,6 +19,7 @@ struct WorktreeDetailView: View {
     let isUpdateReadyToInstall: Bool
     let availableUpdateVersion: String?
     let showRunButtonInToolbar: Bool
+    let remoteAgentConsent: RemoteAgentConsentPrompt?
   }
 
   @Bindable var store: StoreOf<AppFeature>
@@ -85,7 +86,8 @@ struct WorktreeDetailView: View {
         isUpdateAvailable: state.updates.isUpdateAvailable,
         isUpdateReadyToInstall: state.updates.isUpdateReadyToInstall,
         availableUpdateVersion: state.updates.availableVersion,
-        showRunButtonInToolbar: settingsFile.global.showRunButtonInToolbar
+        showRunButtonInToolbar: settingsFile.global.showRunButtonInToolbar,
+        remoteAgentConsent: state.remoteAgentConsentPrompt
       )
     )
     let content = detailContent(
@@ -204,7 +206,9 @@ struct WorktreeDetailView: View {
         store.send(.openWorkflowDetails(item, worktreeID: worktreeID))
       },
       onWorkflowIntent: handleWorkflowIntent,
-      onRetryGithubRateLimit: retryGithubRateLimitedRequests
+      onRetryGithubRateLimit: retryGithubRateLimitedRequests,
+      onRemoteAgentConsent: { store.send(.remoteAgentConsent($0)) },
+      onOpenAgentSettings: { store.send(.openAgentDisplaySettings) }
     )
   }
 
@@ -262,8 +266,18 @@ struct WorktreeDetailView: View {
       isUpdateAvailable: input.isUpdateAvailable,
       isUpdateReadyToInstall: input.isUpdateReadyToInstall,
       availableUpdateVersion: input.availableUpdateVersion,
-      showRunButtonInToolbar: input.showRunButtonInToolbar
+      showRunButtonInToolbar: input.showRunButtonInToolbar,
+      remoteAgentConsent: input.remoteAgentConsent,
+      remoteChannel: remoteChannelStatus(for: input.actionTargetWorktree)
     )
+  }
+
+  /// The focused pane's side channel (docs-ai 082, L0 item 12).
+  private func remoteChannelStatus(for worktree: Worktree?) -> RemoteChannelToolbarStatus? {
+    guard let worktree, let state = terminalManager.stateIfExists(for: worktree.id),
+      let surfaceID = state.currentFocusedSurfaceId()
+    else { return nil }
+    return RemoteChannelToolbarStatus(state.surfaces[surfaceID]?.bridge.state.remoteIndicator)
   }
 
   @ToolbarContentBuilder
@@ -311,8 +325,12 @@ struct WorktreeDetailView: View {
         workflow: state.workflowStatus,
         pullRequest: state.pullRequest,
         codeHost: state.codeHost,
+        remoteAgentConsent: state.remoteAgentConsent,
+        remoteChannel: state.remoteChannel,
         onWorkflowIntent: handleWorkflowIntent,
-        onRetryGithubRateLimit: retryGithubRateLimitedRequests
+        onRetryGithubRateLimit: retryGithubRateLimitedRequests,
+        onRemoteAgentConsent: { store.send(.remoteAgentConsent($0)) },
+        onOpenAgentSettings: { store.send(.openAgentDisplaySettings) }
       )
       .padding(.horizontal)
     }
@@ -965,6 +983,8 @@ struct WorktreeDetailView: View {
     let isUpdateReadyToInstall: Bool
     let availableUpdateVersion: String?
     let showRunButtonInToolbar: Bool
+    let remoteAgentConsent: RemoteAgentConsentPrompt?
+    let remoteChannel: RemoteChannelToolbarStatus?
   }
 
   struct WorktreeToolbarState {
@@ -1067,6 +1087,8 @@ struct WorktreeDetailView: View {
     let onShowWorkflowDetails: (WorkflowStartCatalogItem) -> Void
     let onWorkflowIntent: (WorkflowRunPanelIntent) -> Void
     let onRetryGithubRateLimit: () -> Void
+    let onRemoteAgentConsent: (RemoteAgentConsentChoice) -> Void
+    let onOpenAgentSettings: () -> Void
     @Environment(\.resolvedKeybindings) private var resolvedKeybindings
 
     var body: some ToolbarContent {
@@ -1098,8 +1120,12 @@ struct WorktreeDetailView: View {
           workflow: toolbarState.shared.workflowStatus,
           pullRequest: toolbarState.shared.pullRequest,
           codeHost: toolbarState.shared.codeHost,
+          remoteAgentConsent: toolbarState.shared.remoteAgentConsent,
+          remoteChannel: toolbarState.shared.remoteChannel,
           onWorkflowIntent: onWorkflowIntent,
-          onRetryGithubRateLimit: onRetryGithubRateLimit
+          onRetryGithubRateLimit: onRetryGithubRateLimit,
+          onRemoteAgentConsent: onRemoteAgentConsent,
+          onOpenAgentSettings: onOpenAgentSettings
         )
         .padding(.horizontal)
       }

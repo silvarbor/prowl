@@ -1141,7 +1141,8 @@
             "ambiguous",
             "unmapped",
             "probe_unavailable",
-            "unsupported"
+            "unsupported",
+            "tmux_unreachable"
           ]
         },
         "correlation_reason": {
@@ -2755,7 +2756,8 @@
                 "codex",
                 "agents",
                 "devin",
-                "antigravity"
+                "antigravity",
+                "trae"
               ]
             },
             "detected": {
@@ -2789,7 +2791,8 @@
                 "codex",
                 "agents",
                 "devin",
-                "antigravity"
+                "antigravity",
+                "trae"
               ]
             },
             "detected": {
@@ -2825,7 +2828,8 @@
                 "codex",
                 "agents",
                 "devin",
-                "antigravity"
+                "antigravity",
+                "trae"
               ]
             },
             "detected": {
@@ -2925,7 +2929,8 @@
             "codex",
             "agents",
             "devin",
-            "antigravity"
+            "antigravity",
+            "trae"
           ]
         },
         "path": {

@@ -284,7 +284,9 @@ private struct WorktreeToolbarPreview: View {
         isUpdateAvailable: true,
         isUpdateReadyToInstall: false,
         availableUpdateVersion: "2026.5.1",
-        showRunButtonInToolbar: true
+        showRunButtonInToolbar: true,
+        remoteAgentConsent: nil,
+        remoteChannel: nil
       ),
       openActionSelection: .finder,
       openActionIsAutomatic: true,
@@ -321,7 +323,9 @@ private struct WorktreeToolbarPreview: View {
         onRunWorkflowWithOptions: { _ in },
         onShowWorkflowDetails: { _ in },
         onWorkflowIntent: { _ in },
-        onRetryGithubRateLimit: {}
+        onRetryGithubRateLimit: {},
+        onRemoteAgentConsent: { _ in },
+        onOpenAgentSettings: {}
       )
     }
     .environment(commandKeyObserver)

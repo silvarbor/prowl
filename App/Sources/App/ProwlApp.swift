@@ -593,7 +593,7 @@ struct ProwlApp: App {
     else {
       return .failure(.agentNotFound("Pane '\(pane)' does not host an active agent."))
     }
-    guard detectedAgent == .codex || detectedAgent == .claude else {
+    guard detectedAgent == .codex || detectedAgent == .claude || detectedAgent == .trae else {
       return .failure(
         .unsupportedAgent("Agent '\(detectedAgent.rawValue)' is not supported by agents read."))
     }
@@ -607,6 +607,7 @@ struct ProwlApp: App {
       switch detectedAgent {
       case .codex: CodexScreenProfile.blockerText(in: detectorScreen)
       case .claude: ClaudeScreenProfile.blockerText(in: detectorScreen)
+      case .trae: traeBlockerText(in: detectorScreen)
       default: nil
       }
     if detection.state == .blocked, blockerText == nil {
@@ -932,6 +933,7 @@ struct ProwlApp: App {
           return .failure(.notFound)
         }
       },
+      revalidateDispatch: { terminalManager.revalidateAgentDispatch($0) },
       observeCondition: { surfaceID in
         terminalManager.observeAgentState(surfaceID: surfaceID)
       },

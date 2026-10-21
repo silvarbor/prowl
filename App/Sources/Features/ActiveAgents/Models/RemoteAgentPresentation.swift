@@ -70,6 +70,38 @@ nonisolated enum RemoteAgentPresentation {
       return String(localized: "Prowl cannot read \(host): \(failureReason(failure)).")
     case .unsupported(let reason):
       return String(localized: "Prowl does not read hosts for this ssh command: \(reason).")
+    case .tmuxUnreachable:
+      return String(
+        localized: """
+          Prowl cannot reach the tmux server that this pane shows on \(host), so it does not detect \
+          the agents in it. Prowl looks for tmux servers only in the default socket directory: a \
+          server started with tmux -S is not found.
+          """)
+    }
+  }
+
+  /// Why Prowl does not read a pane's agents, with what still works.
+  static func paneIssueExplanation(_ issue: RemotePaneCorrelation, host: String) -> String {
+    let reason = correlationExplanation(issue, host: host)
+    // tmux drops OSC 7501, so no report reaches the pane either.
+    if issue == .tmuxUnreachable { return reason }
+    let fallback = String(
+      localized: "Agents in this pane are detected only when they report their status themselves (OSC 7501).")
+    return "\(reason) \(fallback)"
+  }
+
+  /// What the pane's own accessibility element says about its `ssh`: the badge is not in the
+  /// terminal's accessibility tree, so the pane carries the same information.
+  static func paneAccessibility(_ indicator: RemotePaneIndicator?, now: Date) -> (label: String?, help: String?) {
+    switch indicator {
+    case .connected(let host, _, nil):
+      return (String(localized: "connected to \(host)"), nil)
+    case .connected(let host, _, let issue?):
+      return (String(localized: "connected to \(host)"), paneIssueExplanation(issue, host: host))
+    case .ended(let host, _) where indicator?.showsEndedMarker(now: now) == true:
+      return (String(localized: "disconnected from \(host)"), nil)
+    case .ended, nil:
+      return (nil, nil)
     }
   }
 

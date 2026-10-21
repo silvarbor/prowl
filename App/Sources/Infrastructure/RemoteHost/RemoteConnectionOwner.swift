@@ -102,8 +102,8 @@ actor RemoteConnectionOwner {
     }
   }
 
-  /// Stops the probe in flight, finishes every subscription, and closes the control
-  /// master, so no `ssh` process outlives the owner for longer than its own exit.
+  /// Stops the probe in flight, finishes every subscription, and closes the shared
+  /// connection, so no `ssh` process outlives the owner for longer than its own exit.
   func shutdown() async {
     refreshPending = false
     running?.cancel()

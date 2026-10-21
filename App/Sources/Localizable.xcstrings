@@ -207,6 +207,16 @@
         }
       }
     },
+    "%@ has no session for this pane. The ssh client does not send LC_PROWL_PANE (SendEnv), or the server does not accept it (AcceptEnv)." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 上没有与此窗格对应的会话。原因是 ssh 客户端没有发送 LC_PROWL_PANE（SendEnv），或服务器不接受它（AcceptEnv）。"
+          }
+        }
+      }
+    },
     "%@ has no workspace metadata to update." : {
       "localizations" : {
         "zh-Hans" : {
@@ -1666,6 +1676,16 @@
         }
       }
     },
+    "Agent Settings…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent 设置…"
+          }
+        }
+      }
+    },
     "Agent Skills" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1692,6 +1712,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ 的 Agent 操作"
+          }
+        }
+      }
+    },
+    "Agent detection connected to %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent 检测已连接到 %@"
+          }
+        }
+      }
+    },
+    "Agent detection for %@: agents are not detected" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 的 Agent 检测：无法检测 Agent"
+          }
+        }
+      }
+    },
+    "Agent detection on" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent 检测已开启"
+          }
+        }
+      }
+    },
+    "Agent detection over SSH" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通过 SSH 检测 Agent"
           }
         }
       }
@@ -1752,6 +1812,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Agent"
+          }
+        }
+      }
+    },
+    "Agents in this pane are detected only when they report their status themselves (OSC 7501)." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "只有当此窗格中的 Agent 自行报告状态（OSC 7501）时，才能检测到它们。"
+          }
+        }
+      }
+    },
+    "Agents not detected" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法检测 Agent"
           }
         }
       }
@@ -2323,6 +2403,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "向 Agent 询问 Prowl…"
+          }
+        }
+      }
+    },
+    "Ask again after Prowl restarts." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prowl 重启后再次询问。"
           }
         }
       }
@@ -3697,6 +3787,16 @@
         }
       }
     },
+    "Choose whether Prowl may connect to the host of this SSH session to detect agents." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择是否允许 Prowl 连接此 SSH 会话的主机以检测 Agent。"
+          }
+        }
+      }
+    },
     "Choose…" : {
       "localizations" : {
         "zh-Hans" : {
@@ -4777,12 +4877,32 @@
         }
       }
     },
+    "Connected to %@. Agents are not detected." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已连接到 %@。无法检测 Agent。"
+          }
+        }
+      }
+    },
     "Connected · %@" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "已连接 · %@"
+          }
+        }
+      }
+    },
+    "Connected. Agents in this pane are detected." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已连接。正在检测此窗格中的 Agent。"
           }
         }
       }
@@ -6257,6 +6377,56 @@
         }
       }
     },
+    "Detect agents in SSH sessions" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "检测 SSH 会话中的 Agent"
+          }
+        }
+      }
+    },
+    "Detect agents in SSH sessions. You can turn it off in Settings › Agents › Display." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "检测 SSH 会话中的 Agent。可在“设置 › Agent › 显示”中关闭。"
+          }
+        }
+      }
+    },
+    "Detect agents in SSH sessions?" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "检测 SSH 会话中的 Agent？"
+          }
+        }
+      }
+    },
+    "Detect agents on %@?" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "检测 %@ 上的 Agent？"
+          }
+        }
+      }
+    },
+    "Detect agents on %@? Prowl waits for your answer." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "检测 %@ 上的 Agent？Prowl 正在等待你的回答。"
+          }
+        }
+      }
+    },
     "Detect project icons automatically" : {
       "localizations" : {
         "zh-Hans" : {
@@ -6513,6 +6683,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已断开"
+          }
+        }
+      }
+    },
+    "Disconnected from %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已断开与 %@ 的连接"
           }
         }
       }
@@ -9359,6 +9539,16 @@
         }
       }
     },
+    "Last seen %@ ago" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上次在线：%@前"
+          }
+        }
+      }
+    },
     "Later" : {
       "localizations" : {
         "zh-Hans" : {
@@ -9445,6 +9635,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "左侧"
+          }
+        }
+      }
+    },
+    "Let Prowl open its own SSH connection to show the agents that run on the host." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允许 Prowl 建立自己的 SSH 连接，以显示主机上运行的 Agent。"
           }
         }
       }
@@ -10069,6 +10269,16 @@
         }
       }
     },
+    "More than one session on %@ carries this pane's ID." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 上有多个会话带有此窗格的 ID。"
+          }
+        }
+      }
+    },
     "Move %@ to Trash after confirmation" : {
       "localizations" : {
         "zh-Hans" : {
@@ -10255,6 +10465,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "从未连接"
+          }
+        }
+      }
+    },
+    "Never detect agents in SSH sessions. You can turn it on in Settings › Agents › Display." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不检测 SSH 会话中的 Agent。可在“设置 › Agent › 显示”中开启。"
           }
         }
       }
@@ -10549,12 +10769,12 @@
         }
       }
     },
-    "No agent skill folder was found in your home directory. Run Claude Code, Codex, or another agent once so it creates its folder, or create one from a terminal with prowl skills install --target claude|codex|agents|devin|antigravity." : {
+    "No agent skill folder was found in your home directory. Run Claude Code, Codex, or another agent once so it creates its folder, or create one from a terminal with prowl skills install --target claude|codex|agents|devin|antigravity|trae." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "未在主目录中找到 Agent 技能文件夹。请先运行一次 Claude Code、Codex 或其他 Agent 以创建其文件夹，或在终端中使用 prowl skills install --target claude|codex|agents|devin|antigravity 创建。"
+            "value" : "未在主目录中找到 Agent 技能文件夹。请先运行一次 Claude Code、Codex 或其他 Agent 以创建其文件夹，或在终端中使用 prowl skills install --target claude|codex|agents|devin|antigravity|trae 创建。"
           }
         }
       }
@@ -10895,6 +11115,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "普通视图"
+          }
+        }
+      }
+    },
+    "Not Now" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "以后再说"
           }
         }
       }
@@ -11370,6 +11600,16 @@
         }
       }
     },
+    "Open Settings › Agents › Display, where you can turn off agent detection in SSH sessions." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开“设置 › Agent › 显示”，可在其中关闭 SSH 会话中的 Agent 检测。"
+          }
+        }
+      }
+    },
     "Open Settings → Agents → Display" : {
       "localizations" : {
         "zh-Hans" : {
@@ -11667,6 +11907,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "打开标签页 %@"
+          }
+        }
+      }
+    },
+    "Open tab %@ (connected to %@)" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开标签页 %@（已连接到 %@）"
           }
         }
       }
@@ -12703,6 +12953,36 @@
         }
       }
     },
+    "Prowl can show the agents that run on %@, with their state. To find them, Prowl opens its own SSH connection to the host, next to your session, and runs a read-only check every few seconds. It installs nothing on the host, and your session does not change." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prowl 可以显示 %@ 上运行的 Agent 及其状态。为此，Prowl 会在你的会话之外另建一条到该主机的 SSH 连接，并每隔几秒运行一次只读检查。它不会在主机上安装任何东西，你的会话也不会受影响。"
+          }
+        }
+      }
+    },
+    "Prowl cannot reach the tmux server that this pane shows on %@, so it does not detect the agents in it. Prowl looks for tmux servers only in the default socket directory: a server started with tmux -S is not found." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prowl 无法连接到此窗格所显示的、位于 %@ 上的 tmux 服务器，因此不会检测其中的 Agent。Prowl 只在默认套接字目录中查找 tmux 服务器：用 tmux -S 启动的服务器无法被找到。"
+          }
+        }
+      }
+    },
+    "Prowl cannot read %@: %@." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prowl 无法读取 %@：%@。"
+          }
+        }
+      }
+    },
     "Prowl cannot send system notifications" : {
       "localizations" : {
         "zh-Hans" : {
@@ -12903,12 +13183,32 @@
         }
       }
     },
+    "Prowl does not read hosts for this ssh command: %@." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prowl 不会为此 ssh 命令读取主机：%@。"
+          }
+        }
+      }
+    },
     "Prowl is configured to use %@ on %@, but gh could not switch to that account. Run `gh auth switch --hostname %@ --user %@` and try again." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Prowl 已配置为在 %2$@ 上使用 %1$@，但 gh 无法切换到该账户。请运行 `gh auth switch --hostname %3$@ --user %4$@` 后重试。"
+          }
+        }
+      }
+    },
+    "Prowl is connecting to %@." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prowl 正在连接 %@。"
           }
         }
       }
@@ -12929,6 +13229,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Prowl 未在监听 prowl 命令。"
+          }
+        }
+      }
+    },
+    "Prowl keeps its own SSH connection to %@, next to your session in this pane. Over it, Prowl runs a read-only check every few seconds to find the agents in this pane and their state. It installs nothing on the host, and your session does not change." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prowl 在此窗格中你的会话之外，另外保持一条到 %@ 的 SSH 连接。Prowl 通过它每隔几秒运行一次只读检查，查找此窗格中的 Agent 及其状态。它不会在主机上安装任何东西，你的会话也不会受影响。"
           }
         }
       }
@@ -12993,6 +13303,16 @@
         }
       }
     },
+    "Prowl reads this agent from %@ over a separate SSH connection." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prowl 通过一条独立的 SSH 连接从 %@ 读取此 Agent。"
+          }
+        }
+      }
+    },
     "Prowl revalidates automatically when the workflow file changes." : {
       "localizations" : {
         "zh-Hans" : {
@@ -13029,6 +13349,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Prowl 将退出并重新启动，以完成更新安装。"
+          }
+        }
+      }
+    },
+    "Prowl's own SSH connection for agent detection. Hover to see what it does." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prowl 用于检测 Agent 的独立 SSH 连接。悬停可查看它的作用。"
           }
         }
       }
@@ -13700,6 +14030,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "远程连接超时。对方已不再响应。"
+          }
+        }
+      }
+    },
+    "Remote host" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "远程主机"
           }
         }
       }
@@ -15300,6 +15640,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "设置了仓库颜色时，SF Symbol 会使用该颜色。"
+          }
+        }
+      }
+    },
+    "SSH Sessions" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SSH 会话"
           }
         }
       }
@@ -17376,6 +17726,16 @@
         }
       }
     },
+    "Status unavailable" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "状态不可用"
+          }
+        }
+      }
+    },
     "Step %@" : {
       "localizations" : {
         "zh-Hans" : {
@@ -18037,6 +18397,16 @@
         }
       }
     },
+    "The host can log this connection. Prowl does not connect until you choose." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "主机可能会记录这条连接。在你做出选择之前，Prowl 不会连接。"
+          }
+        }
+      }
+    },
     "The language will switch on next launch." : {
       "localizations" : {
         "zh-Hans" : {
@@ -18253,6 +18623,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "此起始模板玩石头剪刀布：当前 Agent 出一手，第二个 Agent 回以能赢的那一手。"
+          }
+        }
+      }
+    },
+    "The status comes only from the agent's own terminal reports, so it can be out of date." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "状态仅来自 Agent 自己的终端报告，因此可能已过时。"
           }
         }
       }
@@ -18923,6 +19303,26 @@
         }
       }
     },
+    "Turn Off" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "关闭"
+          }
+        }
+      }
+    },
+    "Turn On" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开启"
+          }
+        }
+      }
+    },
     "Turn on “Badge app icon” for Prowl in System Settings > Notifications." : {
       "localizations" : {
         "zh-Hans" : {
@@ -19309,6 +19709,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "卸载"
+          }
+        }
+      }
+    },
+    "Unknown" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未知"
           }
         }
       }
@@ -19830,6 +20240,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "有新版本可用时，通知铃铛旁会出现一个小标记。点击它即可查看、安装，并选择以后是否在后台下载。"
+          }
+        }
+      }
+    },
+    "When a pane runs ssh, Prowl opens its own connection to the same host and runs a read-only check to find agents. It installs nothing on the host." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当窗格运行 ssh 时，Prowl 会另建一条到同一主机的连接，并运行只读检查来查找 Agent。它不会在主机上安装任何东西。"
           }
         }
       }
@@ -20621,6 +21041,16 @@
         }
       }
     },
+    "connected to %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已连接到 %@"
+          }
+        }
+      }
+    },
     "connection refused." : {
       "localizations" : {
         "zh-Hans" : {
@@ -20650,6 +21080,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "默认分支"
+          }
+        }
+      }
+    },
+    "disconnected from %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已断开与 %@ 的连接"
           }
         }
       }
@@ -20940,6 +21380,86 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "秒"
+          }
+        }
+      }
+    },
+    "ssh could not start" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ssh 无法启动"
+          }
+        }
+      }
+    },
+    "ssh failed" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ssh 失败"
+          }
+        }
+      }
+    },
+    "the connection failed or timed out" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "连接失败或超时"
+          }
+        }
+      }
+    },
+    "the host is not reachable" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法访问主机"
+          }
+        }
+      }
+    },
+    "the host key is unknown or changed" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "主机密钥未知或已更改"
+          }
+        }
+      }
+    },
+    "the host name does not resolve" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "主机名无法解析"
+          }
+        }
+      }
+    },
+    "the key was refused or needs a prompt" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "密钥被拒绝，或需要交互式输入"
+          }
+        }
+      }
+    },
+    "the remote shell printed unexpected output" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "远程 shell 输出了意外内容"
           }
         }
       }

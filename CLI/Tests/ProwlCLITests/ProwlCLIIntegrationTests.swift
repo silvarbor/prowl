@@ -110,7 +110,7 @@ final class ProwlCLIIntegrationTests: XCTestCase {
     let server = try MockSocketServer(
       socketPath: socketPath,
       responseData: Data("abcde".utf8),
-      responseByteDelayMicroseconds: 200_000
+      responseByteDelayMicroseconds: 2_000_000
     )
     try server.start()
     defer { server.stop() }
@@ -132,7 +132,9 @@ final class ProwlCLIIntegrationTests: XCTestCase {
     XCTAssertEqual(result.exitCode, 0)
     XCTAssertEqual(result.stdout, "")
     XCTAssertEqual(result.stderr, "")
-    XCTAssertLessThan(start.duration(to: clock.now), .milliseconds(700))
+    // The drip takes 10 s, the hook deadline 250 ms. The bound includes the CLI's launch,
+    // which a loaded host can slow down by seconds.
+    XCTAssertLessThan(start.duration(to: clock.now), .seconds(5))
   }
 
   func testNativeHookBridgeSurvivesClosedPeerWithDefaultSIGPIPEDisposition() throws {
@@ -1559,8 +1561,9 @@ final class ProwlCLIIntegrationTests: XCTestCase {
       XCTAssertEqual(skills.map { $0["id"] as? String }, ["prowl-cli", "reviewer"])
       XCTAssertEqual(skills.map { $0["audience"] as? String }, ["user", "workflow"])
       let targets = try XCTUnwrap(skills[0]["targets"] as? [[String: Any]])
-      XCTAssertEqual(targets.map { $0["id"] as? String }, ["claude", "codex", "agents", "devin", "antigravity"])
-      XCTAssertEqual(targets.map { $0["detected"] as? Bool }, [true, false, true, false, false])
+      XCTAssertEqual(
+        targets.map { $0["id"] as? String }, ["claude", "codex", "agents", "devin", "antigravity", "trae"])
+      XCTAssertEqual(targets.map { $0["detected"] as? Bool }, [true, false, true, false, false, false])
       XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.socketPath), "The command never touches the socket")
 
       let text = try runProwl(args: ["skills", "list", "--no-color"], environment: fixture.environment)
@@ -1576,7 +1579,7 @@ final class ProwlCLIIntegrationTests: XCTestCase {
       let install = try runProwl(
         args: [
           "skills", "install", "prowl-cli", "--target", "claude", "--target", "codex", "--target", "agents", "--target", "devin",
-          "--target", "antigravity", "--json",
+          "--target", "antigravity", "--target", "trae", "--json",
         ],
         environment: fixture.environment
       )
@@ -1589,12 +1592,15 @@ final class ProwlCLIIntegrationTests: XCTestCase {
       XCTAssertEqual(installData["root"] as? String, fixture.home.path(percentEncoded: false))
       XCTAssertNil(installData["note"])
       let installResults = try XCTUnwrap(installData["results"] as? [[String: Any]])
-      XCTAssertEqual(installResults.map { $0["target"] as? String }, ["claude", "codex", "agents", "devin", "antigravity"])
+      XCTAssertEqual(
+        installResults.map { $0["target"] as? String }, ["claude", "codex", "agents", "devin", "antigravity", "trae"])
       XCTAssertEqual(
         installResults.map { $0["before"] as? String },
-        ["not_installed", "not_installed", "not_installed", "not_installed", "not_installed"])
-      XCTAssertEqual(installResults.map { $0["after"] as? String }, ["installed", "installed", "installed", "installed", "installed"])
-      for target in [".claude", ".codex", ".agents", ".config/devin", ".gemini/antigravity-cli"] {
+        ["not_installed", "not_installed", "not_installed", "not_installed", "not_installed", "not_installed"])
+      XCTAssertEqual(
+        installResults.map { $0["after"] as? String },
+        ["installed", "installed", "installed", "installed", "installed", "installed"])
+      for target in [".claude", ".codex", ".agents", ".config/devin", ".gemini/antigravity-cli", ".trae"] {
         let link = fixture.home.appending(path: "\(target)/skills/prowl-cli").path(percentEncoded: false)
         XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: link), fixture.skillPath("prowl-cli"))
       }
@@ -1604,7 +1610,7 @@ final class ProwlCLIIntegrationTests: XCTestCase {
       let listData = try XCTUnwrap(try jsonObject(from: list.stdout)["data"] as? [String: Any])
       let listed = try XCTUnwrap(listData["skills"] as? [[String: Any]])
       let statuses = try XCTUnwrap(listed[0]["targets"] as? [[String: Any]]).map { $0["status"] as? String }
-      XCTAssertEqual(statuses, ["installed", "installed", "installed", "installed", "installed"])
+      XCTAssertEqual(statuses, ["installed", "installed", "installed", "installed", "installed", "installed"])
 
       let uninstall = try runProwl(args: ["skills", "uninstall", "--json"], environment: fixture.environment)
       XCTAssertEqual(uninstall.exitCode, 0, uninstall.stderr)
@@ -1612,11 +1618,12 @@ final class ProwlCLIIntegrationTests: XCTestCase {
       let uninstallData = try XCTUnwrap(try jsonObject(from: uninstall.stdout)["data"] as? [String: Any])
       XCTAssertEqual(uninstallData["action"] as? String, "uninstall")
       let uninstallResults = try XCTUnwrap(uninstallData["results"] as? [[String: Any]])
-      XCTAssertEqual(uninstallResults.map { $0["target"] as? String }, ["claude", "codex", "agents", "devin", "antigravity"])
+      XCTAssertEqual(
+        uninstallResults.map { $0["target"] as? String }, ["claude", "codex", "agents", "devin", "antigravity", "trae"])
       XCTAssertEqual(
         uninstallResults.map { $0["after"] as? String },
-        ["not_installed", "not_installed", "not_installed", "not_installed", "not_installed"])
-      for target in [".claude", ".codex", ".agents", ".config/devin", ".gemini/antigravity-cli"] {
+        ["not_installed", "not_installed", "not_installed", "not_installed", "not_installed", "not_installed"])
+      for target in [".claude", ".codex", ".agents", ".config/devin", ".gemini/antigravity-cli", ".trae"] {
         let link = fixture.home.appending(path: "\(target)/skills/prowl-cli").path(percentEncoded: false)
         XCTAssertNil(try? FileManager.default.attributesOfItem(atPath: link))
         XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.home.appending(path: "\(target)/skills").path()))

@@ -63,6 +63,22 @@ dialogs remain visible as Blocked and must be answered before work continues.
 Install bundled helper skills with `prowl skills install --target antigravity`;
 project scope shares the standard `.agents/skills` directory.
 
+### TraeCode CLI
+
+Choose **TraeCode CLI** in the Profile runtime picker. Prowl launches `traecli`
+through your login shell and uses your existing TraeCode login under `~/.trae`.
+Model accepts any model ID your account can run (`--model`/`-m`); reasoning effort
+renders `-c model_reasoning_effort=low|medium|high|xhigh|max`; Unrestricted renders
+`--dangerously-bypass-approvals-and-sandbox`. To bind a separate account, set the
+Profile's Dedicated Home: `TRAE_HOME` relocates the whole `~/.trae` tree, so the
+managed home holds the CLI's config and its `cli/sessions` store.
+
+Prompted launches seed the task as a trailing positional argument; headless launches
+use the `exec` subcommand (`traecli exec <prompt>`). Trust and permission dialogs
+remain visible as Blocked and must be answered before work continues. Install bundled
+helper skills with `prowl skills install --target trae`; project scope shares the
+standard `.agents/skills` directory.
+
 ## Launching
 
 - **Toolbar Agents capsule** — always opens a popover. A "Run a workflow"
@@ -265,6 +281,7 @@ executable, icon, screen heuristics, home, and session identity.
 | Oh My Pi | Yes | Yes | Standard / Unrestricted | `PI_CODING_AGENT_DIR` |
 | Devin | Yes | No | Standard / Unrestricted | No verified full-state relocation |
 | Antigravity | Yes | Yes (`--effort`) | Standard / Unrestricted | No verified full-state relocation |
+| TraeCode CLI | Yes | Yes (`-c model_reasoning_effort`) | Standard / Unrestricted | `TRAE_HOME` |
 
 The execution-mode picker appears only when Prowl can render both choices
 honestly. Cline maps Standard to `--auto-approve false` and Unrestricted to

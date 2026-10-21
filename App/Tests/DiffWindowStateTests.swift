@@ -137,10 +137,10 @@ struct DiffWindowStateTests {
       comparison: .outgoing(initial),
       outgoingResolver: { refreshed }
     )
-    await waitForDiffWindowState { !state.isLoadingFiles && !state.changedFiles.isEmpty }
+    await waitUntil { !state.isLoadingFiles && !state.changedFiles.isEmpty }
 
     state.refresh()
-    await waitForDiffWindowState { state.comparison == .outgoing(refreshed) && !state.isLoadingFiles }
+    await waitUntil { state.comparison == .outgoing(refreshed) && !state.isLoadingFiles }
 
     #expect(state.comparison == .outgoing(refreshed))
     #expect(state.changedFiles == [file])
@@ -172,18 +172,18 @@ struct DiffWindowStateTests {
     )
     // `load()` schedules the actual loading in a task, so wait on content —
     // `isLoadingFiles` alone can be observed before that task starts.
-    await waitForDiffWindowState { !state.isLoadingFiles && state.changedFiles == [uncommittedFile] }
+    await waitUntil { !state.isLoadingFiles && state.changedFiles == [uncommittedFile] }
     #expect(state.mode == .uncommitted)
 
     state.setMode(.outgoing)
-    await waitForDiffWindowState { !state.isLoadingFiles && state.changedFiles == [outgoingFile] }
+    await waitUntil { !state.isLoadingFiles && state.changedFiles == [outgoingFile] }
 
     #expect(state.mode == .outgoing)
     #expect(state.comparison == .outgoing(resolved))
     #expect(state.outgoingBase == resolved.base)
 
     state.setMode(.uncommitted)
-    await waitForDiffWindowState { !state.isLoadingFiles && state.changedFiles == [uncommittedFile] }
+    await waitUntil { !state.isLoadingFiles && state.changedFiles == [uncommittedFile] }
 
     #expect(state.mode == .uncommitted)
     #expect(state.comparison == .workingTree)
@@ -203,10 +203,10 @@ struct DiffWindowStateTests {
       branchName: "feature",
       outgoingResolver: { throw ResolutionFailure() }
     )
-    await waitForDiffWindowState { !state.isLoadingFiles }
+    await waitUntil { !state.isLoadingFiles }
 
     state.setMode(.outgoing)
-    await waitForDiffWindowState { !state.isLoadingFiles }
+    await waitUntil { !state.isLoadingFiles }
 
     #expect(state.mode == .outgoing)
     #expect(state.loadError == "no base")
@@ -214,7 +214,7 @@ struct DiffWindowStateTests {
 
     // The switcher must remain usable after a failure.
     state.setMode(.uncommitted)
-    await waitForDiffWindowState { !state.isLoadingFiles && state.changedFiles == [uncommittedFile] }
+    await waitUntil { !state.isLoadingFiles && state.changedFiles == [uncommittedFile] }
 
     #expect(state.mode == .uncommitted)
     #expect(state.loadError == nil)
@@ -627,18 +627,4 @@ private func outgoingBase(displayName: String) -> OutgoingBaseResolution {
     displayName: displayName,
     source: .pullRequest
   )
-}
-
-@MainActor
-private func waitForDiffWindowState(
-  _ condition: @MainActor @escaping () -> Bool,
-  maxIterations: Int = 500
-) async {
-  for _ in 0..<maxIterations {
-    if condition() {
-      return
-    }
-    await Task.yield()
-  }
-  Issue.record("Timed out waiting for the DiffWindowState condition after \(maxIterations) iterations")
 }

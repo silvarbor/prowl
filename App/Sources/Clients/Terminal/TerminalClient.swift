@@ -64,6 +64,7 @@ struct TerminalClient {
     case setNotificationsEnabled(Bool)
     case setCommandFinishedNotification(enabled: Bool, threshold: Int)
     case setCanvasMode(Bool)
+    case setRemoteAgentDetection(RemoteAgentDetectionConsent)
     case setSelectedWorktreeID(Worktree.ID?)
     case saveLayoutSnapshot
     /// `allowsMissingWorktrees` skips the saved worktrees that `worktrees` does not hold
@@ -85,6 +86,8 @@ struct TerminalClient {
     case taskStatusChanged(worktreeID: Worktree.ID, status: WorktreeTaskStatus)
     case agentEntryChanged(ActiveAgentEntry)
     case agentEntryRemoved(ActiveAgentEntry.ID)
+    /// A pane's `ssh` waits for the user's answer before Prowl connects (docs-ai 082).
+    case remoteAgentConsentNeeded(worktreeID: Worktree.ID, surfaceID: UUID, destination: String)
     /// A profile launch created its surface. The reducer records the per-repo
     /// launch memory on this event — not at dispatch — so a failed launch
     /// never shifts the Recommended resolution (docs-ai 053/005).

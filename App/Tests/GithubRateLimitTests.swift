@@ -461,9 +461,7 @@ struct GithubRateLimitGateTests {
     let probe = try await gate.admit()
 
     let waiter = Task { try await gate.admit() }
-    while await gate.waitingRequestCount == 0 {
-      await Task.yield()
-    }
+    await waitUntil { await gate.waitingRequestCount > 0 }
     let refusedAgain = await gate.record(probe, signal: GithubRateLimitSignal(isRefusal: true), answered: true)
 
     await #expect(throws: GithubCLIError.rateLimited(retryAt: refusedAgain!)) {
@@ -478,9 +476,7 @@ struct GithubRateLimitGateTests {
     clock.withValue { $0.addTimeInterval(60) }
     let probe = try await gate.admit()
     let waiters = (0..<3).map { _ in Task { try await gate.admit() } }
-    while await gate.waitingRequestCount < 3 {
-      await Task.yield()
-    }
+    await waitUntil { await gate.waitingRequestCount >= 3 }
 
     #expect(await gate.record(probe, signal: nil, answered: false) == nil)
 
@@ -503,9 +499,7 @@ struct GithubRateLimitGateTests {
     clock.withValue { $0.addTimeInterval(60) }
     let probe = try await gate.admit()
     let waiter = Task { try await gate.admit() }
-    while await gate.waitingRequestCount == 0 {
-      await Task.yield()
-    }
+    await waitUntil { await gate.waitingRequestCount > 0 }
 
     waiter.cancel()
     await #expect(throws: CancellationError.self) {

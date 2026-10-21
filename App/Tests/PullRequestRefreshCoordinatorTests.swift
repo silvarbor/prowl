@@ -994,19 +994,6 @@ private func makeCoordinator(
   }
 }
 
-@MainActor
-private func waitUntil(
-  _ condition: @MainActor @escaping () async -> Bool,
-  maxIterations: Int = 10_000
-) async {
-  for _ in 0..<maxIterations {
-    if await condition() {
-      return
-    }
-    await Task.yield()
-  }
-}
-
 private func advanceCoordinatorClock(
   _ clock: TestClock<Duration>,
   by duration: Duration

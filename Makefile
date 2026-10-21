@@ -459,7 +459,9 @@ test-scripts: # Run tests for the repository's scripts
 	@python3 -m unittest discover -s "$(CURRENT_MAKEFILE_DIR)/scripts" -p 'test_*.py'
 	@bash "$(CURRENT_MAKEFILE_DIR)/scripts/test-performance-measurement-scripts.sh"
 
-# Real I/O deadlines run separately from the bulk suite's main-actor work.
+# Real I/O deadlines run separately from the bulk suite's main-actor work. A TCA TestStore
+# enqueues all tasks of the process on the main thread while it lives, so in the bulk run a
+# task that blocks on a child process also blocks every test.
 test-app: ensure-ghostty ensure-project # Run app/unit tests via xcodebuild
 	@set -euo pipefail; \
 	result_root="$(CURRENT_MAKEFILE_DIR)/build/test-results"; \
@@ -495,14 +497,15 @@ test-app: ensure-ghostty ensure-project # Run app/unit tests via xcodebuild
 			bash "$(CURRENT_MAKEFILE_DIR)/scripts/assert-xcresult-tests.sh" "$$result_bundle"; \
 		fi; \
 	}; \
-	shell_cancellation_tests=( \
+	process_cancellation_tests=( \
 		"$(TEST_TARGET)/ShellClientStreamingTests/cancellingRunStreamConsumerTerminatesProcessAfterItIsReady()" \
 		"$(TEST_TARGET)/ShellClientStreamingTests/runTerminatesReadyProcessWhenCallingTaskIsCancelled()" \
 		"$(TEST_TARGET)/ShellClientProbeTests/cancellationStopsProbeAndItsChildren()" \
+		"$(TEST_TARGET)/CodexConfigReadProcessTests/cancellationTerminatesParserAndRemovesScratchHomeWithoutDispatchSleep()" \
 	); \
 	skip_args=(); \
 	only_args=(); \
-	for test_id in "$${shell_cancellation_tests[@]}"; do \
+	for test_id in "$${process_cancellation_tests[@]}"; do \
 		skip_args+=("-skip-testing:$$test_id"); \
 		only_args+=("-only-testing:$$test_id"); \
 	done; \
@@ -525,7 +528,7 @@ test-app: ensure-ghostty ensure-project # Run app/unit tests via xcodebuild
 	run_xcode_tests "$$result_root/prowl-tests.xcresult" test "" "$${skip_args[@]}"; \
 	run_xcode_tests "$$result_root/prowl-event-monitor-tests.xcresult" test-without-building "" "$${event_args[@]}"; \
 	run_xcode_tests "$$result_root/prowl-mirror-tests.xcresult" test-without-building "" "$${mirror_args[@]}"; \
-	run_xcode_tests "$$result_root/prowl-shell-cancellation-tests.xcresult" test-without-building 3 "$${only_args[@]}"
+	run_xcode_tests "$$result_root/prowl-process-cancellation-tests.xcresult" test-without-building 4 "$${only_args[@]}"
 
 test-cli-smoke: build-cli # Smoke test CLI executable
 	@set -euo pipefail; \

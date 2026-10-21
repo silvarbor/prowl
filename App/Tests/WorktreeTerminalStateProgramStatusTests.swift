@@ -786,12 +786,13 @@ struct WorktreeTerminalStateProgramStatusTests {
     var iterator = calls.stream.makeAsyncIterator()
     fixture.state.wakeAgentDetection(for: fixture.surface, tabId: fixture.tabID)
     _ = await iterator.next()
-    // The loop is now asleep on the warm interval (2 s); a wake must end that sleep.
-    let clock = ContinuousClock()
-    let start = clock.now
+    // The loop goes to sleep on the warm interval (2 s); a wake must end that sleep. The
+    // check is on the sleeper, not on elapsed time: a loaded host can delay the loop.
+    await waitUntil { fixture.state.agentDetectionSleepersBySurface[fixture.surfaceID] != nil }
+    let sleeper = fixture.state.agentDetectionSleepersBySurface[fixture.surfaceID]?.task
     fixture.state.wakeAgentDetection(for: fixture.surface, tabId: fixture.tabID)
+    #expect(sleeper?.isCancelled == true)
     _ = await iterator.next()
-    #expect(clock.now - start < .seconds(1))
     fixture.state.cleanupAllAgentDetectionState()
   }
 
@@ -800,7 +801,7 @@ struct WorktreeTerminalStateProgramStatusTests {
     let fixture = makeFixture(probe: probe)
     let id = fixture.surfaceID
     let old = Task { await fixture.state.sleepAgentDetection(forSurfaceID: id, token: 1, interval: .seconds(30)) }
-    while fixture.state.agentDetectionSleepersBySurface[id] == nil { await Task.yield() }
+    await waitUntil { fixture.state.agentDetectionSleepersBySurface[id] != nil }
     // The surface was closed and restored: a new loop owns the slot now.
     let newer = Task<Void, any Error> { try await Task.sleep(for: .seconds(30)) }
     fixture.state.agentDetectionSleepersBySurface[id] = WorktreeTerminalState.AgentDetectionSleeper(

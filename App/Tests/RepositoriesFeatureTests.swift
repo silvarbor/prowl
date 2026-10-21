@@ -111,6 +111,7 @@ struct RepositoriesFeatureTests {
     } withDependencies: {
       $0.gitClient.worktrees = { _ in [worktree] }
     }
+    store.timeout = .realWorkTestStoreTimeout
 
     await store.send(.refreshWorktrees) {
       $0.isRefreshingWorktrees = true
@@ -435,6 +436,7 @@ struct RepositoriesFeatureTests {
     } withDependencies: {
       $0.gitClient.worktrees = { _ in [existingWorktree, discoveredWorktree] }
     }
+    store.timeout = .realWorkTestStoreTimeout
 
     await store.send(
       .worktreeInfoEvent(.repositoryWorktreesChanged(repositoryRootURL: repository.rootURL)))
@@ -631,6 +633,7 @@ struct RepositoriesFeatureTests {
         return [worktree]
       }
     }
+    store.timeout = .realWorkTestStoreTimeout
 
     await store.send(.task) {
       $0.snapshotPersistencePhase = .restoring
@@ -678,6 +681,7 @@ struct RepositoriesFeatureTests {
       $0.repositoryPersistence.saveRepositorySnapshot = { _ in }
       $0.gitClient.worktrees = { _ in [worktree] }
     }
+    store.timeout = .realWorkTestStoreTimeout
 
     await store.send(.task) {
       $0.snapshotPersistencePhase = .restoring
@@ -733,6 +737,7 @@ struct RepositoriesFeatureTests {
         return []
       }
     }
+    store.timeout = .realWorkTestStoreTimeout
 
     await store.send(.loadPersistedRepositories)
     await store.receive(\.repositoriesLoaded) {
@@ -807,6 +812,7 @@ struct RepositoriesFeatureTests {
       $0.gitClient.lineChanges = { _ in nil }
       $0.gitClient.remoteInfo = { _ in nil }
     }
+    store.timeout = .realWorkTestStoreTimeout
 
     await store.send(.loadPersistedRepositories)
     await store.receive(\.repositoriesLoaded) {
@@ -1057,6 +1063,7 @@ struct RepositoriesFeatureTests {
         return .deleted
       }
     }
+    store.timeout = .realWorkTestStoreTimeout
     store.exhaustivity = .off
 
     await store.send(.repositoryManagement(.requestRemoveRepository(workspaceID)))
@@ -1109,6 +1116,7 @@ struct RepositoriesFeatureTests {
         throw ShellClientError(command: "git", stdout: "", stderr: "broken", exitCode: 1)
       }
     }
+    store.timeout = .realWorkTestStoreTimeout
     store.exhaustivity = .off
 
     await store.send(.repositoryManagement(.requestRemoveRepository(workspaceID)))
@@ -1167,6 +1175,7 @@ struct RepositoriesFeatureTests {
         throw ShellClientError(command: "git", stdout: "", stderr: "broken", exitCode: 1)
       }
     }
+    store.timeout = .realWorkTestStoreTimeout
     store.exhaustivity = .off
 
     await store.send(.repositoryManagement(.requestRemoveRepository(workspaceID)))
@@ -1307,6 +1316,7 @@ struct RepositoriesFeatureTests {
       $0.repositoryPersistence.saveRepositoryEntries = { _ in }
       $0.repositoryPersistence.saveRepositorySnapshot = { _ in }
     }
+    store.timeout = .realWorkTestStoreTimeout
     store.exhaustivity = .off
 
     let draft = ProjectWorkspaceCreationDraft(
@@ -1430,6 +1440,7 @@ struct RepositoriesFeatureTests {
       }
       $0.gitClient.repositoryWebURL = { _ in nil }
     }
+    store.timeout = .realWorkTestStoreTimeout
 
     await store.send(.loadPersistedRepositories)
     await store.receive(\.repositoriesLoaded) {
@@ -1617,6 +1628,7 @@ struct RepositoriesFeatureTests {
         return []
       }
     }
+    store.timeout = .realWorkTestStoreTimeout
 
     await store.send(
       .repositoryManagement(
@@ -1898,6 +1910,7 @@ struct RepositoriesFeatureTests {
         return [worktree]
       }
     }
+    store.timeout = .realWorkTestStoreTimeout
 
     let expectedAlert = AlertState<RepositoriesFeature.Alert> {
       TextState("Some folders couldn't be opened")
@@ -1947,6 +1960,7 @@ struct RepositoriesFeatureTests {
         savedSnapshots.withValue { $0.append(repositories) }
       }
     }
+    store.timeout = .realWorkTestStoreTimeout
 
     await store.send(
       .repositoriesLoaded(
@@ -1984,6 +1998,7 @@ struct RepositoriesFeatureTests {
         savedSnapshots.withValue { $0.append(repositories) }
       }
     }
+    store.timeout = .realWorkTestStoreTimeout
 
     await store.send(
       .repositoriesLoaded(
@@ -2028,6 +2043,7 @@ struct RepositoriesFeatureTests {
         savedSnapshots.withValue { $0.append(repositories) }
       }
     }
+    store.timeout = .realWorkTestStoreTimeout
 
     await store.send(
       .repositoriesLoaded(
@@ -2061,6 +2077,7 @@ struct RepositoriesFeatureTests {
         savedSnapshots.withValue { $0.append(repositories) }
       }
     }
+    store.timeout = .realWorkTestStoreTimeout
 
     await store.send(
       .repositoriesLoaded(
@@ -2942,11 +2959,7 @@ struct RepositoriesFeatureTests {
         }
       }
 
-      func waitUntilArmed() async {
-        while continuation == nil {
-          await Task.yield()
-        }
-      }
+      var isArmed: Bool { continuation != nil }
 
       func resume() {
         continuation?.resume()
@@ -2979,7 +2992,7 @@ struct RepositoriesFeatureTests {
 
     store.exhaustivity = .off
     await store.send(.worktreeCreation(.createRandomWorktreeInRepository(repoA.id)))
-    await promptLoadGate.waitUntilArmed()
+    await waitUntil { await promptLoadGate.isArmed }
     await store.send(.worktreeCreation(.createRandomWorktreeInRepository(repoB.id)))
     await promptLoadGate.resume()
     await store.receive(\.worktreeCreation.promptedWorktreeCreationDataLoaded) {
@@ -5041,6 +5054,7 @@ struct RepositoriesFeatureTests {
     let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     }
+    store.timeout = .realWorkTestStoreTimeout
 
     await store.send(
       .repositoriesLoaded(
@@ -5069,6 +5083,7 @@ struct RepositoriesFeatureTests {
     let store = TestStore(initialState: initialState) {
       RepositoriesFeature()
     }
+    store.timeout = .realWorkTestStoreTimeout
 
     await store.send(
       .repositoriesLoaded(
@@ -5115,6 +5130,7 @@ struct RepositoriesFeatureTests {
     } withDependencies: {
       $0.gitClient.worktrees = { _ in [mainWorktree] }
     }
+    store.timeout = .realWorkTestStoreTimeout
 
     await store.send(
       .worktreeLifecycle(
@@ -5156,6 +5172,7 @@ struct RepositoriesFeatureTests {
     } withDependencies: {
       $0.gitClient.worktrees = { _ in [mainWorktree] }
     }
+    store.timeout = .realWorkTestStoreTimeout
 
     await store.send(
       .worktreeLifecycle(
@@ -5203,6 +5220,7 @@ struct RepositoriesFeatureTests {
     } withDependencies: {
       $0.gitClient.worktrees = { _ in [newWorktree, existingWorktree] }
     }
+    store.timeout = .realWorkTestStoreTimeout
 
     await store.send(
       .worktreeCreation(
@@ -5469,6 +5487,7 @@ struct RepositoriesFeatureTests {
         mergedNumbers.withValue { $0.append(number) }
       }
     }
+    store.timeout = .realWorkTestStoreTimeout
     store.exhaustivity = .off
 
     await store.send(.githubIntegration(.pullRequestAction(featureWorktree.id, .merge)))
@@ -5523,6 +5542,7 @@ struct RepositoriesFeatureTests {
         mergedStrategies.withValue { $0.append(strategy) }
       }
     }
+    store.timeout = .realWorkTestStoreTimeout
     store.exhaustivity = .off
 
     await store.send(.githubIntegration(.pullRequestAction(featureWorktree.id, .merge)))
@@ -5778,6 +5798,7 @@ struct RepositoriesFeatureTests {
         closedNumbers.withValue { $0.append(number) }
       }
     }
+    store.timeout = .realWorkTestStoreTimeout
     store.exhaustivity = .off
 
     await store.send(.githubIntegration(.pullRequestAction(featureWorktree.id, .close)))
@@ -7785,6 +7806,7 @@ struct RepositoriesFeatureTests {
         return []
       }
     }
+    store.timeout = .realWorkTestStoreTimeout
 
     await store.send(.loadPersistedRepositories)
     await fetchStarted.wait()
@@ -7839,6 +7861,7 @@ struct RepositoriesFeatureTests {
         }
       }
     }
+    store.timeout = .realWorkTestStoreTimeout
 
     await store.send(.loadPersistedRepositories)
     await store.receive(\.repositoriesLoaded) {
@@ -7892,6 +7915,7 @@ struct RepositoriesFeatureTests {
         }
       }
     }
+    store.timeout = .realWorkTestStoreTimeout
 
     await store.send(.task) {
       $0.snapshotPersistencePhase = .restoring

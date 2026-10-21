@@ -268,6 +268,7 @@ struct WorkflowRunsFeatureTests {
       $0.settingsFileStorage = storage.storage
       $0.continuousClock = clock
     }
+    store.timeout = .realWorkTestStoreTimeout
     store.exhaustivity = .off(showSkippedAssertions: false)
     return store
   }
@@ -323,9 +324,9 @@ struct WorkflowRunsFeatureTests {
     let (session, effects) = try fixture.session()
     let id = session.run.id
     await store.send(.started(session, effects: effects))
-    await store.receive(.event(runID: id, .roleIdle(ordinal: 1)), timeout: Self.timeout)
+    await store.receive(.event(runID: id, .roleIdle(ordinal: 1)))
     await store.receive(
-      .event(runID: id, .injectionSucceeded(ordinal: 1, dispatchID: "dispatch-1")), timeout: Self.timeout)
+      .event(runID: id, .injectionSucceeded(ordinal: 1, dispatchID: "dispatch-1")))
     await store.send(
       .deliver(
         .init(
@@ -340,8 +341,8 @@ struct WorkflowRunsFeatureTests {
     if persistenceFails { try FileManager.default.createDirectory(at: path, withIntermediateDirectories: false) }
     await store.send(.userAction(runID: id, .cancel))
     queue.release()
-    await store.receive(\.event, timeout: Self.timeout)
-    await store.finish(timeout: Self.timeout)
+    await store.receive(\.event)
+    await store.finish()
     let run = try #require(store.state.sessions[id]?.run)
     let record = try session.store.readRecord(runID: id)
     #expect(run.status == .cancelled)
@@ -422,7 +423,6 @@ struct WorkflowRunsFeatureTests {
     }
   }
 
-  private static let timeout: Duration = .seconds(5)
   /// Tokens are minted by the reducer's `uuid` dependency (`.incrementing`) when a step opens.
   nonisolated private static let firstToken = "00000000-0000-0000-0000-000000000000"
   nonisolated private static let secondToken = "00000000-0000-0000-0000-000000000001"
@@ -441,10 +441,9 @@ struct WorkflowRunsFeatureTests {
     let runDirectory = session.store.directory(for: runID)
 
     await store.send(.started(session, effects: effects))
-    await store.receive(.event(runID: runID, .roleIdle(ordinal: 1)), timeout: Self.timeout)
+    await store.receive(.event(runID: runID, .roleIdle(ordinal: 1)))
     await store.receive(
-      .event(runID: runID, .injectionSucceeded(ordinal: 1, dispatchID: "dispatch-1")),
-      timeout: Self.timeout)
+      .event(runID: runID, .injectionSucceeded(ordinal: 1, dispatchID: "dispatch-1")))
     #expect(fixture.typed.count == 1)
     #expect(
       fixture.typed[0].instructionExisted,
@@ -462,7 +461,7 @@ struct WorkflowRunsFeatureTests {
           body: "# Brief\n## Scope\nx\n## Claims\ny", verdict: nil, source: "pane"))
     )
     #expect(store.state.pendingDeliveries[requestID]?.ordinal == 1)
-    await store.receive(.event(runID: runID, .deliveryPersisted(ordinal: 1)), timeout: Self.timeout)
+    await store.receive(.event(runID: runID, .deliveryPersisted(ordinal: 1)))
     #expect(fixture.responses.count == 1)
     guard case .delivered(let run, let receipt) = fixture.responses[0].resolution else {
       Issue.record("expected a delivered resolution, got \(fixture.responses[0].resolution)")
@@ -475,7 +474,7 @@ struct WorkflowRunsFeatureTests {
     #expect(fixture.completed == ["dispatch-1"])
 
     // The next step launches the reviewer: skill materialized, plan frozen, pane bound, memory written.
-    await store.receive(\.event, timeout: Self.timeout)
+    await store.receive(\.event)
     #expect(fixture.launches.count == 1)
     #expect(fixture.launches[0].environment["PROWL_WORKFLOW_TOKEN"] == Self.secondToken)
     #expect(
@@ -498,7 +497,7 @@ struct WorkflowRunsFeatureTests {
     await store.send(.userAction(runID: runID, .cancel)) {
       $0.sessions[runID]?.run.status = .cancelled
     }
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
     #expect(fixture.abandoned.map(\.dispatchID) == ["dispatch-2"])
     #expect(fixture.disarmed.sorted() == [1, 2])
     #expect(try session.store.readRecord(runID: runID).run.status.state == "cancelled")
@@ -523,14 +522,14 @@ struct WorkflowRunsFeatureTests {
     try FileManager.default.createSymbolicLink(at: instructions, withDestinationURL: elsewhere)
 
     await store.send(.started(session, effects: effects))
-    await store.receive(.event(runID: runID, .roleIdle(ordinal: 1)), timeout: Self.timeout)
-    await store.receive(\.event, timeout: Self.timeout)
+    await store.receive(.event(runID: runID, .roleIdle(ordinal: 1)))
+    await store.receive(\.event)
     #expect(
       store.state.sessions[runID]?.run.status.attention?.reason.code == "injection_failed:activation_unavailable")
     #expect(fixture.typed.isEmpty)
     #expect(fixture.opened.isEmpty)
     await store.send(.userAction(runID: runID, .cancel))
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
   }
 
   // MARK: - Rendezvous (decision W1)
@@ -558,7 +557,7 @@ struct WorkflowRunsFeatureTests {
       queue.effects.contains { if case .persistDelivery = $0 { return true } else { return false } })
 
     await store.send(.userAction(runID: runID, .cancel))
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
     #expect(store.state.pendingDeliveries.isEmpty)
     #expect(fixture.responses.count == 1)
     #expect(fixture.responses[0].requestID == requestID)
@@ -602,7 +601,7 @@ struct WorkflowRunsFeatureTests {
     #expect(code == CLIErrorCode.workflowFailed)
     #expect(message.contains("disk full"))
     await store.send(.userAction(runID: runID, .cancel))
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
   }
 
   @Test(.dependencies) func aProvisionalDeliveryIsAnsweredAsProvisionalWithItsIssues() async throws {
@@ -630,7 +629,7 @@ struct WorkflowRunsFeatureTests {
     #expect(receipt.issues == [.missingSections(["## Claims"])])
     #expect(fixture.completed.isEmpty, "the dispatch record stays pending until the user accepts")
     await store.send(.userAction(runID: runID, .cancel))
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
   }
 
   @Test(.dependencies) func aRejectedDeliveryIsAnsweredAtOnceWithoutAPendingRequest() async throws {
@@ -655,7 +654,7 @@ struct WorkflowRunsFeatureTests {
         WorkflowDeliveryRequest(
           requestID: unknownRun, runID: UUID(), ordinal: nil, selector: .manual(stepID: "brief"),
           body: "x", verdict: nil, source: "manual")))
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
     #expect(store.state.pendingDeliveries.isEmpty)
     #expect(fixture.responses.map(\.requestID) == [wrongToken, unknownRun])
     #expect(
@@ -666,7 +665,7 @@ struct WorkflowRunsFeatureTests {
       fixture.responses[1].resolution
         == .failed(code: CLIErrorCode.runNotFound, message: "The workflow run is not active."))
     await store.send(.userAction(runID: runID, .cancel))
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
   }
 
   // MARK: - Late and stale launches
@@ -680,13 +679,13 @@ struct WorkflowRunsFeatureTests {
     let runID = session.run.id
     await store.send(.started(session, effects: []))
     await store.send(.userAction(runID: runID, .cancel))
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
 
     let pane = WorkflowPaneIdentity(
       surfaceID: UUID(), tabID: nil, handle: "p7", displayName: "Pi", agent: "pi")
     await store.send(
       .event(runID: runID, .launched(ordinal: 2, pane: pane, dispatchID: "late-dispatch")))
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
     #expect(fixture.abandoned.map(\.dispatchID) == ["late-dispatch"])
     #expect(fixture.closed == [pane.surfaceID])
   }
@@ -705,12 +704,12 @@ struct WorkflowRunsFeatureTests {
       surfaceID: UUID(), tabID: nil, handle: "p8", displayName: "Pi", agent: "pi")
     await store.send(
       .event(runID: runID, .launched(ordinal: 42, pane: pane, dispatchID: "stale-dispatch")))
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
     #expect(store.state.sessions[runID]?.run.bindings["reviewer"]?.pane == nil)
     #expect(fixture.abandoned.map(\.dispatchID) == ["stale-dispatch"])
     #expect(fixture.closed == [pane.surfaceID])
     await store.send(.userAction(runID: runID, .cancel))
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
   }
 
   // MARK: - Fences and stale work
@@ -729,7 +728,7 @@ struct WorkflowRunsFeatureTests {
     // The idle wait ended and the inject is (conceptually) queued; a cancel must fence it.
     await store.send(.userAction(runID: runID, .cancel))
     #expect(queue.fenced == [runID])
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
 
     // A retry from an attention likewise revokes the in-flight invocation.
     let second = try fixture.session().0
@@ -740,7 +739,7 @@ struct WorkflowRunsFeatureTests {
     await store.send(.userAction(runID: secondID, .retry))
     #expect(queue.fenced == [runID, secondID])
     await store.send(.userAction(runID: secondID, .cancel))
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
   }
 
   /// A typed line whose `.injectionSucceeded` the machine no longer takes up (the step moved on)
@@ -755,13 +754,13 @@ struct WorkflowRunsFeatureTests {
     let runID = waiting.run.id
     await store.send(.started(waiting, effects: []))
     await store.send(.event(runID: runID, .injectionSucceeded(ordinal: 1, dispatchID: "stale-1")))
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
     #expect(fixture.abandoned.map(\.dispatchID) == ["stale-1"])
 
     await store.send(.userAction(runID: runID, .cancel))
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
     await store.send(.event(runID: runID, .injectionSucceeded(ordinal: 1, dispatchID: "late-1")))
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
     // The cancel's own abandon of `dispatch-0` is an ordered effect the recording queue never
     // performs; the late injection's record is abandoned directly by the reducer.
     #expect(fixture.abandoned.map(\.dispatchID) == ["stale-1", "late-1"])
@@ -779,7 +778,7 @@ struct WorkflowRunsFeatureTests {
     let (session, effects) = try fixture.session()
     let runID = session.run.id
     await store.send(.started(session, effects: effects))
-    await store.receive(.event(runID: runID, .roleIdle(ordinal: 1)), timeout: Self.timeout)
+    await store.receive(.event(runID: runID, .roleIdle(ordinal: 1)))
     await queue.reached()
     #expect(fixture.opened.count == 1)
     #expect(fixture.guardAnswers == [false], "the guard the terminal evaluates reflects the real fence")
@@ -787,7 +786,7 @@ struct WorkflowRunsFeatureTests {
     #expect(fixture.typed.isEmpty)
     #expect(store.state.sessions[runID]?.run.phase == .injecting(ordinal: 1))
     await store.send(.userAction(runID: runID, .cancel))
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
   }
 
   @Test(.dependencies) func cancellationDuringPasteWaitReturnsTheUnsubmittedIssuance() async throws {
@@ -801,12 +800,12 @@ struct WorkflowRunsFeatureTests {
     let (session, effects) = try fixture.session()
     let runID = session.run.id
     await store.send(.started(session, effects: effects))
-    await store.receive(.event(runID: runID, .roleIdle(ordinal: 1)), timeout: Self.timeout)
+    await store.receive(.event(runID: runID, .roleIdle(ordinal: 1)))
     for await _ in entered.stream { break }
     #expect(fixture.opened.count == 1)
     await store.send(.userAction(runID: runID, .cancel))
     release.continuation.yield()
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
     #expect(fixture.cancelled == ["dispatch-1"])
     #expect(fixture.typed.isEmpty)
     #expect(store.state.sessions[runID]?.run.status == .cancelled)
@@ -821,7 +820,7 @@ struct WorkflowRunsFeatureTests {
     let (session, effects) = try fixture.session()
     let runID = session.run.id
     await store.send(.started(session, effects: effects))
-    await store.receive(.event(runID: runID, .roleIdle(ordinal: 1)), timeout: Self.timeout)
+    await store.receive(.event(runID: runID, .roleIdle(ordinal: 1)))
     await queue.reached()
     #expect(fixture.opened.isEmpty)
     #expect(fixture.cancelled.isEmpty)
@@ -829,7 +828,7 @@ struct WorkflowRunsFeatureTests {
     #expect(fixture.guardAnswers.isEmpty)
     #expect(store.state.sessions[runID]?.run.phase == .injecting(ordinal: 1))
     await store.send(.userAction(runID: runID, .cancel))
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
   }
 
   @Test(.dependencies) func handoffActionCapturesTheSourceSession() async throws {
@@ -850,7 +849,7 @@ struct WorkflowRunsFeatureTests {
     #expect(gate.receivedContext.value?.sessionContext?.sessionID == "handoff-session")
     #expect(gate.receivedContext.value?.outgoingAgent == "pi")
     gate.release()
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
   }
 
   /// A native action checks the fence once more right before it starts: a cancel that lands
@@ -875,7 +874,7 @@ struct WorkflowRunsFeatureTests {
     await store.send(.userAction(runID: runID, .cancel)) {
       $0.sessions[runID]?.run.status = .cancelled
     }
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
     let log = try String(
       contentsOf: session.store.directory(for: runID).appending(path: "log.md"), encoding: .utf8)
     #expect(log.contains("Run finished: cancelled."))
@@ -897,7 +896,7 @@ struct WorkflowRunsFeatureTests {
       $0.sessions[runID]?.run.status = .cancelled
     }
     gate.release()
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
     #expect(store.state.sessions[runID]?.run.actionOutputs.isEmpty == true)
     let log = try String(
       contentsOf: session.store.directory(for: runID).appending(path: "log.md"), encoding: .utf8)
@@ -915,13 +914,13 @@ struct WorkflowRunsFeatureTests {
     let (session, effects) = try fixture.session(Self.closeThenSummary)
     let runID = session.run.id
     let reviewer = try await driveToCleanup(store, fixture: fixture, session: session, effects: effects)
-    await store.receive(.event(runID: runID, .roleIdle(ordinal: 3)), timeout: Self.timeout)
+    await store.receive(.event(runID: runID, .roleIdle(ordinal: 3)))
     await store.receive(
-      .event(runID: runID, .injectionSucceeded(ordinal: 3, dispatchID: "dispatch-3")), timeout: Self.timeout)
+      .event(runID: runID, .injectionSucceeded(ordinal: 3, dispatchID: "dispatch-3")))
     #expect(fixture.closed == [reviewer.surfaceID])
     #expect(fixture.typed.count == 2)
     await store.send(.userAction(runID: runID, .cancel))
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
   }
 
   @Test(.dependencies) func aCancelThatBeatsAQueuedCloseKeepsThePane() async throws {
@@ -938,7 +937,7 @@ struct WorkflowRunsFeatureTests {
     #expect(fixture.closed.isEmpty)
     #expect(store.state.sessions[runID]?.run.bindings["reviewer"]?.pane?.surfaceID == reviewer.surfaceID)
     await store.send(.userAction(runID: runID, .cancel))
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
     #expect(fixture.closed.isEmpty, "cancel never closes panes")
   }
 
@@ -964,7 +963,7 @@ struct WorkflowRunsFeatureTests {
     }
     await store.send(.userAction(runID: later.run.id, .cancel))
     await store.send(.userAction(runID: earlier.run.id, .cancel))
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
     #expect(store.state.activeSession(boundTo: pane.surfaceID) == nil, "an ended run is no longer busy")
     #expect(
       store.state.paneOwners[pane.surfaceID] == later.run.id,
@@ -981,16 +980,16 @@ struct WorkflowRunsFeatureTests {
     let (session, effects) = try fixture.session()
     let runID = session.run.id
     await store.send(.started(session, effects: effects))
-    await store.receive(.event(runID: runID, .roleIdle(ordinal: 1)), timeout: Self.timeout)
+    await store.receive(.event(runID: runID, .roleIdle(ordinal: 1)))
     await store.receive(
-      .event(runID: runID, .injectionSucceeded(ordinal: 1, dispatchID: "dispatch-1")), timeout: Self.timeout)
+      .event(runID: runID, .injectionSucceeded(ordinal: 1, dispatchID: "dispatch-1")))
     await store.send(
       .deliver(
         WorkflowDeliveryRequest(
           requestID: UUID(), runID: runID, ordinal: 1, selector: .token(Self.firstToken),
           body: "# Brief\n## Scope\nx\n## Claims\ny", verdict: nil, source: "pane")))
-    await store.receive(.event(runID: runID, .deliveryPersisted(ordinal: 1)), timeout: Self.timeout)
-    await store.receive(\.event, timeout: Self.timeout)
+    await store.receive(.event(runID: runID, .deliveryPersisted(ordinal: 1)))
+    await store.receive(\.event)
     let first = try #require(store.state.sessions[runID]?.run.bindings["reviewer"]?.pane)
     #expect(store.state.paneOwners[first.surfaceID] == runID)
     // The launch boundary reserved the pane while the launch was in flight.
@@ -999,7 +998,7 @@ struct WorkflowRunsFeatureTests {
 
     await store.send(.event(runID: runID, .watchdog(ordinal: 2, .attention(.agentGone(.sessionEnded)))))
     await store.send(.userAction(runID: runID, .relaunch))
-    await store.receive(\.event, timeout: Self.timeout)
+    await store.receive(\.event)
     let second = try #require(store.state.sessions[runID]?.run.bindings["reviewer"]?.pane)
     #expect(second.surfaceID != first.surfaceID)
     #expect(store.state.sessions[runID]?.boundSurfaceIDs == [Self.authorPane.surfaceID, second.surfaceID])
@@ -1009,7 +1008,7 @@ struct WorkflowRunsFeatureTests {
       reservations.pending(for: store.state, isLive: { _ in true }).isEmpty,
       "admission no longer holds the pane the relaunch left, even while it lives")
     await store.send(.userAction(runID: runID, .cancel))
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
   }
 
   /// A fence that lands before the executor even reaches the action's batch skips it at the
@@ -1027,7 +1026,7 @@ struct WorkflowRunsFeatureTests {
     await store.send(.userAction(runID: runID, .cancel)) {
       $0.sessions[runID]?.run.status = .cancelled
     }
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
     let log = try String(
       contentsOf: session.store.directory(for: runID).appending(path: "log.md"), encoding: .utf8)
     #expect(
@@ -1044,23 +1043,23 @@ struct WorkflowRunsFeatureTests {
   ) async throws -> WorkflowPaneIdentity {
     let runID = session.run.id
     await store.send(.started(session, effects: effects))
-    await store.receive(.event(runID: runID, .roleIdle(ordinal: 1)), timeout: Self.timeout)
+    await store.receive(.event(runID: runID, .roleIdle(ordinal: 1)))
     await store.receive(
-      .event(runID: runID, .injectionSucceeded(ordinal: 1, dispatchID: "dispatch-1")), timeout: Self.timeout)
+      .event(runID: runID, .injectionSucceeded(ordinal: 1, dispatchID: "dispatch-1")))
     await store.send(
       .deliver(
         WorkflowDeliveryRequest(
           requestID: UUID(), runID: runID, ordinal: 1, selector: .token(Self.firstToken), body: "brief",
           verdict: nil, source: "pane")))
-    await store.receive(.event(runID: runID, .deliveryPersisted(ordinal: 1)), timeout: Self.timeout)
-    await store.receive(\.event, timeout: Self.timeout)
+    await store.receive(.event(runID: runID, .deliveryPersisted(ordinal: 1)))
+    await store.receive(\.event)
     let reviewer = try #require(store.state.sessions[runID]?.run.bindings["reviewer"]?.pane)
     await store.send(
       .deliver(
         WorkflowDeliveryRequest(
           requestID: UUID(), runID: runID, ordinal: 2, selector: .token(Self.secondToken), body: "findings",
           verdict: nil, source: "pane")))
-    await store.receive(.event(runID: runID, .deliveryPersisted(ordinal: 2)), timeout: Self.timeout)
+    await store.receive(.event(runID: runID, .deliveryPersisted(ordinal: 2)))
     return reviewer
   }
 
@@ -1110,7 +1109,7 @@ struct WorkflowRunsFeatureTests {
     await store.send(.event(runID: runID, .injectionSucceeded(ordinal: 1, dispatchID: "dispatch-1"))) {
       $0.pendingStarts = [:]
     }
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
     #expect(fixture.responses.count == 1)
     guard case .started(let run) = fixture.responses[0].resolution else {
       Issue.record("expected a started resolution")
@@ -1124,7 +1123,7 @@ struct WorkflowRunsFeatureTests {
     let secondRequest = UUID()
     await store.send(.started(second, effects: secondEffects, requestID: secondRequest))
     await store.send(.event(runID: second.run.id, .injectionFailed(ordinal: 1, .surfaceMissing)))
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
     guard case .started(let failed) = fixture.responses[1].resolution else {
       Issue.record("expected a started resolution")
       return
@@ -1132,7 +1131,7 @@ struct WorkflowRunsFeatureTests {
     #expect(failed.status.attention?.reason.code == "injection_failed:surface_missing")
     await store.send(.userAction(runID: runID, .cancel))
     await store.send(.userAction(runID: second.run.id, .cancel))
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
   }
 
   // MARK: - Idle wait outcomes
@@ -1147,10 +1146,10 @@ struct WorkflowRunsFeatureTests {
     let runID = session.run.id
     await store.send(.started(session, effects: effects))
     await store.receive(
-      .event(runID: runID, .roleUnavailable(ordinal: 1, .roleBlocked)), timeout: Self.timeout)
+      .event(runID: runID, .roleUnavailable(ordinal: 1, .roleBlocked)))
     #expect(store.state.sessions[runID]?.run.status.attention?.reason.code == "injection_failed:role_blocked")
     await store.send(.userAction(runID: runID, .cancel))
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
   }
 
   @Test(.dependencies) func aPaneWithAForeignPendingDispatchEndsTheIdleWaitInAttention() async throws {
@@ -1162,13 +1161,13 @@ struct WorkflowRunsFeatureTests {
     let (session, effects) = try fixture.session()
     let runID = session.run.id
     await store.send(.started(session, effects: effects))
-    await store.receive(\.event, timeout: Self.timeout)
+    await store.receive(\.event)
     #expect(
       store.state.sessions[runID]?.run.status.attention?.reason.code == "injection_failed:activation_unavailable")
     #expect(store.state.sessions[runID]?.run.status.attention?.message.contains("someone-elses-dispatch") == true)
     #expect(fixture.typed.isEmpty)
     await store.send(.userAction(runID: runID, .cancel))
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
   }
 
   // MARK: - Presentation notices
@@ -1207,7 +1206,7 @@ struct WorkflowRunsFeatureTests {
     await store.receive(.finishedNoticeExpired(runID)) {
       $0.recentlyFinishedRunIDs = []
     }
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
   }
 
   @Test func runNoticeCoversMeaningfulTerminalEdgesButNotExplicitCancellation() throws {
@@ -1259,7 +1258,8 @@ struct WorkflowRunsFeatureTests {
   @Test(.dependencies) func explicitFinalNotifySuppressesTheDuplicateGenericCompletionNotification() async throws {
     let fixture = try Fixture()
     defer { fixture.cleanUp() }
-    let store = makeStore(fixture, queue: WorkflowEffectQueue().client)
+    let queue = WorkflowEffectQueue()
+    let store = makeStore(fixture, queue: queue.client)
     var session = try fixture.session().0
     session.run.status = .completed
     let base = try #require(WorkflowRunNotice.statusEdge(from: nil, to: session.run))
@@ -1276,7 +1276,9 @@ struct WorkflowRunsFeatureTests {
 
     await store.send(.started(session, effects: [.notify("Custom completion")]))
     await store.receive(\.delegate.notice, expected)
-    await store.finish(timeout: Self.timeout)
+    // The run's effect lane stays open until the run ends; end it so `finish()` can drain it.
+    queue.finish(session.run.id)
+    await store.finish()
     #expect(fixture.notifications.count == 1)
     #expect(fixture.notifications.first?.workflowRunID == session.run.id)
   }
@@ -1296,16 +1298,16 @@ struct WorkflowRunsFeatureTests {
     await store.send(.markInterruptedRuns(worktreeRoots: [root])) {
       $0.scannedWorktreeRoots = [root]
     }
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
     #expect(try session.store.readRecord(runID: session.run.id).run.status.state == "interrupted")
 
     // A second scan of the same root is a no-op even after a new run started there.
     await store.send(.started(session, effects: []))
     await store.send(.markInterruptedRuns(worktreeRoots: [root]))
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
     #expect(store.state.sessions[session.run.id]?.run.status == .running)
     await store.send(.userAction(runID: session.run.id, .cancel))
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
   }
 
   // MARK: - Helpers
@@ -1375,6 +1377,6 @@ extension WorkflowRunsFeatureTests {
     await store.receive(.finishedNoticeExpired(runID)) {
       $0.recentlyFinishedRunIDs = []
     }
-    await store.finish(timeout: Self.timeout)
+    await store.finish()
   }
 }

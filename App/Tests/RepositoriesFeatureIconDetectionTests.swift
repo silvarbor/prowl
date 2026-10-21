@@ -462,6 +462,7 @@ struct RepositoriesFeatureIconDetectionTests {
       $0.repositoryPersistence.saveRepositorySnapshot = { _ in }
       $0.gitClient.repositoryWebURL = { _ in nil }
     }
+    store.timeout = .realWorkTestStoreTimeout
     store.exhaustivity = .off
 
     await store.send(

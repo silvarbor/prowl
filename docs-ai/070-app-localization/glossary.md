@@ -99,6 +99,17 @@ When “profile” and “configuration” meet in one sentence, write 设置 fo
 | mirror (n., one connected viewer) | 镜像 (`%lld 个镜像`) |
 | Last seen / Last connected | 上次在线 / 上次连接 |
 
+## SSH remote agents
+
+| English | 中文 |
+| --- | --- |
+| SSH session / remote host | SSH 会话 / 远程主机 (主机 alone, as in Remote Mirror) |
+| agent detection / Agents not detected | Agent 检测 / 无法检测 Agent (Prowl cannot read the pane, not “found none”) |
+| read-only check | 只读检查 |
+| its own (separate) SSH connection | 自己的 / 独立的 SSH 连接 |
+| Turn On / Turn Off / Not Now | 开启 / 关闭 / 以后再说 |
+| connected to / disconnected from %@ | 已连接到 %@ / 已断开与 %@ 的连接 |
+
 ## Playful copy
 
 The loading messages of `App/Sources/App/AppLoadingView.swift` are jokes. Do not translate them

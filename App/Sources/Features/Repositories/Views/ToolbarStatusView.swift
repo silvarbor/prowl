@@ -9,8 +9,12 @@ struct ToolbarStatusView: View {
   let workflow: WorkflowStatusCenterPresentation
   let pullRequest: GithubPullRequest?
   let codeHost: CodeHost
+  var remoteAgentConsent: RemoteAgentConsentPrompt?
+  var remoteChannel: RemoteChannelToolbarStatus?
   let onWorkflowIntent: (WorkflowRunPanelIntent) -> Void
   let onRetryGithubRateLimit: () -> Void
+  var onRemoteAgentConsent: (RemoteAgentConsentChoice) -> Void = { _ in }
+  var onOpenAgentSettings: () -> Void = {}
 
   var body: some View {
     let selection = ToolbarStatusSelection(
@@ -18,7 +22,9 @@ struct ToolbarStatusView: View {
       workflow: featureFlags.workflowUI
         ? workflow : WorkflowStatusCenterPresentation(state: .init(), selectedWorktreeID: nil, now: .distantPast),
       pullRequest: pullRequest,
-      githubRateLimit: githubRateLimit
+      githubRateLimit: githubRateLimit,
+      remoteAgentConsent: remoteAgentConsent,
+      remoteChannel: remoteChannel
     )
     ZStack {
       // Keep the panel mounted so a selected run remains readable after the last active run ends.
@@ -61,6 +67,12 @@ struct ToolbarStatusView: View {
         .transition(.opacity)
       case .workflow:
         EmptyView()
+      case .remoteAgentConsent(let prompt):
+        RemoteAgentConsentStatusButton(prompt: prompt, onChoice: onRemoteAgentConsent)
+          .transition(.opacity)
+      case .remoteChannel(let status):
+        RemoteChannelStatusButton(status: status, onOpenSettings: onOpenAgentSettings)
+          .transition(.opacity)
       case .githubRateLimited(let status):
         GithubRateLimitStatusButton(status: status, onRetry: onRetryGithubRateLimit)
           .transition(.opacity)
@@ -80,8 +92,10 @@ struct ToolbarStatusView: View {
 @MainActor
 enum ToolbarStatusSelection: Equatable {
   case toast(RepositoriesFeature.StatusToast)
+  case remoteAgentConsent(RemoteAgentConsentPrompt)
   case workflow(WorkflowStatusCenterPresentation)
   case githubRateLimited(GithubRateLimitStatus)
+  case remoteChannel(RemoteChannelToolbarStatus)
   case pullRequest(PullRequestStatusModel)
   case motivational
 
@@ -94,14 +108,22 @@ enum ToolbarStatusSelection: Equatable {
     toast: RepositoriesFeature.StatusToast?,
     workflow: WorkflowStatusCenterPresentation,
     pullRequest: GithubPullRequest?,
-    githubRateLimit: GithubRateLimitStatus? = nil
+    githubRateLimit: GithubRateLimitStatus? = nil,
+    remoteAgentConsent: RemoteAgentConsentPrompt? = nil,
+    remoteChannel: RemoteChannelToolbarStatus? = nil
   ) {
+    // The consent question outranks running work: until it is answered, the pane's `ssh`
+    // gets no detection (docs-ai 082, L0 item 12).
     if let toast {
       self = .toast(toast)
+    } else if let remoteAgentConsent {
+      self = .remoteAgentConsent(remoteAgentConsent)
     } else if !workflow.runs.isEmpty {
       self = .workflow(workflow)
     } else if let githubRateLimit {
       self = .githubRateLimited(githubRateLimit)
+    } else if let remoteChannel {
+      self = .remoteChannel(remoteChannel)
     } else if let pullRequest = PullRequestStatusModel(pullRequest: pullRequest) {
       self = .pullRequest(pullRequest)
     } else {

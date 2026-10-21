@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import GhosttyKit
 
@@ -105,6 +106,7 @@ extension WorktreeTerminalState {
     agentDetectionPresenceBySurface.removeValue(forKey: surfaceID)
     lastAgentDetectionDiagnosticsBySurface.removeValue(forKey: surfaceID)
     lastAgentScreenScanBySurface.removeValue(forKey: surfaceID)
+    tmuxLocalScreenHashBySurface.removeValue(forKey: surfaceID)
     if surfaceAgentStates[surfaceID]?.detectedAgent == nil {
       surfaceAgentStates.removeValue(forKey: surfaceID)
     }
@@ -237,8 +239,7 @@ extension WorktreeTerminalState {
     )
     next.sessionMissStreak = sessionMissStreak
     next.decision = decision
-    next.remote =
-      next.agentProcess?.origin == .local ? nil : remote?.context(now: now, stateKnown: stabilized != .unknown)
+    next.remote = remoteContext(remote, origin: next.agentProcess?.origin, stabilized, surfaceID, now: now)
     // Limit logging to meaningful transitions - agent identity or
     // stabilized state changes. Raw oscillation and `seen` flips are
     // routine and would otherwise dominate the log stream.
@@ -256,6 +257,18 @@ extension WorktreeTerminalState {
   /// The screen half of one poll. A verified OSC 7501 root record decides the state,
   /// so the delegated tick does not read the screen at all: the last scan stands in
   /// as the raw state and as the resolver's text (docs-ai 079).
+  /// The published remote context, nil for a local agent. Evidence decides the state only
+  /// when the stabilized state is known and, inside tmux, a capture is fresh: the state
+  /// machine keeps the last stable state for display when it is given an unknown.
+  private func remoteContext(
+    _ remote: RemotePaneTracker.Observation?, origin: ProcessOrigin?, _ stabilized: AgentRawState,
+    _ surfaceID: UUID, now: Date
+  ) -> RemoteAgentContext? {
+    guard origin != .local else { return nil }
+    let known = stabilized != .unknown && remotePaneTrackers[surfaceID]?.tmuxScreen() != .unavailable
+    return remote?.context(now: now, stateKnown: known)
+  }
+
   private func pollScreen(
     for view: GhosttySurfaceView, surfaceID: UUID, agent: DetectedAgent, delegated: Bool
   ) -> (activeText: String, detection: AgentScreenDetection) {
@@ -266,12 +279,34 @@ extension WorktreeTerminalState {
         lastScan?.detection ?? AgentScreenDetection(state: .unknown, reason: .noRuleMatched)
       )
     }
-    let activeText = view.bridge.readActiveText() ?? ""
+    let localText = view.bridge.readActiveText() ?? ""
+    if let tmuxScreen = remotePaneTrackers[surfaceID]?.tmuxScreen() {
+      // Inside tmux the local screen is the tmux client's (status line, other panes, copy
+      // mode); the agent's own screen is the capture. A local change still means the
+      // capture is likely stale, so it asks for a probe now.
+      let localHash = localText.hashValue
+      if tmuxLocalScreenHashBySurface.updateValue(localHash, forKey: surfaceID) != localHash {
+        remotePaneTrackers[surfaceID]?.requestRefreshForScreenChange()
+      }
+      guard case .capture(let text) = tmuxScreen else {
+        // No fresh capture: nothing the cache holds may answer a condition either.
+        let unknown = AgentScreenDetection(state: .unknown, reason: .noRuleMatched)
+        lastAgentScreenScanBySurface[surfaceID] = AgentScreenScan(agent: agent, text: "", detection: unknown)
+        return ("", unknown)
+      }
+      return (text, cachedScreenDetection(forSurfaceID: surfaceID, agent: agent, text: text))
+    }
+    tmuxLocalScreenHashBySurface.removeValue(forKey: surfaceID)
+    let activeText = localText
     // Reuse the previous scan while the screen and detected agent are unchanged.
     // A live-but-idle agent is polled every 300 ms and `detectState` re-splits,
     // lowercases, and scans the whole screen each time; skipping that for
     // identical text is the bulk of steady-state detection cost.
-    return (activeText, cachedScreenDetection(forSurfaceID: surfaceID, agent: agent, text: activeText))
+    let scan = cachedScreenDetection(forSurfaceID: surfaceID, agent: agent, text: activeText)
+    return (
+      activeText,
+      Self.corroboratedScreenDetection(scan, agent: agent, title: view.bridge.state.title)
+    )
   }
 
   private static func processGeneration(_ identified: IdentifiedAgentProcess?) -> AgentProcessGeneration? {
@@ -319,8 +354,19 @@ extension WorktreeTerminalState {
   private func observeRemoteAgent(
     job: ForegroundJob?, localIdentified: IdentifiedAgentProcess?, surfaceID: UUID, now: Date
   ) -> RemotePaneTracker.Observation? {
-    guard remoteAgentDetectionEnabled else {
+    switch remoteAgentDetectionMode {
+    case .enabled:
+      break
+    case .disabled:
       retireRemotePaneTracker(surfaceID: surfaceID)
+      setRemoteIndicator(nil, surfaceID: surfaceID)
+      return nil
+    case .awaitingConsent:
+      retireRemotePaneTracker(surfaceID: surfaceID)
+      setRemoteIndicator(nil, surfaceID: surfaceID)
+      if let job, localIdentified == nil, let ssh = Self.foregroundSSH(job) {
+        askRemoteAgentConsent(surfaceID: surfaceID, ssh: ssh)
+      }
       return nil
     }
     let tracker: RemotePaneTracker
@@ -331,6 +377,7 @@ extension WorktreeTerminalState {
           remoteFenceHistoryBySurface[surfaceID]?[ssh]?.leftForeground = true
         }
         retireRemotePaneTracker(surfaceID: surfaceID)
+        reconcileRemoteIndicator(foregroundSSH: nil, observation: nil, surfaceID: surfaceID, now: now)
         return nil
       }
       tracker = remotePaneTracker(surfaceID: surfaceID, ssh: ssh)
@@ -345,7 +392,71 @@ extension WorktreeTerminalState {
     let observation = bindUnprobedProducer(
       observation: tracker.observe(active: active, now: now), tracker: tracker, surfaceID: surfaceID)
     storeFenceHistory(tracker.fenceHistory, surfaceID: surfaceID)
+    if job != nil {
+      reconcileRemoteIndicator(
+        foregroundSSH: tracker.ssh, observation: observation, surfaceID: surfaceID, now: now)
+    }
     return observation
+  }
+
+  /// Sets the pane's label from a sample that read the foreground job (a probe gap changes
+  /// nothing). It depends on no tracker, so a pane restored by Undo is reconciled too.
+  /// - The foreground `ssh` with a resolved connection, or with a correlation issue: connected,
+  ///   with that issue, so a pane without a listed agent still says why (L0-8).
+  /// - Another (or pending) `ssh`, or a shell: the label of an earlier `ssh` goes. An
+  ///   exited one leaves the ended marker for its duration; a suspended one leaves nothing.
+  private func reconcileRemoteIndicator(
+    foregroundSSH: LocalProcessGeneration?, observation: RemotePaneTracker.Observation?, surfaceID: UUID,
+    now: Date
+  ) {
+    let current = surfaces[surfaceID]?.bridge.state.remoteIndicator
+    if let foregroundSSH, let observation {
+      let issue = RemotePaneIndicator.issue(observation.correlation)
+      if observation.connection != nil || issue != nil {
+        let host = observation.connection?.label ?? String(localized: "Remote host")
+        setRemoteIndicator(.connected(host: host, ssh: foregroundSSH, issue: issue), surfaceID: surfaceID)
+        return
+      }
+    }
+    switch current {
+    case .connected(let host, let ssh, _) where ssh != foregroundSSH:
+      let exited = ProcessDetection.processStartDate(pid: ssh.pid) != ssh.startedAt
+      setRemoteIndicator(exited ? .ended(host: host, endedAt: now) : nil, surfaceID: surfaceID)
+    case .ended where current?.showsEndedMarker(now: now) == false:
+      setRemoteIndicator(nil, surfaceID: surfaceID)
+    default:
+      break
+    }
+  }
+
+  func setRemoteIndicator(_ indicator: RemotePaneIndicator?, surfaceID: UUID) {
+    guard let view = surfaces[surfaceID], view.bridge.state.remoteIndicator != indicator else { return }
+    let now = Date()
+    let spoken = RemoteAgentPresentation.paneAccessibility(view.bridge.state.remoteIndicator, now: now)
+    view.bridge.state.remoteIndicator = indicator
+    if let tabId = tabId(containing: surfaceID) { updateRemoteHosts(for: tabId) }
+    // The pane's accessibility label and help carry the remote state; like a title change,
+    // a change there is announced, or a focused VoiceOver user never hears it.
+    if RemoteAgentPresentation.paneAccessibility(indicator, now: now) != spoken {
+      if let poster = accessibilityPosterForTesting {
+        poster(view, .titleChanged)
+      } else {
+        NSAccessibility.post(element: view, notification: .titleChanged)
+      }
+    }
+  }
+
+  /// The tab shows the hosts its panes reach; tree changes (moved or closed panes) refresh it
+  /// through `updateRunningState`.
+  func updateRemoteHosts(for tabId: TerminalTabID) {
+    guard let tree = trees[tabId] else { return }
+    var hosts: [String] = []
+    for surface in tree.leaves() {
+      if let host = surface.bridge.state.remoteIndicator?.connectedHost, !hosts.contains(host) {
+        hosts.append(host)
+      }
+    }
+    tabManager.updateRemoteHosts(tabId, hosts: hosts)
   }
 
   /// Keeps `history` for its `ssh` and drops the histories of `ssh` clients that exited.
@@ -413,7 +524,8 @@ extension WorktreeTerminalState {
       invocation: SSHInvocation.parse(
         ssh.arguments, workingDirectory: ProcessDetection.currentDirectory(pid: ssh.generation.pid)),
       fenceHistory: remoteFenceHistoryBySurface[surfaceID]?[ssh.generation],
-      source: remoteSnapshotSourceForTesting ?? .live
+      source: remoteSnapshotSourceForTesting ?? .live,
+      uptime: remoteUptimeForTesting ?? { ProcessInfo.processInfo.systemUptime }
     ) { [weak self] in
       self?.wakeAgentDetectionForRemoteSnapshot(surfaceID: surfaceID)
     }
@@ -447,6 +559,40 @@ extension WorktreeTerminalState {
       return (LocalProcessGeneration(pid: pid, startedAt: startedAt), Array(arguments.dropFirst()))
     }
     return nil
+  }
+
+  /// Asks once per `ssh` whether Prowl may open its own connection (docs-ai 082, L0 item 12).
+  /// It only parses the command line: no `ssh -G`, no connection. An `ssh` outside the
+  /// grammar would get no side channel, so it does not ask.
+  private func askRemoteAgentConsent(
+    surfaceID: UUID, ssh: (generation: LocalProcessGeneration, arguments: [String])
+  ) {
+    guard remoteConsentAskedSSHBySurface[surfaceID] != ssh.generation else { return }
+    remoteConsentAskedSSHBySurface[surfaceID] = ssh.generation
+    guard case .supported(let recipe) = SSHInvocation.parse(ssh.arguments) else { return }
+    onRemoteAgentConsentNeeded?(surfaceID, recipe.destination)
+  }
+
+  /// Applies the stored answer. A change of mode runs one tick on every pane: a pane whose
+  /// loop went cold while detection was off or waiting has nothing else to wake it, and its
+  /// open `ssh` must be read (or let go) without a reconnect or a key press. A pane that
+  /// gets a tracker keeps ticking (`remoteAdjustedInterval`); the others go cold again.
+  func setRemoteAgentDetectionConsent(_ consent: RemoteAgentDetectionConsent) {
+    guard remoteAgentDetectionConsent != consent else { return }
+    let previousMode = remoteAgentDetectionMode
+    remoteAgentDetectionConsent = consent
+    guard remoteAgentDetectionMode != previousMode else { return }
+    if remoteAgentDetectionMode == .enabled { remoteConsentAskedSSHBySurface.removeAll() }
+    let now = Date()
+    for (surfaceID, view) in surfaces {
+      guard let tabId = tabId(containing: surfaceID) else { continue }
+      // A cold pane has no state, and a tick cannot publish an agent without one.
+      if surfaceAgentStates[surfaceID] == nil {
+        surfaceAgentStates[surfaceID] = PaneAgentState(lastChangedAt: now)
+      }
+      startAgentDetectionTaskIfNeeded(for: view, tabId: tabId)
+      interruptAgentDetectionSleep(forSurfaceID: surfaceID)
+    }
   }
 
   func retireRemotePaneTracker(surfaceID: UUID) {
@@ -504,6 +650,29 @@ extension WorktreeTerminalState {
     )
     lastAgentScreenScanBySurface[surfaceID] = scan
     return detection
+  }
+
+  /// The screen verdict after the pane's own out-of-band evidence is applied.
+  ///
+  /// traecli animates a braille spinner into the terminal title while a turn runs
+  /// and drops it when the turn settles, so the title is the one running mark the
+  /// screen cannot lose: a long live-block header clipped to the pane width, a pane
+  /// scrolled into history, and a mid-repaint frame all leave a settled-looking
+  /// composer behind while the turn is still running (docs-ai 083). A lone Idle
+  /// screen verdict must not settle such a turn — the pane would flip to Idle, and
+  /// on an unviewed pane earn a spurious Done badge.
+  ///
+  /// Scoped to Idle: a screen verdict of Working, Blocked, or Unknown already
+  /// carries its own meaning, and a dialog the screen reports stays reported.
+  nonisolated static func corroboratedScreenDetection(
+    _ detection: AgentScreenDetection,
+    agent: DetectedAgent,
+    title: String?
+  ) -> AgentScreenDetection {
+    guard agent == .trae, detection.state == .idle, traeTitleShowsRunningTurn(title) else {
+      return detection
+    }
+    return AgentScreenDetection(state: .working, reason: .titleSpinner)
   }
 
   private func resolvedLaunchProcess(
@@ -598,6 +767,7 @@ extension WorktreeTerminalState {
     agentDetectionCoordinators.removeValue(forKey: surfaceID)?.invalidate()
     surfaceAgentStates[surfaceID] = PaneAgentState(lastChangedAt: Date())
     lastAgentScreenScanBySurface.removeValue(forKey: surfaceID)
+    tmuxLocalScreenHashBySurface.removeValue(forKey: surfaceID)
     let hadPublishedEntry = lastEmittedAgentEntriesBySurface.removeValue(forKey: surfaceID) != nil
     // The launch identity lives exactly as long as the launched agent
     // (docs-ai 053/006): once the pane is a bare shell again, a manually
@@ -803,6 +973,7 @@ extension WorktreeTerminalState {
     agentDetectionPresenceBySurface.removeValue(forKey: surfaceId)
     lastAgentDetectionDiagnosticsBySurface.removeValue(forKey: surfaceId)
     lastAgentScreenScanBySurface.removeValue(forKey: surfaceId)
+    tmuxLocalScreenHashBySurface.removeValue(forKey: surfaceId)
     let hadPublishedEntry = lastEmittedAgentEntriesBySurface.removeValue(forKey: surfaceId) != nil
     lastAgentEntryEmitAtBySurface.removeValue(forKey: surfaceId)
     pendingAgentEntryBySurface.removeValue(forKey: surfaceId)
@@ -839,6 +1010,7 @@ extension WorktreeTerminalState {
     agentDetectionPresenceBySurface.removeAll()
     lastAgentDetectionDiagnosticsBySurface.removeAll()
     lastAgentScreenScanBySurface.removeAll()
+    tmuxLocalScreenHashBySurface.removeAll()
     lastEmittedAgentEntriesBySurface.removeAll()
     lastAgentEntryEmitAtBySurface.removeAll()
     pendingAgentEntryBySurface.removeAll()

@@ -119,9 +119,13 @@ acquisition interval (local monotonic start and end), completeness, and outcome 
 - A response that arrives after its subscription is retired (local `ssh` exited, pane
   closed) is dropped.
 
-**C4 — Connection owner.** One actor per connection key owns the side channel
+**C4 — Connection owner.** One actor per connection key owns the **shared connection**: one
+OpenSSH connection, kept by an `ssh` ControlMaster process on Prowl's private
+`ControlPath`, that later `ssh` commands use with no new authentication. The **side
+channel** is Prowl's background commands (probe, polling) over it
 (`ssh -o ControlMaster=auto -o ControlPath=<hash> -o ControlPersist=<n> -o BatchMode=yes`,
-using `~/.ssh/config`, keys and launchd's `SSH_AUTH_SOCK`). The side channel always overrides
+using `~/.ssh/config`, keys and launchd's `SSH_AUTH_SOCK`). It is separate from a
+ControlMaster that the user's own configuration sets. The side channel always overrides
 session effects from the config: `ClearAllForwardings=yes`, no `RemoteCommand`, no
 `RequestTTY`, no `LocalCommand`. Panes and folders subscribe; the owner runs at most one
 probe at a time and publishes the latest snapshot. Scheduling: a request runs at once when
@@ -212,6 +216,21 @@ ticks; macOS: `kern.boottime` and `lstart`), elapsed time, cwd, the tmux mapping
 11. **Admission.** A pane whose agent has a remote origin, including a manual `ssh` from a local
     repository, cannot be a workflow participant or a dispatch target that needs a receipt. The
     refusal is a clear error at the admission point, not only in the UI.
+12. **Consent and side-channel status.** The side channel reaches hosts the user named, and
+    the host can log it, so it starts only after the user agrees.
+    - Settings › Agents has the switch. Its stored value is `undecided` (the default), `on`
+      or `off`. The switch shows on unless the value is `off`.
+    - While the value is `undecided`, Prowl opens no connection and runs no `ssh -G`. The
+      first foreground `ssh` inside the grammar shows a consent panel: a toolbar status item
+      that opens its panel at once. The panel never takes keyboard focus, because the user
+      can be typing a password or a code. Its choices are Turn On, Not Now (ask again after a
+      relaunch) and Turn Off. A change of the switch in Settings also answers it.
+    - `PROWL_REMOTE_AGENT_DETECTION` overrides the stored value and never shows the panel.
+    - While the focused pane's `ssh` uses the side channel (a resolved connection, or a
+      failed attempt), the toolbar status shows the host and its health. Hover opens a panel
+      that tells what the extra connection does, the pane's correlation, and where to turn
+      it off.
+    - Toolbar status order: toast, consent, workflow, rate limit, side channel, pull request.
 
 ### L1 — Remote folders
 
@@ -270,6 +289,75 @@ host or sit behind a capability.
   text) and payloads arrive byte for byte. Profiles that need a local dedicated home are
   unavailable for remote folders until remote account binding is designed. Managed hooks and
   Codex shell probes are skipped; L0 detection covers the session.
+
+### L1 advanced — Interactive authentication
+
+Goal: a host that needs a password or a second factor (keyboard-interactive, for example
+password + TOTP) works through Prowl as well as a key-based host does, and security stays
+the same. Today the side channel always runs with `BatchMode=yes`. Such a host fails with
+an authentication reason, and only verified OSC 7501 producers are listed (the degraded
+binding). A remote folder on such a host cannot work at all, because L1 needs the side
+channel for validation, polling and git operations.
+
+- **Authentication belongs to the host, not to the repository.** A `HostProfile` gets an
+  authentication mode. Settings › Hosts lists the profiles. Repository settings show the
+  folder's host and link to it. The user name stays part of the destination
+  (`user@host`); Prowl adds no separate user name field.
+- **Modes.**
+  - **System SSH** (default): the current behaviour. `~/.ssh/config`, keys and
+    `SSH_AUTH_SOCK`, with `BatchMode=yes`. Nothing changes for key-based hosts.
+  - **Ask when needed**: Prowl opens the shared connection with an askpass helper
+    (below). Each ssh prompt (password, verification code, key passphrase, host key
+    confirmation) appears in a native sheet. After authentication, the side channel,
+    polling and Prowl-opened terminals all use this shared connection until it ends.
+  - **Remember password in Keychain**: an opt-in option under Ask when needed, off by
+    default. The helper answers the host's password prompt from the Keychain. A
+    verification code, a passphrase and a host key prompt always go to the user.
+- **Askpass helper.** Prowl starts the shared connection's `ssh` with `SSH_ASKPASS=<helper in the app
+  bundle>`, `SSH_ASKPASS_REQUIRE=force` (OpenSSH ≥ 8.4) and a one-time token in the
+  environment. `SSH_ASKPASS` takes one executable path and no arguments, so the helper is
+  a dedicated executable (or the bundled CLI that dispatches on its invocation name). ssh
+  gives the prompt as `argv[1]`. The helper sends the prompt and the token over the app
+  socket, and writes the answer to stdout. A cancel is a nonzero exit. The app accepts a
+  request only with a live token from a connection it started. A token is bound to one
+  sign-in attempt and one `ConnectionKey`.
+- **Secrets.** An answer goes only from the sheet (or the Keychain) through the socket to
+  the helper's stdout. It is never in argv, the environment, a file, a log or a crash
+  report. The Keychain item is a generic password keyed by the `HostProfile` UUID,
+  `WhenUnlockedThisDeviceOnly` and not synchronized. Prowl stores it only after a
+  successful authentication and the user's explicit opt-in. Removing the host, or turning
+  the option off, deletes it.
+- **Prompt text is untrusted.** A keyboard-interactive prompt is server text. The sheet
+  shows the host identity from the `ConnectionKey` (alias, `user@hostname:port`, jump
+  chain), and shows the server text as a quotation. The Keychain answers at most once per
+  attempt, and only a prompt that matches the password form for the bound user and host.
+  When the saved password is refused, the next prompt goes to the user, who can update or
+  forget the saved password.
+- **Host keys.** An unknown host key shows its fingerprint and needs an explicit accept.
+  Accepting writes the user's `known_hosts`, as `ssh` does. A changed host key is refused,
+  with the reason. This UI never overrides it.
+- **Authentication lane.** Sign-in runs apart from the probe lane. Its deadline is set for
+  a person (for example 120 s, cancelable), not the 5 s probe deadline. An authentication
+  failure never retries by itself: backoff applies to network failures only. A host that
+  limits failed logins (fail2ban, account lockout) must never see more attempts than the
+  user made.
+- **Shared connection lifetime.** The shared connection uses Prowl's private `ControlPath`
+  and the side channel overrides (no forwarding, no `RemoteCommand`, no `LocalCommand`). It ends on its idle
+  `ControlPersist` timeout, at app quit (`-O exit`), or on network loss or sleep. After
+  that, the host shows "Sign-in required", and Prowl prompts again only on a user action
+  (open a folder or a terminal, or choose Sign In), never for background polling. In the
+  Keychain mode, Prowl reconnects once without a prompt when the server asks only for the
+  password.
+- **Terminals.** For an Ask host, a Prowl-opened tab runs `ssh -t` over the live shared
+  connection (`ControlMaster=no` and its `ControlPath`), so it opens without another
+  prompt. When the shared connection is not live, the tab runs a plain `ssh`, and the user
+  authenticates in the terminal as usual. The folder still asks for Sign In for its side
+  channel work.
+- **L0 sign-in action.** A manually typed `ssh` to a password host shows the pane's
+  warning badge (authentication). The badge offers "Sign In for Agent Detection…". It runs
+  the same Ask flow for that `ConnectionKey`, without a stored `HostProfile` and without the
+  Keychain option. The user's own `ssh` stays unchanged. This part needs only the L0
+  connection layer, so it can ship before L1a.
 
 ### L2 — Persistent sessions
 
@@ -346,6 +434,7 @@ case passes.
 | 2 | S2 | C1 host identity, C4 connection owner, C3 snapshot contract, C5 command model, C6 probe and its parser (unit tested with recorded output) | None (unused) |
 | 3 | S3 | L0 manual correlation: `LC_PROWL_PANE`, argv grammar, effective-config overrides, correlation states, generation and fence, release, stale projection, degraded OSC binding, admission refusal | Behind a feature flag |
 | 4 | S4 | L0 UX: host label, connection health, ssh-ended marker, CLI fields, docs; turns the S3 flag on | Manual remote agents appear |
+| 4c | S4c | L0 consent: stored `undecided`/`on`/`off`, consent panel at the first `ssh`, no connection before consent, Settings switch, side-channel toolbar status | No connection until the user agrees |
 | 5 | S5 | L0 tmux: user-owned tmux mapping and capture-based state | tmux panes detected |
 | 6 | L1a | `RepositoryLocation`, `localURL: URL?`, call-site triage | None |
 | 7 | L1b | `RepositoryHost` local implementation (fast paths kept); `GitClient` routed through it | None |
@@ -355,6 +444,8 @@ case passes.
 | 11 | L2a | Session model: per-leaf session UUID, tags, create/attach/end, detach at close with notice and Undo, capture state, history read, worktree remove/archive confirmation and ordering | Persistent sessions |
 | 12 | L2b | Discovery, background sessions on the worktree row | Background sessions |
 | 13 | L1f | Remote Profile launches from structured invocation (create-once inside L2 sessions) | Remote Profiles |
+| 14 | L1g | Interactive sign-in: askpass helper, authentication lane, shared connection for a signed-in `ConnectionKey`, host key sheet, "Sign In for Agent Detection" on the L0 badge | Password and 2FA hosts can be probed after sign-in |
+| 15 | L1h | Settings › Hosts with authentication modes, Keychain-remembered password, "Sign-in required" state on remote folders, terminals over the live shared connection | Password and 2FA remote folders |
 
 ### Acceptance criteria (draft)
 
@@ -371,6 +462,8 @@ case passes.
 | L0-9 | Cost against a recorded baseline: local CPU grows by at most 2 % of one core per 10 remote panes (measured at 1/10/50), plus remote CPU, bytes/s and subprocess count recorded; one in-flight probe per connection; probe p95 < 0.5 s on a host with ≥ 500 processes |
 | L0-10 | No Prowl-installed files, configuration or probe artifacts on the host; no rc edits |
 | L0-11 | Host label, connection health and the ssh-ended marker are visible; `prowl agents --json` carries host, correlation state and freshness |
+| L0-12 | With the value `undecided`, a pane's `ssh` starts no Prowl `ssh` process; the consent panel shows once per launch and keeps the terminal's keyboard focus; Turn On starts detection in open `ssh` panes without a reconnect |
+| L0-13 | The focused pane's side channel shows in the toolbar status with host and health; its hover panel explains the extra connection |
 | L1-1 | Add, persist, restore a remote folder; a display-alias edit does not redirect it; a changed `HostName` pauses operations until the user rebinds or keeps the old target; hostile but valid path characters work; an unreachable host stays listed |
 | L1-2 | Old local settings and snapshots migrate unchanged; identical local and remote paths do not collide |
 | L1-3 | Worktree list/create/remove/rename on a bash 3.2 (macOS) host and a bash 5 (Linux) host |
@@ -379,6 +472,13 @@ case passes.
 | L1-6 | Unavailable features are refused at the execution boundary (tests) and disabled with a reason in the UI; PR status works on a host without `gh` |
 | L1-7 | L1a–L1c change nothing for local repositories: existing tests pass and local fast paths (watcher timing) are unchanged |
 | L1-8 | Remote Profiles: large multiline prompts, empty arguments, quotes, `$`, `$(…)` text and environment overrides arrive byte for byte; carrier values never appear in typed text; dedicated-home Profiles are unavailable with a reason; reconnect never relaunches |
+| L1-9 | A password host and a password + TOTP host: one sign-in in a native sheet that names the host; then the probe, polling and Prowl-opened terminals work with no new prompt until the shared connection ends |
+| L1-10 | No secret appears in argv, the environment, files, logs or crash reports (checked with `ps`, the unified log and the run directory) |
+| L1-11 | Wrong password, cancel and timeout make no automatic authentication retry; the server sees no more attempts than the user made; the host shows the reason |
+| L1-12 | Keychain: stored only after success and opt-in; answers at most once per attempt and only the password prompt; a verification code, passphrase or host key prompt always goes to the user; removing the host or the option deletes the item |
+| L1-13 | An unknown host key needs an explicit accept with its fingerprint; a changed host key is refused |
+| L1-14 | Idle expiry, app quit, sleep and network loss end the shared connection; the host shows "Sign-in required" and prompts again only on a user action; System SSH hosts keep `BatchMode=yes` and their current behaviour |
+| L1-15 | A manual `ssh` to a password host: after "Sign In for Agent Detection", the agent is probed (correlated), and the user's own `ssh` is unchanged |
 | L2-1 | Opening a remote worktree with the option on attaches tmux automatically; the user types no tmux command |
 | L2-2 | A session survives tab close, app quit, network loss and sleep; restore reattaches with the screen intact |
 | L2-3 | Two splits in one tab keep independent sessions through close, undo and restore |
@@ -413,6 +513,11 @@ case passes.
 | Fence at the predecessor's retirement time | Rejected (review round 2): drops early successor reports and leaves predecessor children; ambiguous interval falls back to the screen |
 | Filter argv only for the side channel | Rejected (review round 2): config forwarding and commands still apply; override them explicitly |
 | Keep the tmux client attached during Undo | Rejected (review round 2): a hidden client changes session size and counts; detach at close, Undo reattaches |
+| User name and password fields in repository settings | Rejected (2026-10-18): authentication belongs to the host; a stored password cannot answer a verification code, a passphrase or a host key prompt |
+| `sshpass`, or a password in argv or the environment | Rejected (2026-10-18): visible to other processes, and no second factor |
+| Embedded SSH library for the side channel | Rejected (2026-10-18): a second SSH implementation that differs from `~/.ssh/config` (`Match`, `ProxyJump`, agent, GSSAPI) |
+| The pane's own `ssh` becomes Prowl's shared connection | Rejected (2026-10-18): the connection gets the session's forwardings and can outlive the session |
+| Use the user's own ControlMaster from `~/.ssh/config` | Deferred (2026-10-18): possible for System SSH hosts as a client only (`-O check`, never `-O exit`); its lifetime belongs to the user |
 | L3 resident observer | Not planned (2026-10-16) |
 
 ## Open questions
@@ -423,9 +528,16 @@ case passes.
 - Older `sshd` naming, Alpine and hardened `AcceptEnv` defaults.
 - Probe cost on process-heavy macOS hosts (the spike calls `ps` per process).
 - tmux option set: mouse, extended keys (Shift+Enter in agents), history limit.
+- Interactive authentication: forwardings that `~/.ssh/config` asks for when a terminal is a
+  multiplexed client of Prowl's shared connection, and their lifetime.
+- Interactive authentication: how to tell the password prompt from other keyboard-interactive
+  prompts reliably, and what `SSH_ASKPASS_PROMPT` gives for confirmations and FIDO touch.
+- Interactive authentication: the default `ControlPersist` idle timeout for an Ask host.
 
 ## Amendments
 
 - Updated 2026-10-16: spike record for L0–L2 — see [002-spike-findings.md](002-spike-findings.md)
 - Updated 2026-10-17: revised in place after review round 1 — shared contracts C1–C6 (host identity, typed process reference, snapshot freshness, connection owner, structured commands, probe wire format), secondary port key, attachment-epoch fence, `clear` as withdrawal, capture-based tmux state, per-pane sessions with separate create/attach/end, structured remote Profile launch, local fast paths behind the host boundary, admission enforcement, UX items, PR order
 - Updated 2026-10-17: revised in place after review round 2 — ownership-based evidence retirement and `ConnectionKey` in S1, replacement-interval OSC fence, effective-config overrides and authority rebinding, qualified secondary key, stale projection and remote-unprobed origin, scheduling rule and numeric budgets, detach at close with reconnect Undo, removal disclosure, exposure gates
+- Updated 2026-10-18: added "L1 advanced — Interactive authentication" (host-level authentication modes, askpass helper, shared connection, opt-in Keychain password, L0 sign-in action), slices L1g–L1h and criteria L1-9 to L1-15
+- Updated 2026-10-18: L0 item 12 (consent before the first side-channel connection, Settings switch, side-channel toolbar status), slice S4c, criteria L0-12 and L0-13

@@ -181,6 +181,7 @@ final class AgentsCommandHandler: CommandHandler {
     case .unmapped: ("unmapped", nil)
     case .probeUnavailable(let failure): ("probe_unavailable", failure.map(failureReason) ?? "connection_failed")
     case .unsupported(let reason): ("unsupported", reason)
+    case .tmuxUnreachable: ("tmux_unreachable", nil)
     }
   }
 

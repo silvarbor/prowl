@@ -239,7 +239,8 @@ Each agent contains:
   - `host` (`user@hostname`), `user`, `hostname`, `port`: absent while the connection
     is not resolved.
   - `correlation`: `pending`, `correlated`, `ambiguous`, `unmapped`,
-    `probe_unavailable`, or `unsupported`.
+    `probe_unavailable`, `unsupported`, or `tmux_unreachable` (the pane shows a tmux
+    client whose server Prowl cannot reach).
   - `correlation_reason`: why. For `probe_unavailable` it is a code: `authentication`,
     `host_key`, `unresolvable_host`, `unreachable`, `launch`, `exit`,
     `unrecognized_output`, or `connection_failed`. For `unsupported` it names the `ssh`
@@ -266,8 +267,8 @@ prowl agents read "$pane" --json
 ```
 
 ### `prowl agents read <pN|pane-uuid>`
-Immediate, read-only semantic snapshot for a currently active **Codex** or
-**Claude Code** pane. It requires an explicit `pN` handle or UUID from `agents`;
+Immediate, read-only semantic snapshot for a currently active **Codex**,
+**Claude Code**, or **TraeCode CLI** pane. It requires an explicit `pN` handle or UUID from `agents`;
 it never guesses from focus, accepts no worktree/tab selector, and has no wait or
 timeout mode.
 
@@ -306,6 +307,9 @@ text; `complete` includes trusted `text` and appears only for an idle/done agent
 `unavailable`, `missing`, `incomplete`, and `too_large` retain a successful live snapshot but
 include a reason under `.data.result.error`. Prowl reads a transcript only after a fresh `exact` or `high`
 session resolution — never a `medium` candidate — and never returns partial text.
+TraeCode CLI has no semantic transcript reader, so its panes return the live snapshot
+and blocker text, but `.data.result` never reaches `complete` and `--result-only` always
+fails for them.
 
 `--max-bytes` defaults to 1 MiB and accepts up to 4 MiB. `--result-only` is mutually
 exclusive with `--json`; it writes exactly a complete trusted result to stdout, with
@@ -414,7 +418,8 @@ first. Because a receipt can precede Codex's own `turn-ended` by a second or two
 
 For Codex, observed open main or child work in the selected log keeps this
 precondition busy even if a parent `turn-ended` signal has arrived. Claude native
-Working/Waiting applies the same veto, including assigned children and background shell work.
+Working/Waiting applies the same veto, including assigned children. A Claude pane whose
+turn has ended while background shells still run is `idle` and accepts a dispatch.
 
 The coordinator waits by exact id:
 
@@ -439,6 +444,17 @@ Abandoning a record that already completed, was abandoned, or is gone fails with
 `DISPATCH_ALREADY_TERMINAL`. A closed worker pane turns its pending record into `gone` a
 moment after the close, so a wait issued in that same instant may still report
 `DISPATCH_INCOMPLETE`; re-run it.
+
+Managed Codex turn-end hooks must match the independently detected pane session before
+resolving a dispatch wait. Hooks awaiting that confirmation remain pending in a bounded
+buffer of the eight most recent Codex hooks; newer hooks replace the oldest when full.
+Debug logs identify the hook session and detected session when a hook is deferred. A hook that
+Prowl received before the dispatch was issued cannot resolve it. A replacement session or
+process clears old signal-derived wait evidence; a stale diagnostic signal alone cannot end
+the wait. An agent that exits keeps its evidence, so a turn end or session end just before the
+exit still reports `DISPATCH_INCOMPLETE` or `AGENT_GONE`. A matching completion receipt still
+resolves the original dispatch. While detection cannot identify the Codex session with
+confidence, its hooks stay pending, and a wait without a receipt ends at its timeout.
 
 For state observation rather than task proof, wait on a pane condition:
 
@@ -517,9 +533,10 @@ directory exists:
 |---|---|---|---|
 | `claude` | `~/.claude/skills` | `<repo>/.claude/skills` | Claude Code |
 | `codex` | `~/.codex/skills` | `<repo>/.codex/skills` | Codex |
-| `agents` | `~/.agents/skills` | `<repo>/.agents/skills` | Codex, Gemini CLI, Cursor Agent, OpenCode, Copilot CLI, Kimi CLI, Droid, Amp, Qoder CLI, Pi, Oh My Pi, Grok Build, Devin, Antigravity |
+| `agents` | `~/.agents/skills` | `<repo>/.agents/skills` | Codex, Gemini CLI, Cursor Agent, OpenCode, Copilot CLI, Kimi CLI, Droid, Amp, Qoder CLI, Pi, Oh My Pi, Grok Build, Devin, Antigravity, TraeCode CLI |
 | `devin` | `~/.config/devin/skills` | `<repo>/.devin/skills` | Devin |
 | `antigravity` | `~/.gemini/antigravity-cli/skills` | `<repo>/.agents/skills` | Antigravity |
+| `trae` | `~/.trae/skills` | `<repo>/.agents/skills` | TraeCode CLI |
 
 - A bare `prowl skills install` links every user-installable bundled skill into every
   detected target; repeat `--target` to pick targets explicitly (an explicit target's
@@ -1012,7 +1029,7 @@ Follow the returned self-initiated delivery instruction to submit the briefing.
 | `TARGET_NOT_UNIQUE` | Selector matched several — be more specific (use `--pane`). |
 | `PROFILE_NOT_FOUND` | No enabled Profile matches the UUID or exact name — re-run `profiles list`; disabled Profiles cannot launch. |
 | `PROFILE_NOT_UNIQUE` | Several enabled Profiles have the exact name — use the Profile UUID from `profiles list`. |
-| `AGENT_NOT_FOUND` / `AGENT_UNSUPPORTED` | `agents read` target no longer hosts an agent, or it is not Codex/Claude Code; `agents wait <pane> --until …` saw no detected agent within its ten-second appearance grace; `agents dispatch` targeted a pane with no detected agent. Re-run `agents`. |
+| `AGENT_NOT_FOUND` / `AGENT_UNSUPPORTED` | `agents read` target no longer hosts an agent, or it is not Codex/Claude Code/TraeCode CLI; `agents wait <pane> --until …` saw no detected agent within its ten-second appearance grace; `agents dispatch` targeted a pane with no detected agent. Re-run `agents`. |
 | `DISPATCH_NOT_FOUND` | No dispatch record matches `--dispatch`, or `dispatch-complete` ran in a pane that never held one; records are memory-only and reset on app restart. |
 | `DISPATCH_CONTEXT_REQUIRED` | `dispatch-complete` ran from a process outside any Prowl pane (tmux/detached wrapper, another terminal), so no pane could own the receipt. |
 | `DISPATCH_PENDING` | `agents dispatch` refused: the pane already holds a pending dispatch (`.error.details.record`). Wait for it, or `dispatch-abandon` it, before dispatching again. |

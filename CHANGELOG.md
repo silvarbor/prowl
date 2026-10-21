@@ -1,5 +1,24 @@
 # Changelog
 
+## [2026.10.21](https://github.com/onevcat/Prowl/releases/tag/v2026.10.21)
+
+Prowl now detects coding agents that run on another machine over SSH, including inside remote tmux. This release also adds TraeCode CLI support and makes agent status and dispatch waits more reliable.
+
+### New
+
+- **Agents over SSH.** When a pane runs `ssh`, Prowl now shows the agent on the remote host (Linux or macOS) in Active Agents, with its Working, Blocked, and Idle state. Nothing is installed on the host and no shell configuration is changed: Prowl opens its own SSH connection to the same target and runs a read-only probe.
+  - Prowl asks before it opens that connection. At the first `ssh`, choose **Turn On**, **Not Now**, or **Turn Off** in the toolbar status. You can change it later in **Settings › Agents › Display › Detect agents in SSH sessions**.
+  - Agents inside a remote tmux session are detected from the active tmux pane, and their state comes from that pane's screen.
+  - Remote panes show `user@host` in their corner, and their tabs show a network glyph. Active Agents shows the host and the connection health: a remote agent that has not been confirmed for 10 seconds is greyed out with "Last seen … ago", and a warning tells you why a host cannot be read.
+  - Remote agents are for monitoring. `prowl agents dispatch` and workflow roles do not accept them yet.
+- Added TraeCode CLI (`traecli`) support with agent status, approval and question detection, and completion notifications. Select **TraeCode CLI** in an Agent Profile to configure launches and an optional dedicated home for account isolation.
+
+### Fixed
+
+- Claude Code now shows Idle when its turn ends with background shells still running, so new dispatches and idle waits can proceed.
+- Fixed Codex dispatch waits ending early because of unrelated temporary sessions or missing recent completion events. Completion evidence is also kept when the assigned agent exits.
+- Fixed misaligned Model and Reasoning Effort fields in Agent Profile settings on macOS 27.
+
 ## [2026.10.17](https://github.com/onevcat/Prowl/releases/tag/v2026.10.17)
 
 ### Improved

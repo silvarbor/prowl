@@ -1,10 +1,10 @@
-# Fork Sync and Public Release Workflow
+# Public Release Workflow
 
 > Living document of entry 001. Migrated from `doc-onevcat/fork-sync-and-release.md` on 2026-07-12; update in place.
 
 ## Goal
 
-Keep `onevcat/Prowl` close to `supabitapp/supacode` while preserving local customizations, and publish public releases with Sparkle auto-update support.
+Publish public releases of `onevcat/Prowl` with Sparkle auto-update support. The repository no longer syncs from `supabitapp/supacode`; see entry 017.
 
 ## Release Infrastructure
 
@@ -34,35 +34,8 @@ the SwiftPM executable and its matching dSYM remain available for symbolication.
 
 ## Branch Strategy
 
-- `upstream/main`: source of truth (read-only remote branch)
-- `main` (origin): integration branch with custom patches
+- `main` (origin): integration branch
 - Feature branches as needed
-
-## One-Time Setup
-
-```bash
-git fetch origin --prune
-git fetch upstream --prune
-git config rerere.enabled true
-git config rerere.autoupdate true
-```
-
-## Upstream Sync Runbook
-
-```bash
-git switch main
-git fetch origin --prune
-git fetch upstream --prune
-git merge --ff-only origin/main
-git merge --no-ff upstream/main
-make build-app
-make test
-git push origin main
-```
-
-Or use the `/sync-upstream` command which automates these steps.
-
-If conflicts happen, resolve once, commit, and `rerere` will likely auto-apply next time.
 
 ## Ghostty Submodule Sync
 
@@ -235,13 +208,10 @@ SKIP_SENTRY=1 ./scripts/release.sh
 
 ## Helper Scripts
 
-- `scripts/sync-upstream-main.sh` — upstream sync automation
 - `scripts/release.sh` — full public release pipeline
 - `release-to-fork.sh` — (deprecated) legacy personal release script; removed in the 2026-07 docs-ai migration
 
 ## Common Pitfalls
 
-- `git fetch origin upstream --prune` is invalid. Use two separate fetch commands.
-- Prefer `git merge --ff-only origin/main` in scripted sync flow.
-- Keep working tree clean before sync or release.
+- Keep the working tree clean before a release.
 - Fork releases must be notarized. Non-notarized publishing is forbidden.

@@ -159,6 +159,10 @@ extension AppFeature {
     case .agentEntryRemoved(let id):
       return .send(.repositories(.activeAgents(.agentEntryRemoved(id))))
 
+    case .remoteAgentConsentNeeded(let worktreeID, let surfaceID, let destination):
+      return reduceRemoteAgentConsentNeeded(
+        worktreeID: worktreeID, surfaceID: surfaceID, destination: destination, state: &state)
+
     case .agentProfileLaunched(let worktreeID, let profileID):
       // Launch memory is recorded only once a surface actually exists, so a
       // failed provision or surface creation never shifts Recommended.

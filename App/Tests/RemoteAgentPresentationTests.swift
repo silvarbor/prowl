@@ -59,6 +59,11 @@ struct RemoteAgentPresentationTests {
     #expect(
       RemoteAgentPresentation.correlationExplanation(exit, host: "h")
         == "Prowl cannot read h: Connection closed by 10.0.0.2 port 22.")
+    // tmux drops OSC 7501, so the pane names no fallback that would not work.
+    let tmux = RemoteAgentPresentation.paneIssueExplanation(.tmuxUnreachable, host: "h")
+    #expect(tmux.contains("tmux -S"))
+    #expect(!tmux.contains("OSC 7501"))
+    #expect(AgentsCommandHandler.correlation(.tmuxUnreachable) == ("tmux_unreachable", nil))
   }
 
   @Test func theRowTooltipAddsTheExplanationForRemoteAgents() {

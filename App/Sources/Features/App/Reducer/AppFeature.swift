@@ -37,6 +37,10 @@ struct AppFeature {
     /// Workflows visible to the action-target worktree, refreshed when the palette opens.
     var workflowPaletteItems: [WorkflowStartCatalogItem] = []
     @Presents var alert: AlertState<Alert>?
+    /// The side-channel consent panel (docs-ai 082, L0 item 12); nil while nothing asks.
+    var remoteAgentConsentPrompt: RemoteAgentConsentPrompt?
+    /// Not Now: no panel until the next launch.
+    var isRemoteAgentConsentDeferred = false
 
     init(
       repositories: RepositoriesFeature.State = .init(),
@@ -80,6 +84,8 @@ struct AppFeature {
     case runCustomCommand(EffectiveCustomCommand.Identifier)
     case launchAgentProfile(AgentProfile.ID)
     case openAgentProfilesSettings
+    case openAgentDisplaySettings
+    case remoteAgentConsent(RemoteAgentConsentChoice)
     case openWorkflowSettings
     case openWorkflowDetails(WorkflowStartCatalogItem, worktreeID: Worktree.ID)
     case canvasFocusedWorktreeChanged(Worktree.ID?)
@@ -488,6 +494,7 @@ struct AppFeature {
         let didChangeAgentIslandEnabled =
           state.repositories.activeAgents.isIslandEnabled != settings.agentIslandEnabled
         state.lastKnownSystemNotificationsEnabled = settings.systemNotificationsEnabled
+        if settings.remoteAgentDetection != .undecided { state.remoteAgentConsentPrompt = nil }
         state.settings.keybindingUserOverrides = settings.keybindingUserOverrides
         state.repositories.showActiveAgentTabTitles = settings.showActiveAgentTabTitles
         state.repositories.activeAgents.isIslandEnabled = settings.agentIslandEnabled
@@ -556,6 +563,9 @@ struct AppFeature {
           ),
           .run { _ in
             await terminalClient.send(.setNotificationsEnabled(settings.inAppNotificationsEnabled))
+          },
+          .run { _ in
+            await terminalClient.send(.setRemoteAgentDetection(settings.remoteAgentDetection))
           },
           .run { _ in
             await terminalClient.send(
@@ -869,6 +879,12 @@ struct AppFeature {
 
       case .openAgentProfilesSettings:
         return openSettingsEffect(selecting: .profiles)
+
+      case .openAgentDisplaySettings:
+        return openSettingsEffect(selecting: .agentDisplay)
+
+      case .remoteAgentConsent(let choice):
+        return reduceRemoteAgentConsent(choice, state: &state)
 
       case .openWorkflowDetails(let item, let worktreeID):
         guard featureFlags.workflowUI else { return .none }
