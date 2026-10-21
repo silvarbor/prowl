@@ -98,7 +98,17 @@ extension RepositoriesFeature {
       let checkpoints = state.pullRequestRefreshCheckpointByWorktreeID
       let forced = state.pullRequestRefreshForcedWorktreeIDs
       let currentDate = worktreeIDs.contains { checkpoints[$0] != nil && !forced.contains($0) } ? now : nil
-      let worktrees = worktreeIDs.compactMap { state.worktree(for: $0) }.filter { worktree in
+      let requestedWorktrees = worktreeIDs.compactMap { state.worktree(for: $0) }
+      // A detached worktree has no branch: its name is the directory name, which can match
+      // an unrelated pull request's head branch, so it is never asked about.
+      for worktree in requestedWorktrees
+      where worktree.isDetached && state.worktreeInfoByID[worktree.id]?.pullRequest != nil {
+        updateWorktreePullRequest(worktreeID: worktree.id, pullRequest: nil, state: &state)
+      }
+      let worktrees = requestedWorktrees.filter { worktree in
+        guard !worktree.isDetached else {
+          return false
+        }
         guard let currentDate, !forced.contains(worktree.id) else {
           return true
         }
@@ -1084,6 +1094,10 @@ extension RepositoriesFeature {
     _ pullRequest: GithubPullRequest?,
     for worktree: Worktree
   ) -> GithubPullRequest? {
+    // A refresh sent before the worktree detached answers for a branch it no longer has.
+    if worktree.isDetached {
+      return nil
+    }
     if worktree.isMain, pullRequest?.state.uppercased() == "MERGED" {
       return nil
     }

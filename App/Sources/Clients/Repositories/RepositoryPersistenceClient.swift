@@ -227,7 +227,8 @@ private nonisolated func discardRepositorySnapshot(at url: URL) {
 }
 
 nonisolated struct RepositorySnapshotCachePayload: Codable, Equatable, Sendable {
-  nonisolated static let currentVersion = 2
+  // Version 3 records detached worktrees; an older snapshot cannot tell them from attached ones.
+  nonisolated static let currentVersion = 3
   nonisolated static let maxSnapshotFileBytes = 2 * 1024 * 1024
   nonisolated static let maxRepositories = 256
   nonisolated static let maxWorktreesPerRepository = 512
@@ -323,12 +324,15 @@ extension RepositorySnapshotCachePayload {
     let detail: String
     let workingDirectoryPath: String
     let createdAt: Date?
+    // Optional so a version 2 snapshot still decodes and the version check discards it.
+    let isDetached: Bool?
 
     init(worktree: Worktree) {
       name = worktree.name
       detail = worktree.detail
       workingDirectoryPath = worktree.workingDirectory.path(percentEncoded: false)
       createdAt = worktree.createdAt
+      isDetached = worktree.isDetached
     }
 
     func restore(
@@ -346,7 +350,8 @@ extension RepositorySnapshotCachePayload {
         detail: detail,
         workingDirectory: worktreeURL,
         repositoryRootURL: repositoryRootURL,
-        createdAt: createdAt
+        createdAt: createdAt,
+        isDetached: isDetached ?? false
       )
     }
   }
