@@ -1,4 +1,4 @@
-# 084 — Active Agents in Sidebar Order: Action Log
+# 086 — Active Agents in Sidebar Order: Action Log
 
 ## Timeline
 
