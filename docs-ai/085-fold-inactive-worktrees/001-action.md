@@ -1,4 +1,4 @@
-# 083 — Fold Inactive Worktrees: Action Log
+# 085 — Fold Inactive Worktrees: Action Log
 
 ## Timeline
 
