@@ -118,6 +118,9 @@ nonisolated struct AgentStateMachine: Sendable {
   /// do not end a turn; shorter than the delegated 2 s cadence, so the second read decides.
   var inputReadyWindow: TimeInterval = 1
   private var inputReadySince: TimeInterval?
+  /// A screen read confirmed the rule at least `inputReadyWindow` after the first one. Only a
+  /// read sets it, so a later push or tick cannot grant Idle from a single frame.
+  private var inputReadyConfirmed = false
   private(set) var decision = AgentStateDecision(state: .unknown, reason: .screen(.noRuleMatched))
 
   /// An eligible OSC 7501 root record currently decides the state.
@@ -192,8 +195,13 @@ nonisolated struct AgentStateMachine: Sendable {
     }
     // A new root state starts the free-input-box clock over: the earlier frames described
     // the previous state.
-    if evidence?.root != programStatus?.root { inputReadySince = nil }
+    if evidence?.root != programStatus?.root { resetInputReady() }
     programStatus = evidence
+  }
+
+  private mutating func resetInputReady() {
+    inputReadySince = nil
+    inputReadyConfirmed = false
   }
 
   private mutating func observeInventory(_ sessions: Set<String>) {
@@ -243,8 +251,15 @@ nonisolated struct AgentStateMachine: Sendable {
   ) {
     screen = detection
     screenContentID = contentID
-    if let inputReadyRule, detection.state != .unknown {
-      inputReadySince = detection.reason == .matched(inputReadyRule) ? inputReadySince ?? now : nil
+    if let inputReadyRule {
+      // A read that cannot confirm the free input box, `unknown` included, ends the check.
+      if detection.state != .unknown, detection.reason == .matched(inputReadyRule) {
+        let since = inputReadySince ?? now
+        inputReadySince = since
+        inputReadyConfirmed = now - since >= inputReadyWindow
+      } else {
+        resetInputReady()
+      }
     }
     if detection.state != .unknown {
       if requiresConfirmedIdleScreen, detection.state == .idle, stableScreen == .working {
@@ -288,7 +303,7 @@ nonisolated struct AgentStateMachine: Sendable {
   private func resolve(now: TimeInterval) -> AgentStateDecision {
     if let programStatus {
       let decision = programStatus.decision
-      if decision.state == .working, let inputReadySince, now - inputReadySince >= inputReadyWindow {
+      if decision.state == .working, inputReadyConfirmed {
         return AgentStateDecision(state: .idle, reason: .programStatus(.workingInputReady))
       }
       return decision

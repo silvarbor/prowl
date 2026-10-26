@@ -245,6 +245,20 @@ struct AgentStateMachineProgramStatusTests {
     #expect(repeated.state == .working)
   }
 
+  @Test func aLaterReportOrAnUnreadableScreenCannotGrantIdleFromOneFrame() {
+    var machine = codexMachine()
+    _ = machine.receive(osc(.working, revision: 1), now: 0)
+    _ = machine.receive(freeComposer(), now: 1)
+    // A push or tick after the window is not a second matching read.
+    #expect(machine.receive(osc(.working, revision: 2), now: 3).state == .working)
+    #expect(machine.receive(.tick, now: 4).state == .working)
+
+    _ = machine.receive(screen(.unknown), now: 5)
+    // The unreadable frame ended the check: the next free frame starts it again.
+    #expect(machine.receive(freeComposer(), now: 6).state == .working)
+    #expect(machine.receive(freeComposer(), now: 8).state == .idle)
+  }
+
   @Test func aRunningTurnFooterBringsWorkingBack() {
     var machine = codexMachine()
     _ = machine.receive(osc(.working, revision: 1), now: 0)
