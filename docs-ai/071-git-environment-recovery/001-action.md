@@ -9,14 +9,17 @@
 | 2026-09-20 | Verified the built GUI with failed Apple Git, independent Git, restored access, and plain folders. | Validation below |
 | 2026-09-21 | Hardened filesystem-boundary classification and shared Git discovery timeout/cancellation. | PR #824 follow-up |
 | 2026-09-21 | Closed retained terminal states when a failed repository is removed. | Failed-root removal regression |
+| 2026-10-21 | Gave Git children the login shell PATH, summarized Git errors, and fixed cleanup for custom destinations. | #920 |
 
 ## Outcome & current state (as of 2026-09-21)
 
-- `supacode/Clients/Git/GitExecutableResolver.swift` selects a working executable
-  from process PATH, login PATH, or common locations. It caches successful selection,
-  shares concurrent discovery, and revalidates for repository discovery. App-owned
-  Git calls and bundled `wt` receive the selected executable's PATH. User terminal
-  commands and arbitrary workflow scripts keep their existing environment policy.
+- `App/Sources/Clients/Git/GitExecutableResolver.swift` selects a working executable
+  from login PATH, process PATH, or common locations (login PATH first since #920).
+  It caches successful selection, shares concurrent discovery, and revalidates for
+  repository discovery. App-owned Git calls and bundled `wt` receive the login PATH,
+  with the selected Git's folder first only when an earlier Git on it does not work.
+  User terminal commands and arbitrary workflow scripts keep their existing
+  environment policy.
 - `GitClient.repoRoot` probes Git directly before `wt`. Only a confirmed native
   non-repository result without existing or inaccessible ancestor metadata can
   classify a folder as plain. Symlink paths are checked against physical ancestors.
@@ -96,6 +99,22 @@
   `make check` passed, including 208 script tests; `make build-app` passed without
   warnings or errors. This reproduction checks terminal ownership state, not GUI
   interaction or live shell PIDs.
+
+### Issue #920 follow-up validation
+
+- Resolver tests for the new PATH rules failed first (6 of 14), then passed. 378
+  tests in the related Git, repository, workflow, handoff, and diff suites passed.
+- Isolated GUI, launchd-like process PATH, and a login PATH that has a hook tool
+  folder. Release 2026.10.21: worktree creation used
+  `PATH=/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin`, the hook failed with exit 127, and
+  the branch stayed. Patched Debug build: creation succeeded and the hook saw the
+  login PATH with no folder prepended. A failing hook removed only the new folder.
+- With `DEVELOPER_DIR=/nonexistent` and `/usr/bin` before Nix Git on the login PATH,
+  the patched build selected Nix Git, put its folder first, and kept the hook tool
+  folder. Creation succeeded.
+- A window watcher showed the failure alert open for about 0.5 seconds and then
+  close: the reload after cleanup cleared it. After the fix, the alert stayed open
+  with the command and the hook's stderr line, and the progress lines collapsed.
 
 ## Deviations from plan
 

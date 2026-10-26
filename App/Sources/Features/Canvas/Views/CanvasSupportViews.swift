@@ -129,6 +129,11 @@ final class CanvasViewportAnimator {
     timerBox.timer == nil ? nil : targetSnapshot
   }
 
+  // `timerBox` invalidates the timer on its own. Avoid inferred isolated deinit, which can
+  // hit the TaskLocal invalid-free bug in older system Swift runtimes (swiftlang/swift#88036).
+  // `CanvasView` releases a throwaway instance on every re-init.
+  nonisolated deinit {}
+
   func animate(
     from start: Snapshot,
     to target: Snapshot,

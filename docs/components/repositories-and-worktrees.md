@@ -34,9 +34,13 @@ it to a git repository and refreshes the sidebar.
 
 ## Git availability and load errors
 
-Prowl uses a working Git from the app PATH, your login shell PATH, or common
-installation locations. Apple Git requires working Command Line Tools; a full
-Xcode installation is not required. Independent Git installations can also be used.
+Prowl uses the first working Git on your login shell PATH. If there is none, it tries
+the app PATH, then common installation locations. Apple Git requires working Command
+Line Tools; a full Xcode installation is not required. Independent Git installations
+can also be used. Git and the bundled `wt` run with your login shell PATH, so Git hooks
+and helpers (`git-lfs`, credential helpers, `ssh`) find the same tools as in a terminal.
+If an earlier Git on that PATH does not work, the selected Git's folder goes first.
+Without a login shell PATH, they use the app PATH.
 Each executable or login-shell probe has a five-second timeout. A stalled probe
 is stopped, including its child processes, before discovery tries the next source.
 Cancelling one request does not interrupt discovery for other active requests.
@@ -64,6 +68,9 @@ persists the list. Paths that don't exist or can't be read are reported in an
 alert after the load. Repositories added after the initial app load are selected
 automatically. If a repository was added through a symbolic link, Prowl resolves
 and stores its actual git root so branches and worktrees continue to load.
+
+To add a folder on another machine over SSH, use **Add Remote Folder...** (or **Remote…**
+in the Add popover). See [remote folders](remote-folders.md).
 
 ## Creating a worktree
 
@@ -100,6 +107,11 @@ progress through stages: reading local branches → choosing a name → checking
 mode → resolving the base ref → fetching → creating. A **Pending** row shows the
 live status until it's ready.
 
+If creation fails, the error shows the end of Git's output, where Git and hooks
+report the cause. Prowl removes the worktree folder only if this attempt created it
+on the new branch, and keeps the branch. A Git hook that exits with an error fails
+the creation, even when the checkout itself succeeded.
+
 **Copying uncommitted files:** new worktrees can optionally copy `.gitignore`'d
 files (`copyIgnoredOnWorktreeCreate`) and/or untracked files
 (`copyUntrackedOnWorktreeCreate`) from the source — set globally or per repo.
@@ -111,8 +123,9 @@ new worktree (see [custom-actions](custom-actions.md)).
 
 Prowl watches Git's worktree registry for worktrees added, removed, or moved by
 external commands such as `git worktree move`. Changes trigger a sidebar refresh
-after a two-second debounce, including while Prowl is in the background. While
-active, Prowl also refreshes every 30 seconds as a fallback.
+after a two-second debounce, including while Prowl is in the background. When
+Prowl becomes the active app, it also reloads every repository once, to catch a
+change that a watcher missed.
 
 ## Selecting & switching worktrees
 

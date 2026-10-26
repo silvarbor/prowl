@@ -531,7 +531,10 @@ so those frames keep the last trusted state instead of forcing Idle.
 ## Remote agents over SSH
 
 When a pane's foreground command is a local `ssh`, Prowl shows the agent that runs on the
-host (docs-ai 082, L0). Prowl installs nothing on the host and edits no rc file.
+host (docs-ai 082, L0). Prowl installs nothing on the host and edits no rc file. SSH processes
+started by Git, scp, sftp, or rsync are transports, not remote agent sessions: they do not
+show a consent prompt or start detection. Direct commands such as `ssh -t host claude` and
+`ssh host tmux attach` still qualify.
 
 - **Consent.** Prowl does not connect to a host before you agree. The first `ssh` that
   Prowl can read shows "Detect agents on <host>?" in the toolbar status, with its panel
@@ -542,6 +545,13 @@ host (docs-ai 082, L0). Prowl installs nothing on the host and edits no rc file.
   holds the answer; the switch shows on until you turn it off. The environment variable
   `PROWL_REMOTE_AGENT_DETECTION` overrides the setting and never asks: `0` turns the
   feature off, any other value turns it on.
+- **Remote folders.** A tab that Prowl opens for a remote folder runs `ssh` itself. It asks
+  for no consent, because adding the folder already agreed to the connection, and it uses
+  the folder's stored SSH settings instead of reading the command line. Its pane and agents
+  show the host's alias. `PROWL_REMOTE_AGENT_DETECTION=0` still turns detection off. Once
+  that `ssh` ends, a later `ssh` in the same pane is your own and follows the rules above.
+- **Directory.** A remote agent's directory (its project in Active Agents and `prowl
+  agents`) is the one the probe reads on the host, not the pane's local directory.
 - **Toolbar status.** While the focused pane's `ssh` uses Prowl's own connection, the
   toolbar status shows the host and "Agent detection on", or "Agents not detected" with a
   warning glyph. Hover (or click) for a panel that tells what the extra connection does,

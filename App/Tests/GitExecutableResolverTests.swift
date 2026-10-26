@@ -241,4 +241,142 @@ struct GitExecutableResolverTests {
     let resolver = GitExecutableResolver(processPath: "/usr/bin", fallbackPaths: [])
     #expect(try await resolver.resolve(shell: shell).url == executable)
   }
+
+  @Test func loginPathStaysTheChildPathWhenAppleGitIsSelected() async throws {
+    // Hooks and helpers such as `mise` or `git-lfs` live in directories that only the login PATH has.
+    let tools = try makeDirectory()
+    defer { try? FileManager.default.removeItem(at: tools) }
+    let loginPath = "\(tools.path):/usr/bin:/bin"
+    let resolver = GitExecutableResolver(processPath: "/usr/bin:/bin:/usr/sbin:/sbin", fallbackPaths: [])
+
+    let selected = try await resolver.resolve(shell: workingGitShell(loginPath: loginPath))
+
+    #expect(selected.url.path == "/usr/bin/git")
+    #expect(selected.searchPath == loginPath)
+  }
+
+  @Test func loginPathGitIsPreferredOverProcessPathGit() async throws {
+    let directory = try makeDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let git = try makeExecutable("git", in: directory)
+    let loginPath = "\(directory.path):/usr/bin:/bin"
+    let resolver = GitExecutableResolver(processPath: "/usr/bin:/bin", fallbackPaths: [])
+
+    let selected = try await resolver.resolve(shell: workingGitShell(loginPath: loginPath))
+
+    #expect(selected.url == git)
+    #expect(selected.searchPath == loginPath)
+  }
+
+  @Test func brokenEarlierGitPutsTheSelectedGitFirst() async throws {
+    let broken = try makeDirectory()
+    let working = try makeDirectory()
+    defer {
+      try? FileManager.default.removeItem(at: broken)
+      try? FileManager.default.removeItem(at: working)
+    }
+    let brokenGit = try makeExecutable("git", in: broken)
+    let workingGit = try makeExecutable("git", in: working)
+    let loginPath = "\(broken.path):\(working.path):/bin"
+    let shell = ShellClient(
+      run: { _, arguments, _ in
+        if arguments.contains(brokenGit.path(percentEncoded: false)) {
+          throw ShellClientError(command: "git --version", stdout: "", stderr: "broken", exitCode: 1)
+        }
+        return ShellOutput(stdout: "git version 2.50\n", stderr: "", exitCode: 0)
+      },
+      runLoginImpl: { _, _, _, _ in ShellOutput(stdout: "\(loginPath)\n", stderr: "", exitCode: 0) }
+    )
+    let resolver = GitExecutableResolver(processPath: "/usr/bin:/bin", fallbackPaths: [])
+
+    let selected = try await resolver.resolve(shell: shell)
+
+    #expect(selected.url == workingGit)
+    #expect(selected.searchPath == "\(working.path):\(loginPath)")
+  }
+
+  @Test func fallbackGitKeepsTheLoginPathAfterIt() async throws {
+    let tools = try makeDirectory()
+    let fallback = try makeDirectory()
+    defer {
+      try? FileManager.default.removeItem(at: tools)
+      try? FileManager.default.removeItem(at: fallback)
+    }
+    let fallbackGit = try makeExecutable("git", in: fallback)
+    let loginPath = "\(tools.path):/bin"
+    let shell = ShellClient(
+      run: { _, arguments, _ in
+        guard arguments.contains(fallbackGit.path(percentEncoded: false)) else {
+          throw ShellClientError(command: "git --version", stdout: "", stderr: "xcrun failed", exitCode: 1)
+        }
+        return ShellOutput(stdout: "git version 2.50\n", stderr: "", exitCode: 0)
+      },
+      runLoginImpl: { _, _, _, _ in ShellOutput(stdout: "\(loginPath)\n", stderr: "", exitCode: 0) }
+    )
+    let resolver = GitExecutableResolver(processPath: "/usr/bin:/bin", fallbackPaths: [fallback.path])
+
+    let selected = try await resolver.resolve(shell: shell)
+
+    #expect(selected.url == fallbackGit)
+    #expect(selected.searchPath == "\(fallback.path):\(loginPath)")
+  }
+
+  @Test(arguments: [":/usr/bin:/bin", "/bin::/usr/bin", "bin:/usr/bin:/bin"])
+  func nonAbsoluteEntryBeforeTheSelectedGitPutsItFirst(loginPath: String) async throws {
+    // `wt` runs bare `git`. An empty or relative entry can resolve to a `git` in the
+    // repository, so it must not come before the selected Git.
+    let resolver = GitExecutableResolver(processPath: "/usr/bin:/bin", fallbackPaths: [])
+
+    let selected = try await resolver.resolve(shell: workingGitShell(loginPath: loginPath))
+
+    #expect(selected.url.path == "/usr/bin/git")
+    #expect(selected.searchPath == "/usr/bin:\(loginPath)")
+  }
+
+  @Test func nonAbsoluteEntryAfterTheSelectedGitKeepsTheLoginPath() async throws {
+    let resolver = GitExecutableResolver(processPath: "/usr/bin:/bin", fallbackPaths: [])
+
+    let selected = try await resolver.resolve(shell: workingGitShell(loginPath: "/usr/bin:/bin:"))
+
+    #expect(selected.searchPath == "/usr/bin:/bin:")
+  }
+
+  @Test func processPathIsTheChildPathWithoutALoginPath() async throws {
+    let resolver = GitExecutableResolver(processPath: "/usr/bin:/bin:/usr/sbin:/sbin", fallbackPaths: [])
+
+    let selected = try await resolver.resolve(shell: workingGitShell(loginPath: ""))
+
+    #expect(selected.url.path == "/usr/bin/git")
+    #expect(selected.searchPath == "/usr/bin:/bin:/usr/sbin:/sbin")
+  }
+
+  @Test func processEnvironmentKeepsTheAppEnvironmentAndSetsGitValues() {
+    let git = GitExecutable(url: URL(fileURLWithPath: "/usr/bin/git"), searchPath: "/opt/tools:/usr/bin")
+
+    let environment = git.processEnvironment
+
+    #expect(environment["PATH"] == "/opt/tools:/usr/bin")
+    #expect(environment["LC_ALL"] == "C")
+    #expect(environment["HOME"] == ProcessInfo.processInfo.environment["HOME"])
+  }
+}
+
+private func workingGitShell(loginPath: String) -> ShellClient {
+  ShellClient(
+    run: { _, _, _ in ShellOutput(stdout: "git version 2.50\n", stderr: "", exitCode: 0) },
+    runLoginImpl: { _, _, _, _ in ShellOutput(stdout: "\(loginPath)\n", stderr: "", exitCode: 0) }
+  )
+}
+
+private func makeDirectory() throws -> URL {
+  let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  return directory
+}
+
+private func makeExecutable(_ name: String, in directory: URL) throws -> URL {
+  let executable = directory.appending(path: name)
+  try Data().write(to: executable)
+  try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+  return executable
 }
