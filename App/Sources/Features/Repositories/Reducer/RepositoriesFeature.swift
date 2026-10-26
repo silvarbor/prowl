@@ -458,6 +458,9 @@ struct RepositoriesFeature {
     /// from WorkflowRunsFeature state (docs-ai 063 C2).
     var workflowRoleBadgesBySurfaceID: [UUID: String] = [:]
     @Shared(.appStorage("sidebarCollapsedRepositoryIDs")) var collapsedRepositoryIDs: [Repository.ID] = []
+    /// Repositories whose "Inactive (N)" group is expanded. Absent means folded.
+    @Shared(.appStorage("sidebarExpandedInactiveRepositoryIDs"))
+    var expandedInactiveRepositoryIDs: [Repository.ID] = []
     @Presents var worktreeCreationPrompt: WorktreeCreationPromptFeature.State?
     @Presents var workspaceEditor: WorkspaceEditorFeature.State?
     /// The Add Remote Folder sheet (docs-ai 084 C1), unless `PROWL_REMOTE_FOLDERS=0`.
@@ -552,6 +555,7 @@ struct RepositoriesFeature {
     case worktreeHistoryBack
     case worktreeHistoryForward
     case revealSelectedWorktreeInSidebar
+    case toggleInactiveWorktreesExpanded(Repository.ID)
     case consumePendingSidebarReveal(Int)
     case requestRenameBranchPrompt(Worktree.ID)
     case consumePendingRenameBranchRequest(Int)

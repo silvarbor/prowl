@@ -235,6 +235,7 @@ extension RepositoriesFeature {
       )
       state.repositoryRoots = roots
       state.isInitialLoadComplete = true
+      pruneExpandedInactiveRepositoryIDs(state: &state)
       let rebindChange = recordLoadFailures(failures, state: &state)
       let selectedWorktree = state.worktree(for: state.selectedWorktreeID)
       let selectionChanged = selectionDidChange(
@@ -760,6 +761,16 @@ extension RepositoriesFeature {
         id: state.nextPendingSidebarRevealID,
         worktreeID: worktreeID
       )
+      return .none
+
+    case .toggleInactiveWorktreesExpanded(let repositoryID):
+      state.$expandedInactiveRepositoryIDs.withLock {
+        if let index = $0.firstIndex(of: repositoryID) {
+          $0.remove(at: index)
+        } else {
+          $0.append(repositoryID)
+        }
+      }
       return .none
 
     case .consumePendingSidebarReveal(let revealID):
