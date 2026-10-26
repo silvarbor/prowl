@@ -641,12 +641,23 @@ extension RepositoriesFeature.State {
   /// tab. The selected worktrees stay out of the group:
   /// closing the last tab of the selected worktree leaves it tabless
   /// (`ensureInitialTab` runs only when the tabs view mounts), and a row must
-  /// not fold away under the cursor. Callers pass unpinned, non-main rows only,
-  /// which keeps main, pinned, and pending worktrees out of the group.
+  /// not fold away under the cursor. A worktree selected from the expanded
+  /// group stays in it (`retainedInactiveWorktreeIDs`). Callers pass unpinned,
+  /// non-main rows only, which keeps main, pinned, and pending worktrees out
+  /// of the group.
   func isWorktreeFolded(_ worktreeID: Worktree.ID) -> Bool {
-    !openedWorktreeIDs.contains(worktreeID)
+    if retainedInactiveWorktreeIDs.contains(worktreeID) { return true }
+    return !openedWorktreeIDs.contains(worktreeID)
       && selectedWorktreeID != worktreeID
       && !sidebarSelectedWorktreeIDs.contains(worktreeID)
+  }
+
+  /// Whether the row for `worktreeID` is in an Inactive group that is expanded now.
+  func isInExpandedInactiveGroup(_ worktreeID: Worktree.ID) -> Bool {
+    guard let repository = repositories.first(where: { $0.worktrees[id: worktreeID] != nil }),
+      isInactiveWorktreesExpanded(in: repository.id)
+    else { return false }
+    return worktreeRowSections(in: repository).inactive.contains { $0.id == worktreeID }
   }
 
   func isInactiveWorktreesExpanded(in repositoryID: Repository.ID) -> Bool {

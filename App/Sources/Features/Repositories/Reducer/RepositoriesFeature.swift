@@ -461,6 +461,11 @@ struct RepositoriesFeature {
     /// Repositories whose "Inactive (N)" group is expanded. Absent means folded.
     @Shared(.appStorage("sidebarExpandedInactiveRepositoryIDs"))
     var expandedInactiveRepositoryIDs: [Repository.ID] = []
+    /// Worktrees selected from an expanded Inactive group. They keep their row in the
+    /// group while the user walks it, so the navigation order does not change under
+    /// ⌘⌃↑/↓ and ⌃1–9 when a selection opens a tab. Cleared when the group folds or the
+    /// selection moves outside it.
+    var retainedInactiveWorktreeIDs: Set<Worktree.ID> = []
     @Presents var worktreeCreationPrompt: WorktreeCreationPromptFeature.State?
     @Presents var workspaceEditor: WorkspaceEditorFeature.State?
     /// The Add Remote Folder sheet (docs-ai 084 C1), unless `PROWL_REMOTE_FOLDERS=0`.

@@ -174,8 +174,10 @@ to turn on.
   and selected worktrees. Plain folders, workspaces, and remote folders have no
   worktree list, so they have nothing to fold.
 - Folded rows are skipped by `⌘⌃↑` / `⌘⌃↓` and by `⌃1`–`⌃9`, like the rows of a
-  collapsed repository. They count again while the group is expanded. The
-  command palette lists every worktree either way.
+  collapsed repository. They count again while the group is expanded, and a row
+  you select from the expanded group keeps its place there, so the shortcuts walk
+  the group in order. The rows you opened leave the group when you select a row
+  outside it or fold it. The command palette lists every worktree either way.
 - Dragging stays inside a group. Both groups share the repository's one stored
   order.
 

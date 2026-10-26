@@ -24,6 +24,10 @@
   drop a folded group. `worktreeID(byOffset:)`, `SidebarView`'s and
   `SidebarListView`'s hotkey rows, and `WorktreeCommands`' fallback read them, so
   ⌘⌃↑/↓ and ⌃1–9 skip folded rows.
+- `retainedInactiveWorktreeIDs` keeps a worktree selected from an expanded group in
+  that group, so ⌘⌃↑/↓ and ⌃1–9 walk it in row order. `setSingleWorktreeSelection`
+  adds to it, clears it when the selection moves outside the group, and
+  `toggleInactiveWorktreesExpanded` releases the repository's rows.
 - `sidebarExpandedInactiveRepositoryIDs` (app storage) holds the repositories whose
   group is expanded. `toggleInactiveWorktreesExpanded` flips it, and
   `repositoriesLoaded` prunes IDs of repositories that no longer exist, keeping those

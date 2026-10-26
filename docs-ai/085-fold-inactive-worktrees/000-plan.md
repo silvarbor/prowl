@@ -63,6 +63,15 @@ repository's inactive group is expanded.
 that list. The command palette keeps reading `orderedWorktreeRows()` over `allRows`, so
 it still finds every worktree.
 
+**Walking the group.** Selecting a worktree adds a tab to it, which would move its row
+out of the group and in front of the rows after it, so a second ⌘⌃↑ from the last row
+would jump past the rest of the group. A worktree selected from an expanded group is
+kept in `retainedInactiveWorktreeIDs` and stays in the group, so the navigation order
+holds while the group is walked. The set clears when the selection moves to a row
+outside the group (the rows opened from the group then leave it) and when the group
+folds. `setSingleWorktreeSelection` maintains it, which covers every path that selects
+one worktree: the next/previous commands, the numbered shortcuts, history, and clicks.
+
 **Fold state.** `@Shared(.appStorage("sidebarExpandedInactiveRepositoryIDs"))` holds the
 repositories whose inactive group is expanded, next to `collapsedRepositoryIDs`. Default:
 folded. Reload pruning drops IDs of repositories that no longer exist and keeps those of a

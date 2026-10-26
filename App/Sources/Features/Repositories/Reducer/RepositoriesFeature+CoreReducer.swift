@@ -764,6 +764,9 @@ extension RepositoriesFeature {
       return .none
 
     case .toggleInactiveWorktreesExpanded(let repositoryID):
+      if let repository = state.repositories[id: repositoryID] {
+        state.retainedInactiveWorktreeIDs.subtract(repository.worktrees.ids)
+      }
       state.$expandedInactiveRepositoryIDs.withLock {
         if let index = $0.firstIndex(of: repositoryID) {
           $0.remove(at: index)
