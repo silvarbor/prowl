@@ -181,6 +181,7 @@ final class AgentsCommandHandler: CommandHandler {
     case .unmapped: ("unmapped", nil)
     case .probeUnavailable(let failure): ("probe_unavailable", failure.map(failureReason) ?? "connection_failed")
     case .unsupported(let reason): ("unsupported", reason)
+    case .tmuxUnreachable: ("tmux_unreachable", nil)
     }
   }
 
@@ -221,11 +222,11 @@ final class AgentsCommandHandler: CommandHandler {
     repositoriesState: RepositoriesFeature.State,
     worktreeContexts: [Worktree.ID: ListRuntimeSnapshotBuilder.WorktreeContext]
   ) -> String {
-    if let workingDirectory = entry.workingDirectory,
-      let key = SidebarListView.resolveWorktreeID(
-        forWorkingDirectory: workingDirectory,
-        in: repositoriesState.repositories
-      ),
+    // A remote agent's directory is on its host: only its own remote folder can hold it.
+    if let key = entry.remoteWorktreeID
+      ?? entry.localWorkingDirectory.flatMap({
+        SidebarListView.resolveWorktreeID(forWorkingDirectory: $0, in: repositoriesState.repositories)
+      }),
       let context = worktreeContexts[key]
     {
       return context.path

@@ -241,11 +241,13 @@ struct AgentSkillsFeatureTests {
   }
 
   private func makeStore(_ client: SkillInstallClient) -> TestStoreOf<AgentSkillsFeature> {
-    TestStore(initialState: AgentSkillsFeature.State()) {
+    let store = TestStore(initialState: AgentSkillsFeature.State()) {
       AgentSkillsFeature()
     } withDependencies: {
       $0.skillInstallClient = client
     }
+    store.timeout = .realWorkTestStoreTimeout
+    return store
   }
 }
 

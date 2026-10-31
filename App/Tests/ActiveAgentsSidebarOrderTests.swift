@@ -38,10 +38,31 @@ struct ActiveAgentsSidebarOrderTests {
         repository("/beta", [betaMain]),
       ]
     )
-    state.repositoryOrderIDs = ["/beta", "/alpha"]
+    state.sidebarLayout = SidebarLayout(repositoryIDs: ["/beta", "/alpha"])
     state.worktreeOrderByRepository = ["/alpha": [alphaTwo.id, alphaOne.id]]
 
     #expect(rankedIDs(state) == [betaMain.id, alphaMain.id, alphaTwo.id, alphaOne.id])
+  }
+
+  @Test func groupedRepositoriesRankAtTheirPositionInTheSidebarLayout() {
+    let alphaMain = worktree("/alpha", repo: "/alpha")
+    let betaMain = worktree("/beta", repo: "/beta")
+    let gammaMain = worktree("/gamma", repo: "/gamma")
+    var state = makeState(
+      repositories: [
+        repository("/alpha", [alphaMain]),
+        repository("/beta", [betaMain]),
+        repository("/gamma", [gammaMain]),
+      ]
+    )
+    let group = RepositoryGroup(
+      id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+      title: "Group",
+      repositoryIDs: ["/gamma", "/alpha"]
+    )
+    state.sidebarLayout = SidebarLayout(items: [.repository("/beta"), .group(group)])
+
+    #expect(rankedIDs(state) == [betaMain.id, gammaMain.id, alphaMain.id])
   }
 
   @Test func foldersAndWorkspacesRankAtTheirRepositoryPosition() {
@@ -52,7 +73,7 @@ struct ActiveAgentsSidebarOrderTests {
         repository("/folder", [], kind: .plain),
       ]
     )
-    state.repositoryOrderIDs = ["/folder", "/git"]
+    state.sidebarLayout = SidebarLayout(repositoryIDs: ["/folder", "/git"])
 
     #expect(rankedIDs(state) == ["/folder", main.id])
   }
@@ -65,7 +86,7 @@ struct ActiveAgentsSidebarOrderTests {
         repository("/folder", [], kind: .plain),
       ]
     )
-    state.repositoryOrderIDs = ["/folder", "/git"]
+    state.sidebarLayout = SidebarLayout(repositoryIDs: ["/folder", "/git"])
     let inGit = entry(1, worktree: main.id)
     let inFolder = entry(2, worktree: "/folder")
     let store = TestStore(initialState: state) { RepositoriesFeature() }
@@ -324,7 +345,7 @@ struct ActiveAgentsSidebarOrderTests {
   private func makeState(repositories: [Repository]) -> RepositoriesFeature.State {
     var state = RepositoriesFeature.State()
     state.repositories = IdentifiedArray(uniqueElements: repositories)
-    state.repositoryRoots = repositories.map(\.rootURL)
+    state.repositoryRoots = repositories.map(\.location)
     return state
   }
 

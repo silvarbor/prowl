@@ -13,6 +13,11 @@ nonisolated struct GitExecutable: Sendable, Equatable {
     return values
   }
 
+  /// The app environment with the Git values applied, for a child process that gets a full environment.
+  var processEnvironment: [String: String] {
+    ProcessInfo.processInfo.environment.merging(environment) { _, selected in selected }
+  }
+
   var environmentArguments: [String] {
     var arguments = ["PATH=\(searchPath)", "LC_ALL=C", "LANG=C"]
     if let developerDirectory = environment["DEVELOPER_DIR"] {
@@ -21,7 +26,7 @@ nonisolated struct GitExecutable: Sendable, Equatable {
     return arguments
   }
 
-  func run(_ arguments: [String], in directory: URL? = nil, shell: ShellClient = .live) async throws
+  func run(_ arguments: [String], in directory: URL? = nil, shell: ShellClient) async throws
     -> ShellOutput
   {
     try await shell.run(
@@ -112,58 +117,77 @@ actor GitExecutableResolver {
     }
   }
 
+  /// Selects Git in the order the user's login shell finds it, then from the process PATH
+  /// and common locations. Child processes get the login PATH, so hooks and helpers
+  /// (`git-lfs`, credential helpers, `ssh`) find the same tools as in a terminal.
   private func discover(shell: ShellClient, diagnostics: inout [String]) async throws
     -> GitExecutable
   {
+    let loginPath = try await loginShellPath(shell: shell, diagnostics: &diagnostics)
+    let childPath = loginPath ?? processPath
     var tried: Set<String> = []
-    if let executable = try await firstWorking(
-      in: processPath, shell: shell, tried: &tried, diagnostics: &diagnostics)
-    {
-      return executable
-    }
-    var loginPath: String?
-    do {
-      try Task.checkCancellation()
-      loginPath = try await shell.runLogin(
-        URL(fileURLWithPath: "/usr/bin/printenv"), ["PATH"], nil, log: false
-      ).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-    } catch {
-      try Task.checkCancellation()
-      diagnostics.append("Login PATH: \(error.localizedDescription)")
-    }
-    if let loginPath, !loginPath.isEmpty,
-      let executable = try await firstWorking(
-        in: loginPath, shell: shell, tried: &tried, diagnostics: &diagnostics)
-    {
-      return executable
-    }
-    let fallback = (fallbackPaths + [processPath]).joined(separator: ":")
-    if let executable = try await firstWorking(
-      in: fallback, shell: shell, tried: &tried, diagnostics: &diagnostics)
-    {
-      return executable
+    for candidates in [loginPath, processPath, fallbackPaths.joined(separator: ":")].compactMap(\.self) {
+      if let executable = try await firstWorking(
+        in: candidates, childPath: childPath, shell: shell, tried: &tried, diagnostics: &diagnostics)
+      {
+        return executable
+      }
     }
     throw GitClientError.unavailable(details: diagnostics.joined(separator: "\n"))
   }
 
+  private func loginShellPath(shell: ShellClient, diagnostics: inout [String]) async throws -> String? {
+    do {
+      try Task.checkCancellation()
+      let output = try await shell.runLogin(
+        URL(fileURLWithPath: "/usr/bin/printenv"), ["PATH"], nil, log: false
+      ).stdout
+      // Startup files can print to stdout before `printenv` runs; PATH is its last line.
+      let path = output.split(whereSeparator: \.isNewline).last { !$0.allSatisfy(\.isWhitespace) }
+      return path.map { String($0).trimmingCharacters(in: .whitespaces) }
+    } catch {
+      try Task.checkCancellation()
+      diagnostics.append("Login PATH: \(error.localizedDescription)")
+      return nil
+    }
+  }
+
   private func firstWorking(
-    in path: String, shell: ShellClient, tried: inout Set<String>, diagnostics: inout [String]
+    in candidates: String,
+    childPath: String,
+    shell: ShellClient,
+    tried: inout Set<String>,
+    diagnostics: inout [String]
   ) async throws -> GitExecutable? {
     try Task.checkCancellation()
-    for directory in path.split(separator: ":") where directory.hasPrefix("/") {
+    for directory in candidates.split(separator: ":") where directory.hasPrefix("/") {
       try Task.checkCancellation()
       let url = URL(fileURLWithPath: String(directory)).appending(path: "git")
-      // The same executable can need a different PATH for its helper programs.
-      guard tried.insert("\(url.path)|\(path)").inserted,
-        FileManager.default.isExecutableFile(atPath: url.path)
+      guard tried.insert(url.path).inserted, FileManager.default.isExecutableFile(atPath: url.path)
       else { continue }
-      let searchPath = "\(directory):\(path)"
+      // Put the selected Git first only when another Git could shadow it. A prepended
+      // directory also shadows the user's other tools, such as `python3` in /usr/bin.
+      let searchPath =
+        Self.isFirstGit(in: String(directory), path: childPath) ? childPath : "\(directory):\(childPath)"
       let executable = GitExecutable(url: url, searchPath: searchPath)
       if try await validate(executable, shell: shell, diagnostics: &diagnostics) {
         return executable
       }
     }
     return nil
+  }
+
+  /// Whether a bare `git` lookup on `path` finds `directory` first. An empty or relative
+  /// entry resolves against the working directory, such as a repository with its own `git`,
+  /// so one before `directory` counts as a possible shadow.
+  private static func isFirstGit(in directory: String, path: String) -> Bool {
+    for entry in path.split(separator: ":", omittingEmptySubsequences: false).map(String.init) {
+      if entry == directory { return true }
+      if !entry.hasPrefix("/") || FileManager.default.isExecutableFile(atPath: "\(entry)/git") {
+        return false
+      }
+    }
+    return false
   }
 
   private func validate(

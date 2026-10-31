@@ -98,20 +98,24 @@ DETECTED_AGENTS = (
     "qwen",
     "grok",
     "antigravity",
+    "trae",
 )
 
 
 def detection_screen_text(text: str, agent: str) -> str:
     """Port of `DetectedAgent.detectionScreenText(from:)`.
 
-    `claude` and `antigravity` consume the full active screen, `pi` a 32-line
-    tail, and every other agent a 24-line tail. The full-screen cases are
+    `claude`, `antigravity`, and `trae` consume the full active screen, `pi` a
+    32-line tail, and every other agent a 24-line tail. The full-screen cases are
     deliberate on the Swift side: trimming a Claude capture can delete the very
-    row that reproduces a bug, and Antigravity anchors on its composer box, which
-    a long stacked status line would push out of a tail. Pi keeps the wider tail
-    so the pi-subagents widget holds its header and its live job row in one slice.
+    row that reproduces a bug, Antigravity anchors on its composer box, which a
+    long stacked status line would push out of a tail, and traecli heads its live
+    block with the running hint and then a todo checklist that grows without
+    bound — a bounded tail drops the hint, so the fixture would classify as Idle
+    where the captured screen classifies as Working. Pi keeps the wider tail so
+    the pi-subagents widget holds its header and its live job row in one slice.
     """
-    if agent in ("claude", "antigravity"):
+    if agent in ("claude", "antigravity", "trae"):
         return text
     if agent == "pi":
         return canonical_tail(text, limit=PI_DETECTOR_TAIL_LIMIT)

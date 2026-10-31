@@ -29,7 +29,8 @@ import Testing
     let process = CodexConfigReadProcess(
       executableURL: executable,
       temporaryBaseDirectory: root,
-      timeout: 2
+      // Generous: the exit must win even when a loaded host starts the shell slowly.
+      timeout: 10
     )
     await #expect(throws: CodexConfigReadProcessError.processFailed) {
       try await process.query(
@@ -146,10 +147,9 @@ import Testing
       temporaryBaseDirectory: parser,
       timeout: 30
     )
-    // Detached so the query does not compete with this test's poll loop for
-    // the main actor: a yield-only loop is not guaranteed to let a sibling
-    // main-actor task run, which left the scratch home unobserved until the
-    // 30 s process timeout on macOS 27.
+    // `make test` runs this test outside the bulk run. There a TCA TestStore enqueues every task
+    // on the main thread, so the blocking read holds the main actor, and this test cancels only
+    // after the 30 s process timeout.
     let task = Task.detached {
       try await process.query(
         CodexConfigQuery(
@@ -169,7 +169,10 @@ import Testing
     #expect(((try? FileManager.default.contentsOfDirectory(atPath: parser.path)) ?? []).count == 1)
 
     task.cancel()
-    await #expect(throws: (any Error).self) { try await task.value }
+    // The read ends with `.cancelled`, or with `.processFailed` when the terminated parser closes
+    // its output first. Only `.timeout` means that the cancellation had no effect.
+    let error = await #expect(throws: CodexConfigReadProcessError.self) { try await task.value }
+    #expect(error != .timeout)
     #expect((try? FileManager.default.contentsOfDirectory(atPath: parser.path))?.isEmpty == true)
   }
 

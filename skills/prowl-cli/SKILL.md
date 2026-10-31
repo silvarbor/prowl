@@ -19,7 +19,7 @@ ls "$prowl_docs/components/"   # cli.md, agent-detection.md, workflows.md, …
 
 Other `docs/components/*.md` references below live in that same folder.
 
-This skill ships inside the app: `prowl skills install prowl-cli` links it into every detected agent skill folder (`~/.claude/skills`, `~/.codex/skills`, `~/.agents/skills`, `~/.config/devin/skills`, `~/.gemini/antigravity-cli/skills` — whichever parent directories exist; add `--target <claude|codex|agents|devin|antigravity>` to pick or create specific ones) so it stays current across app updates. `prowl skills list` shows per-target status; the command is local and needs no running app.
+This skill ships inside the app: `prowl skills install prowl-cli` links it into every detected agent skill folder (`~/.claude/skills`, `~/.codex/skills`, `~/.agents/skills`, `~/.config/devin/skills`, `~/.gemini/antigravity-cli/skills`, `~/.trae/skills` — whichever parent directories exist; add `--target <claude|codex|agents|devin|antigravity|trae>` to pick or create specific ones) so it stays current across app updates. `prowl skills list` shows per-target status; the command is local and needs no running app.
 
 ## Who You Are
 
@@ -82,7 +82,7 @@ prowl focus --pane "$pane" --json
 
 Pick targets by `pane.id`, `tab.id`, `worktree.id`/`name`/`path`, and `pane.cwd`. Never trust tab titles: they are free-form and can lag or lie. For a Git worktree, `worktree.name` is the checked-out branch and stops matching after a checkout — automation should pass `worktree.id` (the path). Text `prowl list` / `prowl agents` also print short handles (`p7`, `t6`) that work in any target position for the life of the app process (`read p7`, `close t6`). UUIDs are the canonical identity of a *live* pane or tab, not a durable one: after an app restart restored tabs keep their tab UUID but panes are new surfaces with new UUIDs — never cache handles or pane UUIDs across a restart; re-run `prowl list`.
 
-For a currently active Codex or Claude Code agent, `prowl agents read p7 --json` returns an immediate semantic snapshot: `.data.agent.status`, `.data.blocker.text` when blocked, and `.data.result` — a result is trustworthy only when `.data.result.state == "complete"`.
+For a currently active Codex, Claude Code, or TraeCode CLI agent, `prowl agents read p7 --json` returns an immediate semantic snapshot: `.data.agent.status`, `.data.blocker.text` when blocked, and `.data.result` — a result is trustworthy only when `.data.result.state == "complete"`.
 
 Report an event only for the pane running the current process; `agents signal` has no target or focus fallback:
 
@@ -264,7 +264,7 @@ Terminal text is `.data.text` (read) and `.data.capture.text` (send) — never `
 
 ## Reading Agent Output
 
-- For Codex/Claude Code, `prowl agents read` beats scraping: check `.data.agent.status`, inspect `.data.blocker.text` before answering a prompt with `send`/`key` (read and write are not atomic), and only trust `.data.result.text` when `state == "complete"`. The result belongs to the latest completed turn and is `pending` while the agent works or is blocked, so after re-prompting a pane wait for `--until changed` or idle before reading it. `--result-only` prints the raw trusted result and fails otherwise; it cannot combine with `--json`.
+- For Codex, Claude Code, or TraeCode CLI, `prowl agents read` beats scraping: check `.data.agent.status`, inspect `.data.blocker.text` before answering a prompt with `send`/`key` (read and write are not atomic), and only trust `.data.result.text` when `state == "complete"`. The result belongs to the latest completed turn and is `pending` while the agent works or is blocked, so after re-prompting a pane wait for `--until changed` or idle before reading it. `--result-only` prints the raw trusted result and fails otherwise; it cannot combine with `--json`. TraeCode CLI has no semantic result reader, so `.data.result` never reaches `complete` and `--result-only` always fails for it.
 - Prowl-launched Claude Code, Codex, Copilot, Droid, Qoder, Pi, Oh My Pi, and OpenCode
   Profiles may expose `verified_live` channels with `source=hook_<runtime>`; manually typing
   those runtimes does not. A managed hook

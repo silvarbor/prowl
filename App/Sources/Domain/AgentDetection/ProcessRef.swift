@@ -15,6 +15,9 @@ nonisolated struct ConnectionKey: Hashable, Sendable, Codable {
   /// The `-F` configuration file, or nil for the default user and system files.
   let configFile: String?
 
+  /// `user@hostname`, the label a remote pane and its agents show.
+  var label: String { "\(user)@\(hostname)" }
+
   init(user: String, hostname: String, port: Int = 22, jumpChain: [String] = [], configFile: String? = nil) {
     self.user = user
     self.hostname = hostname
@@ -97,6 +100,11 @@ extension ProcessRef: CustomStringConvertible {
 nonisolated struct LocalProcessGeneration: Equatable, Hashable, Sendable {
   let pid: pid_t
   let startedAt: Date
+
+  /// The process still runs: its pid has the same start time (a reused pid has another).
+  var isRunning: Bool {
+    ProcessDetection.processStartDate(pid: pid) == startedAt
+  }
 }
 
 /// The process generation that agent evidence is bound to. Local generations compare

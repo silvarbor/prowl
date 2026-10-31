@@ -273,6 +273,7 @@ extension AgentProfileRuntime {
     case .qwen: QwenRuntimeAdapter()
     case .grok: GrokRuntimeAdapter()
     case .antigravity: AntigravityRuntimeAdapter()
+    case .trae: TraeRuntimeAdapter()
     case .pi: PiRuntimeAdapter()
     case .omp: OMPRuntimeAdapter()
     }
@@ -379,6 +380,58 @@ nonisolated private struct CodexRuntimeAdapter: AgentRuntimeAdapter {
     case .interactive: AgentInvocation(executable: "codex", arguments: options)
     case .prompt(let prompt): AgentInvocation(executable: "codex", arguments: options + [prompt])
     case .headless(let prompt): AgentInvocation(executable: "codex", arguments: ["exec"] + options + [prompt])
+    }
+  }
+}
+
+/// traecli's flag surface is Codex's (`traecli --help`), so model, reasoning
+/// effort, and the bypass flag reuse Codex's spellings. It exposes no managed
+/// hook channel, so signalHooks stays nil.
+nonisolated private struct TraeRuntimeAdapter: AgentRuntimeAdapter {
+  let runtime: AgentProfileRuntime = .trae
+  let displayName = "TraeCode CLI"
+  let supportsModelSelection = true
+  let supportsReasoningEffort = true
+  let executionModeOptions = AgentExecutionMode.allCases
+  let accountIsolation: AgentProfileHomeRelocation? = AgentProfileHomeRelocation(
+    environmentVariable: "TRAE_HOME",
+    sessionRootRelativePath: "cli"
+  )
+  let reasoningEffortSuggestions = ["low", "medium", "high", "xhigh", "max"]
+
+  func observe(arguments: [String]) -> AgentLaunchObservation {
+    let bypasses =
+      arguments.containsAny("-y", "--dangerously-bypass-approvals-and-sandbox")
+      || arguments.optionValue(long: "--permission-mode") == "bypass_permissions"
+    return AgentLaunchObservation(
+      model: arguments.optionValue(long: "--model", short: "-m"),
+      executionMode: bypasses ? .unrestricted : nil
+    )
+  }
+
+  func makeStartInvocation(_ request: AgentStartRequest) throws -> AgentInvocation {
+    var generated: [String] = []
+    if let model = request.configuration.model { generated += ["--model", model] }
+    if let effort = request.configuration.reasoningEffort {
+      generated += ["-c", "model_reasoning_effort=\(effort)"]
+    }
+    if request.configuration.executionMode == .unrestricted {
+      generated.append("--dangerously-bypass-approvals-and-sandbox")
+    }
+    // traecli's TUI notification is off by default, so a finished turn never
+    // reaches Prowl's inbox, which only sees Ghostty's OSC 9 desktop-notification
+    // callback. `always` keeps the entry even while the pane is focused, where
+    // Prowl's own active-surface muting still suppresses the banner.
+    generated += [
+      "-c", "tui.notifications=true",
+      "-c", "tui.notification_method=osc9",
+      "-c", "tui.notification_condition=always",
+    ]
+    let options = finalizedOptions(generated, request: request)
+    return switch request.intent {
+    case .interactive: AgentInvocation(executable: "traecli", arguments: options)
+    case .prompt(let prompt): AgentInvocation(executable: "traecli", arguments: options + [prompt])
+    case .headless(let prompt): AgentInvocation(executable: "traecli", arguments: ["exec"] + options + [prompt])
     }
   }
 }

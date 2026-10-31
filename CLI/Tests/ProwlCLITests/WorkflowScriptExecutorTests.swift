@@ -7,7 +7,7 @@ struct WorkflowScriptExecutorTests {
   @Test func transportsJSONAndDrainsBothPipes() async throws {
     let result = try await WorkflowScriptExecutor.run(
       .init(executable: "/bin/sh", arguments: ["-c", "cat; printf diagnostic >&2"],
-      directory: FileManager.default.temporaryDirectory, environment: ["PATH": "/usr/bin:/bin"]).limits(timeout: 5),
+      directory: FileManager.default.temporaryDirectory, environment: ["PATH": "/usr/bin:/bin"]).limits(timeout: 30),
       request: Data("{\"ok\":true}".utf8))
     #expect(String(decoding: result.stdout, as: UTF8.self) == "{\"ok\":true}")
     #expect(String(decoding: result.stderr, as: UTF8.self) == "diagnostic")
@@ -17,7 +17,7 @@ struct WorkflowScriptExecutorTests {
     // Only the timeout case needs a short deadline. The others get a generous one so that a slow
     // spawn on a loaded machine does not turn an exit or output-limit failure into a timeout.
     for (script, expected, timeout) in [
-      ("exit 7", "exit", 5.0), ("sleep 10", "timeout", 0.1), ("yes x", "stdout_limit", 5.0),
+      ("exit 7", "exit", 30.0), ("sleep 10", "timeout", 0.1), ("yes x", "stdout_limit", 30.0),
     ] {
       do {
         _ = try await WorkflowScriptExecutor.run(.init(executable: "/bin/sh", arguments: ["-c", script],
@@ -57,7 +57,7 @@ struct WorkflowScriptExecutorTests {
       _ = try await task.value
       Issue.record("Cancelled script succeeded")
     } catch let error as WorkflowScriptExecutionError { #expect(error.code == "cancelled") }
-    let exitDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+    let exitDeadline = ContinuousClock.now.advanced(by: .seconds(30))
     while kill(pid, 0) == 0, ContinuousClock.now < exitDeadline { await Task.yield() }
     #expect(kill(pid, 0) == -1)
     #expect(errno == ESRCH)

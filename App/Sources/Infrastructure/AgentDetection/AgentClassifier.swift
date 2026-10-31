@@ -22,6 +22,10 @@ private let knownAgentBinaries: [String: DetectedAgent] = [
   // Bare `antigravity` stays unmapped: the Antigravity IDE ships an
   // `antigravity` launcher (and an `agy` shim) that opens the desktop app.
   "agy": .antigravity, "antigravity-cli": .antigravity, "antigravity_cli": .antigravity,
+  // Bare `trae` stays unmapped: the Trae IDE ships a `trae` launcher that opens
+  // the desktop app. The CLI installs `traecli` with `traex` as the real
+  // executable and `trae-cli`/`trae-agent` shims.
+  "traecli": .trae, "traex": .trae, "trae-cli": .trae, "trae-agent": .trae,
 ]
 
 func identifyAgent(processName: String) -> DetectedAgent? {
@@ -157,12 +161,13 @@ private func identifyAgent(candidate: (name: String, score: Int), process: Foreg
     }
     return nil
   }
-  // Grok Build, Devin, and Antigravity are native executables, not wrapped-runtime
-  // scripts. Their names can also appear as model arguments or quoted prompt
-  // tokens in a wrapper's cmdline; require argv0/name evidence.
-  if ["grok", "devin", "agy", "antigravity-cli", "antigravity_cli"].contains(candidate.name),
-    candidate.score == 40
-  {
+  // Grok Build, Devin, Antigravity, and TraeCode CLI are native executables, not
+  // wrapped-runtime scripts. Their names can also appear as model arguments or
+  // quoted prompt tokens in a wrapper's cmdline; require argv0/name evidence.
+  if [
+    "grok", "devin", "agy", "antigravity-cli", "antigravity_cli",
+    "traecli", "traex", "trae-cli", "trae-agent",
+  ].contains(candidate.name), candidate.score == 40 {
     return nil
   }
   return identifyAgent(processName: candidate.name)

@@ -19,6 +19,7 @@
 Devin Profiles support launch roles and explicit delivery through the same workflow
 protocol. Use runtime token `devin` when a role specifically requires Devin.
 Antigravity Profiles work the same way under runtime token `antigravity`.
+TraeCode CLI Profiles work the same way under runtime token `trae`.
 
 ## What it is
 

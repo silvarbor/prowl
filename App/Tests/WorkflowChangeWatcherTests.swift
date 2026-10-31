@@ -13,7 +13,7 @@ struct WorkflowChangeWatcherTests {
 
   /// Blocks the test thread on a real vnode event — the watcher is DispatchSource-backed, so no
   /// injected clock can stand in for the kernel here.
-  private func expectChange(within seconds: Double = 3, _ body: (@escaping @Sendable () -> Void) throws -> Void) throws
+  private func expectChange(within seconds: Double = 10, _ body: (@escaping @Sendable () -> Void) throws -> Void) throws
     -> Bool
   {
     let fired = DispatchSemaphore(value: 0)

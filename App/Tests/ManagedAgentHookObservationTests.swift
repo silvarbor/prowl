@@ -6,6 +6,135 @@ import Testing
 
 @MainActor
 struct ManagedAgentHookObservationTests {
+  @Test func codexHookWaitsForIndependentIdentityBeforeActivation() {
+    let now = Date(timeIntervalSince1970: 100)
+    let generation = LocalProcessGeneration(pid: 900, startedAt: now)
+    let store = AgentObservationStore(bufferCapacity: 8, now: { now })
+    let surfaceID = UUID()
+    let registration = makeRegistration(runtime: .codex, cwd: "/tmp/project")
+    _ = store.registerManagedHook(registration, surfaceID: surfaceID)
+    _ = store.updateEvidenceEpoch(surfaceID: surfaceID, processGeneration: generation, sessionID: nil)
+    let hook = makeInput(
+      runtime: .codex, token: registration.token, nativeEvent: "agent-turn-complete", cwd: "/tmp/project")
+    #expect(store.recordManagedHook(hook, callerAncestry: [generation], surfaceID: surfaceID) == .pending)
+    #expect(store.currentSignalEvidence(surfaceID: surfaceID).activeTerminal == nil)
+    let update = store.updateEvidenceEpoch(
+      surfaceID: surfaceID, processGeneration: generation, sessionID: "session-1")
+    #expect(update.activatedSignals.count == 1)
+    #expect(store.currentSignalEvidence(surfaceID: surfaceID).activeTerminal?.sessionID == "session-1")
+  }
+
+  @Test(arguments: [false, true], ["worker", "temporary-0"])
+  func latestCodexHookSurvivesFullPendingBuffer(generationDetected: Bool, confirmedSession: String) {
+    let now = Date(timeIntervalSince1970: 100)
+    let generation = LocalProcessGeneration(pid: 900, startedAt: now)
+    let store = AgentObservationStore(bufferCapacity: 8, now: { now })
+    let surfaceID = UUID()
+    let registration = makeRegistration(runtime: .codex, cwd: "/tmp/project")
+    _ = store.registerManagedHook(registration, surfaceID: surfaceID)
+    if generationDetected {
+      _ = store.updateEvidenceEpoch(surfaceID: surfaceID, processGeneration: generation, sessionID: nil)
+    }
+    for index in 0..<8 {
+      let foreign = makeInput(
+        runtime: .codex, token: registration.token, nativeEvent: "agent-turn-complete",
+        cwd: "/tmp/project", sessionID: "temporary-\(index)")
+      #expect(store.recordManagedHook(foreign, callerAncestry: [generation], surfaceID: surfaceID) == .pending)
+    }
+    let worker = makeInput(
+      runtime: .codex, token: registration.token, nativeEvent: "agent-turn-complete",
+      cwd: "/tmp/project", sessionID: "worker")
+    #expect(store.recordManagedHook(worker, callerAncestry: [generation], surfaceID: surfaceID) == .pending)
+    #expect(store.currentSignalEvidence(surfaceID: surfaceID).activeTerminal == nil)
+    let update = store.updateEvidenceEpoch(
+      surfaceID: surfaceID, processGeneration: generation, sessionID: confirmedSession)
+    let confirmsWorker = confirmedSession == "worker"
+    #expect(update.activatedSignals.count == (confirmsWorker ? 1 : 0))
+    #expect(
+      store.currentSignalEvidence(surfaceID: surfaceID).activeTerminal?.sessionID == (confirmsWorker ? "worker" : nil))
+  }
+
+  @Test func epochInvalidationReportsTheSupersededEpoch() {
+    let now = Date(timeIntervalSince1970: 100)
+    let generation = LocalProcessGeneration(pid: 900, startedAt: now)
+    let store = AgentObservationStore(bufferCapacity: 8, now: { now })
+    let surfaceID = UUID()
+    _ = store.updateEvidenceEpoch(surfaceID: surfaceID, processGeneration: generation, sessionID: "session-1")
+    let oldEpoch = store.currentEvidenceEpoch(surfaceID: surfaceID)
+    var invalidations: [(UUID, UUID)] = []
+    store.onEvidenceInvalidated = { invalidations.append(($0, $1)) }
+    _ = store.updateEvidenceEpoch(surfaceID: surfaceID, processGeneration: generation, sessionID: "session-2")
+    #expect(invalidations.count == 1)
+    #expect(invalidations.first?.0 == surfaceID)
+    #expect(invalidations.first?.1 == oldEpoch)
+    #expect(store.currentEvidenceEpoch(surfaceID: surfaceID) != oldEpoch)
+  }
+
+  @Test func agentLossDoesNotInvalidateDispatchEvidence() {
+    let now = Date(timeIntervalSince1970: 100)
+    let generation = LocalProcessGeneration(pid: 900, startedAt: now)
+    let store = AgentObservationStore(bufferCapacity: 8, now: { now })
+    let detectedSurface = UUID()
+    _ = store.updateEvidenceEpoch(surfaceID: detectedSurface, processGeneration: generation, sessionID: "session-1")
+    let managedSurface = UUID()
+    let registration = makeRegistration(runtime: .claude, cwd: "/tmp/project")
+    _ = store.registerManagedHook(registration, surfaceID: managedSurface)
+    _ = store.updateEvidenceEpoch(surfaceID: managedSurface, processGeneration: generation, sessionID: "session-1")
+    var invalidations: [UUID] = []
+    store.onEvidenceInvalidated = { surfaceID, _ in invalidations.append(surfaceID) }
+
+    // The agent exits or its entry goes away: the evidence it produced stays valid.
+    _ = store.updateEvidenceEpoch(surfaceID: detectedSurface, processGeneration: nil, sessionID: nil)
+    _ = store.revokeManagedHook(surfaceID: managedSurface)
+    #expect(invalidations.isEmpty)
+
+    // A replacement process still retires whatever epoch is current.
+    let replacement = LocalProcessGeneration(pid: 901, startedAt: now)
+    _ = store.updateEvidenceEpoch(surfaceID: detectedSurface, processGeneration: replacement, sessionID: nil)
+    #expect(invalidations == [detectedSurface])
+  }
+
+  @Test func replayedCodexHookKeepsItsReceiptTime() {
+    let clock = MutableDate(Date(timeIntervalSince1970: 100))
+    let generation = LocalProcessGeneration(pid: 900, startedAt: clock.value)
+    let store = AgentObservationStore(bufferCapacity: 8, now: { clock.value })
+    let surfaceID = UUID()
+    let registration = makeRegistration(runtime: .codex, cwd: "/tmp/project")
+    _ = store.registerManagedHook(registration, surfaceID: surfaceID)
+    _ = store.updateEvidenceEpoch(surfaceID: surfaceID, processGeneration: generation, sessionID: nil)
+    let hook = makeInput(
+      runtime: .codex, token: registration.token, nativeEvent: "agent-turn-complete", cwd: "/tmp/project")
+    #expect(store.recordManagedHook(hook, callerAncestry: [generation], surfaceID: surfaceID) == .pending)
+
+    clock.value = Date(timeIntervalSince1970: 200)
+    let update = store.updateEvidenceEpoch(surfaceID: surfaceID, processGeneration: generation, sessionID: "session-1")
+    #expect(update.activatedSignals.map(\.timestamp) == [Date(timeIntervalSince1970: 100)])
+  }
+
+  @Test func firstCodexHookCannotReplaceIndependentlyDetectedThread() throws {
+    let now = Date(timeIntervalSince1970: 100)
+    let store = AgentObservationStore(bufferCapacity: 8, now: { now })
+    let surfaceID = UUID()
+    let generation = LocalProcessGeneration(pid: 900, startedAt: now)
+    let registration = makeRegistration(runtime: .codex, cwd: "/tmp/project")
+    let epoch = store.registerManagedHook(registration, surfaceID: surfaceID)
+    store.updateEvidenceEpoch(surfaceID: surfaceID, processGeneration: generation, sessionID: "worker")
+
+    let temporary = makeInput(
+      runtime: .codex, token: registration.token, nativeEvent: "agent-turn-complete",
+      cwd: "/tmp/project", sessionID: "temporary")
+    #expect(!store.recordManagedHook(temporary, callerAncestry: [generation], surfaceID: surfaceID).isAccepted)
+    #expect(store.currentSignalEvidence(surfaceID: surfaceID).activeTerminal == nil)
+    #expect(store.currentEvidenceEpoch(surfaceID: surfaceID) == epoch)
+
+    let worker = makeInput(
+      runtime: .codex, token: registration.token, nativeEvent: "agent-turn-complete",
+      cwd: "/tmp/project", sessionID: "worker")
+    #expect(store.recordManagedHook(worker, callerAncestry: [generation], surfaceID: surfaceID).isAccepted)
+    #expect(store.currentSignalEvidence(surfaceID: surfaceID).activeTerminal?.sessionID == "worker")
+    #expect(store.currentEvidenceEpoch(surfaceID: surfaceID) == epoch)
+  }
+
   @Test func historyIdentitySurvivesCooperativeProgressUntilHookEpochEnds() throws {
     let now = Date(timeIntervalSince1970: 100)
     let generation = LocalProcessGeneration(pid: 900, startedAt: now)
@@ -475,17 +604,17 @@ struct ManagedAgentHookObservationTests {
     let forward = CodexForwardingRecord(locator: URL(filePath: "/tmp/private/record.json"))
     let registration = makeRegistration(runtime: .codex, cwd: "/tmp/project", forwardingRecord: forward)
     _ = store.registerManagedHook(registration, surfaceID: surfaceID)
-    _ = store.updateEvidenceEpoch(surfaceID: surfaceID, processGeneration: generation, sessionID: nil)
+    _ = store.updateEvidenceEpoch(surfaceID: surfaceID, processGeneration: generation, sessionID: "session-1")
 
     let missing = store.updateEvidenceEpoch(
       surfaceID: surfaceID,
       processGeneration: nil,
-      sessionID: nil
+      sessionID: "session-1"
     )
 
     #expect(missing.revokedForwardingRecords.isEmpty)
     #expect(store.hasManagedHook(surfaceID: surfaceID))
-    _ = store.updateEvidenceEpoch(surfaceID: surfaceID, processGeneration: generation, sessionID: nil)
+    _ = store.updateEvidenceEpoch(surfaceID: surfaceID, processGeneration: generation, sessionID: "session-1")
     let input = makeInput(
       runtime: .codex,
       token: registration.token,
@@ -511,7 +640,7 @@ struct ManagedAgentHookObservationTests {
     let update = store.updateEvidenceEpoch(
       surfaceID: surfaceID,
       processGeneration: generation,
-      sessionID: nil
+      sessionID: "session-1"
     )
     let input = makeInput(
       runtime: .codex,
@@ -532,7 +661,7 @@ struct ManagedAgentHookObservationTests {
     let surfaceID = UUID()
     let registration = makeRegistration(runtime: .codex, cwd: "/tmp/project")
     _ = store.registerManagedHook(registration, surfaceID: surfaceID)
-    _ = store.updateEvidenceEpoch(surfaceID: surfaceID, processGeneration: generation, sessionID: nil)
+    _ = store.updateEvidenceEpoch(surfaceID: surfaceID, processGeneration: generation, sessionID: "thread-1")
     let first = makeInput(
       runtime: .codex,
       token: registration.token,
@@ -570,7 +699,7 @@ struct ManagedAgentHookObservationTests {
     let surfaceID = UUID()
     let registration = makeRegistration(runtime: .codex, cwd: "/tmp/project")
     _ = store.registerManagedHook(registration, surfaceID: surfaceID)
-    _ = store.updateEvidenceEpoch(surfaceID: surfaceID, processGeneration: generation, sessionID: nil)
+    _ = store.updateEvidenceEpoch(surfaceID: surfaceID, processGeneration: generation, sessionID: "thread-1")
     let first = makeInput(
       runtime: .codex,
       token: registration.token,
@@ -597,14 +726,14 @@ struct ManagedAgentHookObservationTests {
     #expect(store.recordManagedHook(second, callerAncestry: [generation], surfaceID: surfaceID).isAccepted)
   }
 
-  @Test func hookDrivenThreadRotationRejectsLatePreviousThreadHook() {
+  @Test func hookThreadRotationWaitsForIndependentConfirmation() {
     let now = Date(timeIntervalSince1970: 100)
     let generation = LocalProcessGeneration(pid: 900, startedAt: now)
     let store = AgentObservationStore(bufferCapacity: 8, now: { now })
     let surfaceID = UUID()
     let registration = makeRegistration(runtime: .codex, cwd: "/tmp/project")
     _ = store.registerManagedHook(registration, surfaceID: surfaceID)
-    _ = store.updateEvidenceEpoch(surfaceID: surfaceID, processGeneration: generation, sessionID: nil)
+    _ = store.updateEvidenceEpoch(surfaceID: surfaceID, processGeneration: generation, sessionID: "thread-1")
     let first = makeInput(
       runtime: .codex,
       token: registration.token,
@@ -620,7 +749,10 @@ struct ManagedAgentHookObservationTests {
       sessionID: "thread-2"
     )
     #expect(store.recordManagedHook(first, callerAncestry: [generation], surfaceID: surfaceID).isAccepted)
-    #expect(store.recordManagedHook(second, callerAncestry: [generation], surfaceID: surfaceID).isAccepted)
+    #expect(store.recordManagedHook(second, callerAncestry: [generation], surfaceID: surfaceID) == .pending)
+    let update = store.updateEvidenceEpoch(
+      surfaceID: surfaceID, processGeneration: generation, sessionID: "thread-2")
+    #expect(update.activatedSignals.count == 1)
 
     #expect(!store.recordManagedHook(first, callerAncestry: [generation], surfaceID: surfaceID).isAccepted)
   }
@@ -754,5 +886,14 @@ extension ManagedHookRecordResult {
   fileprivate var isAccepted: Bool {
     if case .accepted = self { return true }
     return false
+  }
+}
+
+@MainActor
+private final class MutableDate {
+  var value: Date
+
+  init(_ value: Date) {
+    self.value = value
   }
 }

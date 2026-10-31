@@ -12,7 +12,11 @@ sections below record what shipped and what differs from the plan.
 | 2026-10-17 | S3a: manual-session correlation behind `PROWL_REMOTE_AGENT_DETECTION` — `LC_PROWL_PANE`, argv grammar, per-pane tracker, identity, snapshot release, remote OSC fence. Review Loop: 4 rounds plus a 2-round follow-up, clean (R1–R10) | #926 |
 | 2026-10-18 | S3b: stale projection and refusal of remote agents in conditions, dispatch and workflow admission (behind the flag). Review Loop clean after 3 rounds | #927 |
 | 2026-10-18 | S3c: degraded OSC-only binding for panes the host cannot map or probe (behind the flag). Review Loop: 4 rounds, then two follow-ups, clean | #928 |
-| 2026-10-18 | S4a: host label and connection health on Active Agents rows, `remote` object in `prowl agents --json`, docs (behind the flag) | #930 |
+| 2026-10-18 | S4a: host label and connection health on Active Agents rows, `remote` object in `prowl agents --json`, docs (behind the flag). Review Loop clean after 2 rounds | #930 |
+| 2026-10-18 | S4b: pane and tab host label, ssh-ended marker; remote detection on by default. Review Loop: 3 rounds plus a 2-round follow-up, clean | #931 |
+| 2026-10-18 | S5a: probe format 2 maps a session's tmux client to its active pane, with the pane's foreground job and visible screen. Review Loop clean after 3 rounds | #932 |
+| 2026-10-18 | S5b: inside tmux, identity from the mapping and state from the capture. Review Loop clean after 3 rounds. L0 complete | #933 |
+| 2026-10-18 | S4c: consent before the first side-channel connection (stored `undecided`/`enabled`/`disabled`, toolbar consent panel, Settings switch) and the side-channel toolbar status. Review Loop clean after 3 rounds | #937 |
 
 ## S1 — Typed process references
 
@@ -320,3 +324,251 @@ label, the ssh-ended marker, and turning the flag on.
   degraded binding, release, limits). `cli.md` documents the `remote` object. The
   `prowl-cli` skill lists the fields.
 
+## S4b — Pane and tab label, ssh-ended marker, on by default
+
+- **Indicator.** `RemotePaneIndicator` lives on the surface's `GhosttySurfaceState`, so
+  every host of a pane (tab content, Canvas, Shelf) can read it without new plumbing. Its
+  cases are `connected(host, ssh: generation)` and `ended(host, at:)`.
+  `reconcileRemoteIndicator` sets it on every sample that read a job, and needs no tracker:
+  - the foreground `ssh` with a resolved connection: `connected` to that generation;
+  - otherwise (another or unresolved `ssh`, or a shell): a `connected` of another
+    generation becomes `ended(at: now)` if that `ssh` exited, or nil if it still runs
+    (suspended);
+  - an `ended` older than five seconds becomes nil;
+  - the flag turning off: nil.
+
+  A probe gap changes nothing. Writes are guarded, so equal values never notify. Review
+  round 1 made the indicator independent of the tracker: a pane restored by Undo after
+  its `ssh` exited, and an unresolvable replacement `ssh`, both lost the old label. It
+  also made the ended marker carry its exit time: a view that mounted later showed an old
+  exit again.
+- **Issue (review round 2, L0-8).** `connected` also carries `issue`, which is the
+  correlation when it is `ambiguous`, `unmapped`, `probeUnavailable`, or `unsupported`. A
+  foreground `ssh` with an issue is labelled even without a resolved connection ("Remote
+  host"). Before this, a pane with no listed agent had no visible reason. The badge then
+  shows a multicolor warning glyph. Only that capsule takes the pointer, so its tooltip
+  (`RemotePaneBadge.issueExplanation`, reusing `RemoteAgentPresentation`) can say why, and
+  that only OSC 7501 producers are detected.
+- **Accessibility (review round 3).** The split container lists only the pane views as AX
+  children, so the badge's own metadata cannot be reached. The pane's AX element carries
+  the state itself, through `RemoteAgentPresentation.paneAccessibility`. The label gains
+  ", connected to host" or ", disconnected from host" (only while the ended marker shows),
+  and the help gains the issue explanation after "Pane n of m". When the spoken label or
+  help changes, `setRemoteIndicator` posts `.titleChanged` for the pane, as the title path
+  does, so a focused VoiceOver user hears it (follow-up review). An equal sample posts
+  nothing.
+- **Pane.** `RemotePaneBadge` sits in the bottom-trailing corner: a material capsule with a
+  network glyph and the host. It does not take hits. After an exit it reads "Disconnected
+  from host" with `network.slash` until five seconds after the exit (`showsEndedMarker`,
+  plus a view `.task` for the remainder), then fades out.
+- **Tab.** `TerminalTabItem.remoteHosts` lists the distinct hosts of the tab's panes in
+  pane order, and `updateRemoteHosts` refreshes it on every indicator change and from
+  `updateRunningState` (tree changes such as a moved or closed pane). The tab label shows
+  a network glyph before the title, and the tooltip reads "Open tab … (connected to
+  hosts)".
+- **On by default.** `RemoteAgentDetection.isEnabled(environment:defaults:)`: the
+  environment value wins (`0` off, anything else on). Otherwise the
+  `remoteAgentDetectionEnabled` default decides, and it defaults to on.
+- **Docs.** The `agent-detection.md` section drops the opt-in and documents the kill
+  switch, the pane and tab label, and the ended marker. `active-agents.md` documents the
+  remote row. `terminal.md` documents the tab glyph and pane corner.
+
+## S5a — tmux in the probe (format 2)
+
+S5 is split. S5a teaches the probe and parser about tmux. S5b makes the tracker take
+identity from the mapping and state from the screen.
+
+- **Records.** Format 2 adds four records:
+  - `X <pane> <anchor pid> <client pid> <tmux pane> <pane tty> <in mode> <tpgid>`: a tmux
+    client in a session's foreground and its active pane. It names its session by anchor
+    pid, so it follows all sessions.
+  - `Y` and `Z`: as `P` and `D`, for that pane's foreground job.
+  - `C <pane> <truncated> <text>`: the pane's visible screen (`capture-pane -p`), capped at
+    64 KiB. Past the cap it keeps the last whole lines (`1`): an agent draws its composer
+    and status at the bottom, and a cut line could split a character. All screens of one
+    snapshot share a 160 KiB budget (`RemoteProbeTmuxPane.screenBudget`); a screen past it
+    has no text (`-`). Clients of Prowl panes go first.
+  - `U <pane> <anchor pid> <client pid>`: a tmux client in a session's foreground whose
+    server the probe could not reach. `RemoteProbeSession.hasUnreadTmuxPane` carries it.
+
+  `END` carries four counts (sessions, session members, clients, pane members). A pane
+  without its `C` record makes the snapshot partial.
+- **Finding the server.** The pane's processes inherit the server's first client's
+  environment, so the probe never maps by environment. On Linux, tmux overwrites the
+  client's argv (`-L` is lost), so the probe also does not parse argv. Instead it asks
+  every socket in `${TMUX_TMPDIR:-/tmp}/tmux-$uid/` for `list-clients` and keeps the line
+  whose `client_pid` is the session's foreground member. The tmux binary is not on the side
+  channel's `PATH` (Homebrew), so the probe runs the client's own executable: `lsof` txt on
+  macOS, `/proc/<pid>/exe` on Linux.
+- **Pitfalls found on the hosts.**
+  - Under `LC_ALL=C`, tmux prints control characters in formats as `_`, so a TAB-separated
+    `-F` comes back joined. The fields are spaces-separated, because none of them can hold a
+    space.
+  - Linux names the client `tmux: client` (macOS: `tmux`).
+  - The heredoc that feeds the client loop keeps the counters in the main shell. A
+    `printf | while` pipeline would run them in a subshell.
+  - A capture that fails (the pane closed after `list-clients`) prints no `C` record, so
+    the snapshot stays partial; a blank screen still has its newlines
+    (`screen_record`, review round 1).
+  - On Linux, the probe runs the client through `/proc/<pid>/exe`. After an upgrade the
+    link's target reads `… (deleted)`, but the link still runs the client's own
+    protocol-compatible binary (review round 1; reproduced in the container by
+    deleting a copied binary).
+- **Measured.** On macOS 26.5 with tmux 3.7c and Debian trixie with tmux 3.5a:
+  - The plain mapping shows Claude (`comm` `2.1.302`) or `sleep 600` in pane `%0`.
+  - Copy mode sets `in mode` to 1 and keeps the identity.
+  - A split with the other pane active maps to `%1`.
+  - A second `ssh` session attached to the same tmux session maps its own Prowl pane to
+    the same `%0`.
+  - `RemoteConnectionLiveTests` on both hosts (with a tmux session attached) returns a
+    complete report.
+- **Design review.** A later review of the design found that every
+  failed mapping was silent: the snapshot stayed complete, so the consumer would read the
+  plain `tmux` foreground as "the agent left". The fixes:
+  - A failed mapping prints `U`. The consumer treats that session as a gap, and only that
+    session.
+  - A client whose own binary is gone (macOS: `brew upgrade` removed the Cellar path that
+    `lsof` reports) uses a tmux on `PATH`, then `/opt/homebrew/bin/tmux`, then
+    `/usr/local/bin/tmux`. Reproduced on mini by deleting a copied binary under a live
+    client: the old probe dropped the client, the new one maps it.
+  - `pane_in_mode` counts modes (copy mode under a chooser is 2 on both hosts), so the
+    format asks for `#{?pane_in_mode,1,0}`.
+  - The screen budget and the kept bottom lines (above). Four 64 KiB screens used to fill
+    the 256 KiB output limit, which stops the whole probe.
+
+  Rejected: one `list-clients` per socket per tick (one or two clients is the common
+  case); `display-message -c` or `list-panes -a` (neither ties a client to its own pane);
+  sharing one capture between two clients of a pane (needs a reference record or a
+  temporary file; the budget already bounds the cost).
+- **Limits.**
+  - A server socket outside `${TMUX_TMPDIR:-/tmp}/tmux-$uid/` (as the side channel sees
+    `TMUX_TMPDIR`), such as `tmux -S <path>`, is not found. Its client gets a `U` record.
+  - Only one level of tmux: a tmux inside a tmux pane is the pane's foreground job.
+  - A program in a `display-popup` is not in the pane's foreground job.
+  - `list-clients` reports the window's active pane. A client attached with
+    `-f active-pane` can show another pane (not tested).
+
+## S5b — tmux identity and capture state
+
+- **Identity.** `RemotePaneTracker.correlatedJob` takes the job from the session's tmux
+  pane when the session shows a tmux client. When that pane's job is empty, there is no
+  agent; the client itself is never classified.
+- **Screen.** The tracker separates two facts.
+  - `isInTmux`: the session shows a tmux client. A partial snapshot without the tmux
+    records is a gap and keeps it.
+  - `tmuxCapture`: the latest capture whose pane runs the bound agent, with its
+    acquisition time. It is cleared on rebind and on release.
+
+  `tmuxScreen(now:)` returns three values:
+  - nil outside tmux;
+  - `.capture(text)` while that capture is no older than `RemoteAgentContext.staleAfter`;
+  - `.unavailable` otherwise.
+
+  `pollScreen` scans the capture with the same per-surface memo, and never reads the local
+  screen (the client's view) inside tmux.
+  - A failed or partial probe, or a capture of another pane during the two-snapshot
+    release hold, keeps the last capture of the bound agent's pane. So the retained
+    state never describes another pane (review round 1).
+  - For `.unavailable`, it stores an unknown scan. The context's `isStateKnown` also
+    reads the capture's availability, because the state machine keeps the last stable
+    state for display when it is given an unknown. Conditions then see `unknown`, not the
+    old state (review round 2).
+  - The capture's age counts in the tracker's `uptime`, which tests inject through
+    `remoteUptimeForTesting`.
+- **Where the agent was last seen.** `boundFromTmux` follows the latest snapshot that
+  contains the bound agent. After a detach, the session shows the remote shell, while the
+  retained agent keeps its own capture until the presence rule releases it. The shell
+  screen never describes it (review round 2).
+- **Wakes.** Output does not wake the detection loop, so the tick compares a hash of the
+  local screen (`tmuxLocalScreenHashBySurface`). When it changes, the tick calls
+  `requestRefreshForScreenChange()`, which requests at most one probe every
+  `screenChangeSpacing` (0.25 s). The owner coalesces the rest, so at most one probe is in
+  flight.
+- **Unreachable tmux server** (after the S5a design review). A session with
+  `hasUnreadTmuxPane` is a gap for this pane alone: `consume` keeps `isInTmux`, does not
+  count a miss, and binds nothing. Its correlation is `tmuxUnreachable`:
+  - the pane badge shows the warning, with a reason that names `tmux -S` and no OSC 7501
+    fallback (tmux drops it);
+  - `--json` reports `remote.correlation` `tmux_unreachable`;
+  - a degraded OSC-only binding is not allowed there.
+
+  A bound agent stays listed and its state becomes unknown when its capture is older than
+  `RemoteAgentContext.staleAfter`.
+- **Compact badge** (live check, 2026-10-19). In tmux, the full badge covered the right
+  part of the status line all the time. `RemotePaneBadge` now names the host for
+  `RemotePaneIndicator.hostLabelDuration` (5 s) after the indicator appears or changes (a
+  new issue included), then shows only its glyph. The pointer on the glyph shows the host
+  again, so the glyph takes hits; the ended marker still does not. A view mount (such as a
+  tab switch) names the host again. A cancelled timer no longer marks the next indicator as
+  expired.
+- **Accessibility help** (live check). The pane's help joined "Pane n of m" and the issue
+  reason with a space, so VoiceOver read them as one sentence. It joins them with a line
+  break now.
+- **Test seam.** `GhosttySurfaceBridge.activeTextForTesting`.
+- **Measured** (macOS 26.5, tmux 3.7c, Claude 2.1.302):
+  - Claude in `tmux -L s5e2e` appeared after 0.35 s (`claude.idleComposer` from the
+    capture); a prompt reached working at 0.44 s (`claude.spinner`) and done at 3.04 s.
+  - Copy mode during work stayed working.
+  - Sampled every 0.1 s for 4 s: at most 1 concurrent probe, with a probe running in
+    7 of 40 samples.
+  - A split with the other pane active released the agent after 2.24 s; `select-pane`
+    back showed it after 3.79 s. With no agent bound, the idle cadence applies.
+  - A second Prowl pane attached as another client showed the same agent, `correlated`.
+  - Debian trixie (tmux 3.5a): Claude in tmux was identified after 2.45 s.
+- **Final E2E on the reviewed HEAD** (mini, tmux 3.7c):
+  - Claude appeared after 0.68 s and settled on `claude.idleComposer`.
+  - A prompt read as `claude.spinner`; copy mode during the work stayed working; done
+    came from the capture.
+  - A detach during work kept it working (never idle from the remote shell) until the
+    release at 0.56 s. Reattaching showed it working again after 0.58 s.
+  - `state_known` stayed true throughout.
+
+
+## S4c — Consent before the first connection, side-channel status
+
+- **Stored answer.** `GlobalSettings.remoteAgentDetection` is a `RemoteAgentDetectionConsent`:
+  `undecided` (the default), `enabled` or `disabled`. An unknown stored value decodes as
+  `undecided`, so a newer build's value never fails the settings file. This replaces the
+  `remoteAgentDetectionEnabled` default of S4b. `RemoteAgentDetection.mode(environment:consent:)`
+  gives `enabled`, `disabled` or `awaitingConsent`; `PROWL_REMOTE_AGENT_DETECTION` still wins
+  (`0` off, any other value on) and never asks.
+- **No connection before consent.** The app pushes the answer through
+  `TerminalClient.Command.setRemoteAgentDetection` to every `WorktreeTerminalState`. While
+  the mode is `awaitingConsent`, `observeRemoteAgent` creates no tracker, so there is no
+  `ssh -G` and no side channel. The first foreground `ssh` of a pane generation asks once
+  (`remoteConsentAskedSSHBySurface`). It only parses the command line; an `ssh` outside the
+  grammar does not ask. The ask is the event `remoteAgentConsentNeeded(worktreeID,
+  surfaceID, destination)`. A change of mode runs one tick on every pane, so open `ssh`
+  sessions are read (or let go) without a reconnect or a key press, also in a pane whose
+  loop went cold while detection was off or the question waited. A cold pane also gets its
+  pane state back first: a tick cannot publish an agent without one (review rounds 1 and
+  2). A pane that gets a tracker keeps ticking; the others go cold again.
+- **Panel.** `AppFeature.State.remoteAgentConsentPrompt` holds the question; a stored answer
+  or Not Now (`isRemoteAgentConsentDeferred`, until the next launch) drops new asks. The
+  toolbar status shows "Detect agents on <destination>?" and opens its popover at once
+  (`RemoteAgentConsentStatusButton`). The choices are Turn Off, Not Now and Turn On. They
+  are not focusable and none is the default button, so a Return typed for a password prompt
+  never answers. A change of the Settings switch (Agents › Display › SSH Sessions) also
+  answers and closes the panel.
+- **Side-channel status.** `RemoteChannelToolbarStatus` reads the focused pane's
+  `RemotePaneIndicator`: `connected` without `unsupported` (Prowl never connects for an
+  `ssh` outside the grammar). `RemoteChannelStatusButton` shows the host with "Agent
+  detection on", or a warning glyph with "Agents not detected". Hover or click opens a
+  panel that tells what the extra connection does, the issue explanation from
+  `RemoteAgentPresentation.paneIssueExplanation`, and "Agent Settings…".
+- **Order.** `ToolbarStatusSelection`: toast, consent, workflow, rate limit, side channel,
+  pull request, then the clock.
+- **Focus (measured).** A test window with a text view showed that neither
+  `NSPopover(.applicationDefined)` nor SwiftUI `.popover` changes the key window or the first
+  responder.
+- **E2E** (isolated Debug instance, mini, Claude 2.1.302):
+  - Undecided: `ssh` to mini opened the panel; no `cm-` process existed. AX reported the
+    main window as focused and the pane's text area as the focused element.
+  - Claude started on mini before the answer was not listed. Turn On started the side
+    channel after 0.34 s, stored `enabled`, and listed Claude (`correlated`, `probed`)
+    without a reconnect. The toolbar showed the host with "Agent detection on", and its
+    panel opened on click.
+  - "Agent Settings…" opened Settings › Agents › Display. Turning the switch off stored
+    `disabled`, ended the side channel after 0.34 s, and cleared the agent and the status.
+  - After a relaunch with `undecided`, Not Now closed the panel; a second `ssh` in that
+    launch did not ask, and no connection opened.

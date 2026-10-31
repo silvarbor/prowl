@@ -88,7 +88,8 @@ public struct AgentsCommandRemote: Codable, Equatable {
   public let user: String?
   public let hostname: String?
   public let port: Int?
-  /// `pending`, `correlated`, `ambiguous`, `unmapped`, `probe_unavailable`, or `unsupported`.
+  /// `pending`, `correlated`, `ambiguous`, `unmapped`, `probe_unavailable`, `unsupported`, or
+  /// `tmux_unreachable`.
   public let correlation: String
   /// Why the host cannot be read, or why the `ssh` command is not supported.
   public let correlationReason: String?

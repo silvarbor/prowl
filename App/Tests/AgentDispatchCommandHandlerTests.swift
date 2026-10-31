@@ -512,11 +512,7 @@ struct AgentDispatchCommandHandlerTests {
       now: { Self.start }
     )
     let task = Task { await handler.handle(envelope: self.dispatch(pane: target.paneID)) }
-    for _ in 0..<3 {
-      await Task.yield()
-      await clock.advance(by: .milliseconds(200))
-    }
-    let response = await task.value
+    let response = await drive(task, clock)
     #expect(response.ok)
     #expect(reads == 4)
     #expect(delivered == 1)
@@ -539,11 +535,7 @@ struct AgentDispatchCommandHandlerTests {
       now: { Self.start }
     )
     let task = Task { await handler.handle(envelope: self.dispatch(pane: target.paneID)) }
-    for _ in 0..<(AgentDispatchCommandHandler.idleGraceMilliseconds / 200) {
-      await Task.yield()
-      await clock.advance(by: .milliseconds(200))
-    }
-    let response = await task.value
+    let response = await drive(task, clock)
     #expect(response.error?.code == CLIErrorCode.dispatchTargetBusy)
     #expect(issued == 0)
     let details = try #require(response.error?.details).decode(as: AgentDispatchErrorDetails.self)
@@ -571,14 +563,7 @@ struct AgentDispatchCommandHandlerTests {
       now: { Self.start }
     )
     let task = Task { await handler.handle(envelope: self.dispatch(pane: target.paneID)) }
-    for _ in 0..<9 {
-      await Task.yield()
-      await clock.advance(by: .milliseconds(200))
-    }
-    #expect(!task.isCancelled)
-    await Task.yield()
-    await clock.advance(by: .milliseconds(200))
-    let response = await task.value
+    let response = await drive(task, clock)
     #expect(response.ok)
     // One read for the remote-agent refusal, then the idle wait's.
     #expect(reads == 12)
@@ -603,11 +588,7 @@ struct AgentDispatchCommandHandlerTests {
       now: { Self.start }
     )
     let task = Task { await handler.handle(envelope: self.dispatch(pane: target.paneID)) }
-    for _ in 0..<4 {
-      await Task.yield()
-      await clock.advance(by: .milliseconds(200))
-    }
-    let response = await task.value
+    let response = await drive(task, clock)
     #expect(response.error?.code == CLIErrorCode.dispatchTargetBusy)
     #expect(issued == 0)
   }
@@ -631,11 +612,7 @@ struct AgentDispatchCommandHandlerTests {
       now: { Self.start }
     )
     let task = Task { await handler.handle(envelope: self.dispatch(pane: target.paneID)) }
-    for _ in 0..<10 {
-      await Task.yield()
-      await clock.advance(by: .milliseconds(200))
-    }
-    let response = await task.value
+    let response = await drive(task, clock)
     #expect(response.ok)
   }
 
@@ -904,5 +881,11 @@ struct AgentDispatchCommandHandlerTests {
       displayState: status,
       lastChangedAt: Self.start
     )
+  }
+
+  /// The idle wait counts the ticks it waited, so ticks until it returns keep its result.
+  private func drive(_ task: Task<CommandResponse, Never>, _ clock: TestClock<Duration>) async -> CommandResponse {
+    await advance(clock, by: .milliseconds(200), until: task)
+      ?? CommandResponse(ok: false, command: "agents.dispatch", schemaVersion: "")
   }
 }

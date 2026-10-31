@@ -2,9 +2,9 @@ import Foundation
 
 /// Parses the framed output of `RemoteProbeScript` (docs-ai 082, C6).
 ///
-/// Only a report with a matching header, the host record, well-formed records, and an
-/// `END` record whose counts match is complete. Anything else is partial, and a partial
-/// report never proves that a process is gone.
+/// Only a report with a matching header, the host record, well-formed records, a screen
+/// for every tmux pane, and an `END` record whose counts match is complete. Anything else
+/// is partial, and a partial report never proves that a process is gone.
 nonisolated enum RemoteProbeParser {
   enum Result: Equatable, Sendable {
     case complete(RemoteProbeReport)
@@ -12,7 +12,7 @@ nonisolated enum RemoteProbeParser {
     case unrecognized
   }
 
-  static let formatVersion = "1"
+  static let formatVersion = "2"
 
   static func parse(_ text: String) -> Result {
     parse(Data(text.utf8))
@@ -142,10 +142,20 @@ nonisolated enum RemoteProbeParser {
     }
   }
 
+  /// The counts an `END` record declares.
+  private struct Counts {
+    let sessions: Int
+    let processes: Int
+    let clients: Int
+    let paneProcesses: Int
+  }
+
   private struct ReportBuilder {
     var host: (system: RemoteProbeReport.OperatingSystem, bootID: String)?
     var sessions: [SessionBuilder] = []
-    var ended: (sessions: Int, processes: Int)?
+    /// The session whose tmux pane the latest `X` record opened; `Y`, `Z` and `C` belong to it.
+    var tmuxSession: Int?
+    var ended: Counts?
     var malformed = false
 
     /// Applies one record; false when it is malformed or out of place.
@@ -153,20 +163,84 @@ nonisolated enum RemoteProbeParser {
       guard ended == nil else { return false }
       switch record.first {
       case "H": return applyHost(record)
-      case "S": return applySession(record)
+      case "S": return tmuxSession == nil && applySession(record)
       case "P":
-        guard !sessions.isEmpty, let process = RemoteProbeParser.process(record) else { return false }
-        sessions[sessions.count - 1].processes.append(process)
-        return true
-      case "D": return applyDirectory(record)
-      case "END":
-        guard record.count == 3, let sessionCount = Int(record[1]), let processCount = Int(record[2]) else {
+        guard tmuxSession == nil, !sessions.isEmpty, let process = RemoteProbeParser.process(record) else {
           return false
         }
-        ended = (sessionCount, processCount)
+        sessions[sessions.count - 1].processes.append(process)
         return true
+      case "D":
+        guard tmuxSession == nil, !sessions.isEmpty else { return false }
+        return Self.applyDirectory(record, to: &sessions[sessions.count - 1].processes)
+      case "END": return applyEnd(record)
+      default: return applyTmuxRecord(record)
+      }
+    }
+
+    /// `X`, `U`, and the `Y`, `Z` and `C` records of the pane the latest `X` opened.
+    private mutating func applyTmuxRecord(_ record: [String]) -> Bool {
+      switch record.first {
+      case "X": return applyTmuxClient(record)
+      case "U": return applyUnreadTmuxClient(record)
+      case "Y":
+        guard let index = tmuxSession, let process = RemoteProbeParser.process(record) else { return false }
+        sessions[index].tmux?.processes.append(process)
+        return true
+      case "Z":
+        guard let index = tmuxSession, var tmux = sessions[index].tmux,
+          Self.applyDirectory(record, to: &tmux.processes)
+        else { return false }
+        sessions[index].tmux = tmux
+        return true
+      case "C": return applyScreen(record)
       default: return false
       }
+    }
+
+    private mutating func applyEnd(_ record: [String]) -> Bool {
+      guard record.count == 5, let sessionCount = Int(record[1]), let processCount = Int(record[2]),
+        let clientCount = Int(record[3]), let paneProcessCount = Int(record[4])
+      else { return false }
+      ended = Counts(
+        sessions: sessionCount, processes: processCount, clients: clientCount, paneProcesses: paneProcessCount)
+      return true
+    }
+
+    /// `X` names its session by anchor pid, so it may follow every session; one per session.
+    private mutating func applyTmuxClient(_ record: [String]) -> Bool {
+      guard record.count == 8, let anchor = Int32(record[2]), let client = Int32(record[3]),
+        let tpgid = Int32(record[7]), record[6] == "0" || record[6] == "1",
+        let index = sessions.firstIndex(where: { $0.anchorPID == anchor }), sessions[index].tmux == nil,
+        !sessions[index].hasUnreadTmuxPane
+      else { return false }
+      sessions[index].tmux = TmuxBuilder(
+        clientPID: client, paneID: record[4], tty: record[5] == "-" ? nil : record[5], isInMode: record[6] == "1",
+        foregroundProcessGroupID: tpgid)
+      tmuxSession = index
+      return true
+    }
+
+    /// `U`, like `X`, names its session by anchor pid; no pane record follows it.
+    private mutating func applyUnreadTmuxClient(_ record: [String]) -> Bool {
+      guard record.count == 4, let anchor = Int32(record[2]), Int32(record[3]) != nil,
+        let index = sessions.firstIndex(where: { $0.anchorPID == anchor }), sessions[index].tmux == nil,
+        !sessions[index].hasUnreadTmuxPane
+      else { return false }
+      sessions[index].hasUnreadTmuxPane = true
+      tmuxSession = nil
+      return true
+    }
+
+    /// `C` with `-` is a screen left out for the budget: present, without text.
+    private mutating func applyScreen(_ record: [String]) -> Bool {
+      guard record.count == 4, ["0", "1", "-"].contains(record[2]), let index = tmuxSession,
+        let tmux = sessions[index].tmux, !tmux.hasScreenRecord
+      else { return false }
+      sessions[index].tmux?.hasScreenRecord = true
+      sessions[index].tmux?.screen = record[2] == "-" ? nil : record[3]
+      sessions[index].tmux?.isScreenTruncated = record[2] == "1"
+      return true
     }
 
     private mutating func applyHost(_ record: [String]) -> Bool {
@@ -186,9 +260,10 @@ nonisolated enum RemoteProbeParser {
       return true
     }
 
-    private mutating func applyDirectory(_ record: [String]) -> Bool {
-      guard record.count == 5, let pid = Int32(record[2]), !sessions.isEmpty,
-        let index = sessions[sessions.count - 1].processes.lastIndex(where: { $0.pid == pid })
+    /// A `D` or `Z` record: the working directory of the latest process with that pid.
+    private static func applyDirectory(_ record: [String], to processes: inout [ProcessBuilder]) -> Bool {
+      guard record.count == 5, let pid = Int32(record[2]),
+        let index = processes.lastIndex(where: { $0.pid == pid })
       else { return false }
       let path: String
       switch record[3] {
@@ -196,7 +271,7 @@ nonisolated enum RemoteProbeParser {
       case "l": path = RemoteProbeParser.lsofName(record[4])
       default: return false
       }
-      sessions[sessions.count - 1].processes[index].workingDirectory = path
+      processes[index].workingDirectory = path
       return true
     }
 
@@ -204,10 +279,33 @@ nonisolated enum RemoteProbeParser {
       guard let host else { return .partial(nil) }
       let report = RemoteProbeReport(
         operatingSystem: host.system, bootID: host.bootID, sessions: sessions.map { $0.build() })
+      let panes = sessions.compactMap(\.tmux)
       guard !malformed, let ended, ended.sessions == sessions.count,
-        ended.processes == sessions.reduce(0, { $0 + $1.processes.count })
+        ended.processes == sessions.reduce(0, { $0 + $1.processes.count }), ended.clients == panes.count,
+        ended.paneProcesses == panes.reduce(0, { $0 + $1.processes.count }),
+        // A pane whose screen record is missing was cut off.
+        panes.allSatisfy(\.hasScreenRecord)
       else { return .partial(report) }
       return .complete(report)
+    }
+  }
+
+  private struct TmuxBuilder {
+    let clientPID: Int32
+    let paneID: String
+    let tty: String?
+    let isInMode: Bool
+    let foregroundProcessGroupID: Int32
+    var processes: [ProcessBuilder] = []
+    var hasScreenRecord = false
+    var screen: String?
+    var isScreenTruncated = false
+
+    func build() -> RemoteProbeTmuxPane {
+      RemoteProbeTmuxPane(
+        clientPID: clientPID, paneID: paneID, tty: tty, isInMode: isInMode,
+        foregroundProcessGroupID: foregroundProcessGroupID, processes: processes.map { $0.build() },
+        screen: screen, isScreenTruncated: isScreenTruncated)
     }
   }
 
@@ -217,11 +315,13 @@ nonisolated enum RemoteProbeParser {
     let tty: String?
     let foregroundProcessGroupID: Int32
     var processes: [ProcessBuilder] = []
+    var tmux: TmuxBuilder?
+    var hasUnreadTmuxPane = false
 
     func build() -> RemoteProbeSession {
       RemoteProbeSession(
         paneID: paneID, anchorPID: anchorPID, tty: tty, foregroundProcessGroupID: foregroundProcessGroupID,
-        processes: processes.map { $0.build() })
+        processes: processes.map { $0.build() }, tmux: tmux?.build(), hasUnreadTmuxPane: hasUnreadTmuxPane)
     }
   }
 }

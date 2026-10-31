@@ -11,9 +11,7 @@ final class AgentWaitCommandHandler: CommandHandler {
   typealias ConditionSnapshot = AgentConditionSnapshot
 
   nonisolated private enum DispatchOutcome: Sendable {
-    case terminal(AgentDispatchSnapshot)
-    case needsInput(AgentDispatchSnapshot)
-    case incomplete(AgentDispatchSnapshot)
+    case ready(AgentDispatchObservation, AgentSignalsPayload)
     case timeout
     case cancelled
   }
@@ -23,6 +21,7 @@ final class AgentWaitCommandHandler: CommandHandler {
   nonisolated static let agentAppearanceGraceMilliseconds = 10_000
 
   private let observeDispatch: ObserveDispatch
+  private let revalidateDispatch: @MainActor (AgentDispatchObservation) -> AgentDispatchObservation
   private let observeCondition: ObserveCondition
   private let resolveConditionTarget: @MainActor (String) -> Result<TabResolvedTarget, TargetResolverError>
   private let conditionSnapshot: @MainActor (TabResolvedTarget) -> ConditionSnapshot
@@ -34,6 +33,7 @@ final class AgentWaitCommandHandler: CommandHandler {
 
   init(
     observeDispatch: @escaping ObserveDispatch,
+    revalidateDispatch: @escaping @MainActor (AgentDispatchObservation) -> AgentDispatchObservation = { $0 },
     observeCondition: @escaping ObserveCondition = { _ in
       AgentObservationStream { _ in }
     },
@@ -49,6 +49,7 @@ final class AgentWaitCommandHandler: CommandHandler {
     now: @escaping @MainActor () -> Date = Date.init
   ) {
     self.observeDispatch = observeDispatch
+    self.revalidateDispatch = revalidateDispatch
     self.observeCondition = observeCondition
     self.resolveConditionTarget = resolveConditionTarget
     self.conditionSnapshot = conditionSnapshot
@@ -88,7 +89,6 @@ final class AgentWaitCommandHandler: CommandHandler {
   }
 
   // Outcome ordering is kept explicit because each dispatch state has a distinct exit contract.
-  // swiftlint:disable:next cyclomatic_complexity function_body_length
   private func waitForDispatch(
     _ dispatchID: String,
     timeoutSeconds: Int,
@@ -109,44 +109,15 @@ final class AgentWaitCommandHandler: CommandHandler {
     guard let initialEvent = await cursor.next() else {
       return failure(code: CLIErrorCode.timeout, message: "The wait was cancelled.")
     }
-    switch initialEvent {
-    case .snapshot(let snapshot), .changed(let snapshot):
-      latestSnapshot.set(snapshot)
-      if snapshot.record.isTerminal {
-        return await response(
-          for: snapshot,
-          waitedMilliseconds: max(0, Int(now().timeIntervalSince(startedAt) * 1_000)),
-          includeScreenLines: includeScreenLines
-        )
-      }
-    case .needsInput(let snapshot):
-      return await dispatchFailure(
-        code: CLIErrorCode.dispatchNeedsInput,
-        message: "The dispatched agent needs input.",
-        snapshot: snapshot,
-        waitedMilliseconds: max(0, Int(now().timeIntervalSince(startedAt) * 1_000)),
-        includeScreenLines: includeScreenLines
-      )
-    case .incomplete(let snapshot):
-      return await dispatchFailure(
-        code: CLIErrorCode.dispatchIncomplete,
-        message: "The agent turn ended without completing its dispatch receipt.",
-        snapshot: snapshot,
-        waitedMilliseconds: max(0, Int(now().timeIntervalSince(startedAt) * 1_000)),
-        includeScreenLines: includeScreenLines
-      )
+    if let outcome = prepareDispatchOutcome(initialEvent, latestSnapshot: latestSnapshot) {
+      return await dispatchResponse(
+        outcome.event, signals: outcome.signals, startedAt: startedAt, includeScreenLines: includeScreenLines)
     }
     let outcome = await withTaskGroup(of: DispatchOutcome.self) { group in
       group.addTask {
         while !Task.isCancelled, let event = await cursor.next() {
-          switch event {
-          case .snapshot(let snapshot), .changed(let snapshot):
-            latestSnapshot.set(snapshot)
-            if snapshot.record.isTerminal { return .terminal(snapshot) }
-          case .needsInput(let snapshot):
-            return .needsInput(snapshot)
-          case .incomplete(let snapshot):
-            return .incomplete(snapshot)
+          if let outcome = await self.prepareDispatchOutcome(event, latestSnapshot: latestSnapshot) {
+            return .ready(outcome.event, outcome.signals)
           }
         }
         return .cancelled
@@ -179,13 +150,49 @@ final class AgentWaitCommandHandler: CommandHandler {
         )
       }
       return failure(code: CLIErrorCode.waitTimeout, message: "Timed out waiting for dispatch completion.")
+    case .ready(let event, let signals):
+      return await dispatchResponse(
+        event, signals: signals, startedAt: startedAt, includeScreenLines: includeScreenLines)
+    }
+  }
+
+  private func prepareDispatchOutcome(
+    _ event: AgentDispatchObservation,
+    latestSnapshot: LatestDispatchSnapshot
+  ) -> (event: AgentDispatchObservation, signals: AgentSignalsPayload)? {
+    // Diagnostics can refresh the detector too. Capture them before the final
+    // validation so they cannot invalidate evidence after the exit decision.
+    let signals = event.snapshot.binding.map { signalsProvider($0.target) } ?? .empty
+    let current = revalidateDispatch(event)
+    latestSnapshot.set(current.snapshot)
+    switch current {
+    case .snapshot(let snapshot), .changed(let snapshot):
+      guard snapshot.record.isTerminal else { return nil }
+    case .needsInput, .incomplete:
+      break
+    }
+    return (current, signals)
+  }
+
+  private func dispatchResponse(
+    _ current: AgentDispatchObservation,
+    signals: AgentSignalsPayload,
+    startedAt: Date,
+    includeScreenLines: Int?
+  ) async -> CommandResponse {
+    let waited = max(0, Int(now().timeIntervalSince(startedAt) * 1_000))
+    switch current {
+    case .snapshot(let snapshot), .changed(let snapshot):
+      return await response(
+        for: snapshot, waitedMilliseconds: waited, includeScreenLines: includeScreenLines, signals: signals)
     case .needsInput(let snapshot):
       return await dispatchFailure(
         code: CLIErrorCode.dispatchNeedsInput,
         message: "The dispatched agent needs input.",
         snapshot: snapshot,
         waitedMilliseconds: waited,
-        includeScreenLines: includeScreenLines
+        includeScreenLines: includeScreenLines,
+        signals: signals
       )
     case .incomplete(let snapshot):
       return await dispatchFailure(
@@ -193,13 +200,8 @@ final class AgentWaitCommandHandler: CommandHandler {
         message: "The agent turn ended without completing its dispatch receipt.",
         snapshot: snapshot,
         waitedMilliseconds: waited,
-        includeScreenLines: includeScreenLines
-      )
-    case .terminal(let snapshot):
-      return await response(
-        for: snapshot,
-        waitedMilliseconds: waited,
-        includeScreenLines: includeScreenLines
+        includeScreenLines: includeScreenLines,
+        signals: signals
       )
     }
   }
@@ -207,7 +209,8 @@ final class AgentWaitCommandHandler: CommandHandler {
   private func response(
     for snapshot: AgentDispatchSnapshot,
     waitedMilliseconds: Int,
-    includeScreenLines: Int?
+    includeScreenLines: Int?,
+    signals: AgentSignalsPayload
   ) async -> CommandResponse {
     guard let binding = snapshot.binding else {
       return failure(code: CLIErrorCode.dispatchFailed, message: "The dispatch has no bound pane.")
@@ -225,7 +228,7 @@ final class AgentWaitCommandHandler: CommandHandler {
                 waitedMilliseconds: waitedMilliseconds,
                 target: binding.target,
                 receipt: receipt,
-                signals: signalsProvider(binding.target),
+                signals: signals,
                 screen: await stableScreen(requestedLines: includeScreenLines, target: binding.target)
               )))
         )
@@ -238,7 +241,8 @@ final class AgentWaitCommandHandler: CommandHandler {
         message: "The dispatched task failed.",
         snapshot: snapshot,
         waitedMilliseconds: waitedMilliseconds,
-        includeScreenLines: includeScreenLines
+        includeScreenLines: includeScreenLines,
+        signals: signals
       )
     case .abandoned:
       return await dispatchFailure(
@@ -246,7 +250,8 @@ final class AgentWaitCommandHandler: CommandHandler {
         message: "The dispatch was abandoned.",
         snapshot: snapshot,
         waitedMilliseconds: waitedMilliseconds,
-        includeScreenLines: includeScreenLines
+        includeScreenLines: includeScreenLines,
+        signals: signals
       )
     case .gone:
       return await dispatchFailure(
@@ -254,7 +259,8 @@ final class AgentWaitCommandHandler: CommandHandler {
         message: "The dispatched agent is gone.",
         snapshot: snapshot,
         waitedMilliseconds: waitedMilliseconds,
-        includeScreenLines: includeScreenLines
+        includeScreenLines: includeScreenLines,
+        signals: signals
       )
     case .pending:
       return await dispatchFailure(
@@ -262,7 +268,8 @@ final class AgentWaitCommandHandler: CommandHandler {
         message: "The dispatch is still pending.",
         snapshot: snapshot,
         waitedMilliseconds: waitedMilliseconds,
-        includeScreenLines: includeScreenLines
+        includeScreenLines: includeScreenLines,
+        signals: signals
       )
     }
   }
@@ -272,7 +279,8 @@ final class AgentWaitCommandHandler: CommandHandler {
     message: String,
     snapshot: AgentDispatchSnapshot,
     waitedMilliseconds: Int,
-    includeScreenLines: Int?
+    includeScreenLines: Int?,
+    signals: AgentSignalsPayload? = nil
   ) async -> CommandResponse {
     guard let binding = snapshot.binding else { return failure(code: code, message: message) }
     do {
@@ -289,7 +297,7 @@ final class AgentWaitCommandHandler: CommandHandler {
                 waitedMilliseconds: waitedMilliseconds,
                 target: binding.target,
                 record: snapshot.payload(using: formatter),
-                signals: signalsProvider(binding.target),
+                signals: signals ?? signalsProvider(binding.target),
                 screen: await stableScreen(
                   requestedLines: includeScreenLines,
                   target: binding.target

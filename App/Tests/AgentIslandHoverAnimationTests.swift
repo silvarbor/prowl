@@ -165,16 +165,21 @@ private final class HoverAnimationFixture {
     recorder.samples = []
     gripRecorder.samples = []
     let inside = pointerInside ?? hovered
-    if hoverState.update(
-      reportedHover: hovered,
-      pointerLocation: CGPoint(x: inside ? 20 : 400, y: 20),
-      barFrame: CGRect(x: 0, y: 0, width: 340, height: 40)
-    ) {
-      AgentIslandHoverAnimation.perform(reduceMotion: reduceMotion) {
-        model.hovered = hoverState.isHovered
-      }
+    guard
+      hoverState.update(
+        reportedHover: hovered,
+        pointerLocation: CGPoint(x: inside ? 20 : 400, y: 20),
+        barFrame: CGRect(x: 0, y: 0, width: 340, height: 40)
+      )
+    else {
+      render()
+      return
     }
-    render()
+    AgentIslandHoverAnimation.perform(reduceMotion: reduceMotion) {
+      model.hovered = hoverState.isHovered
+    }
+    let target: Double = hoverState.isHovered ? 1 : 0
+    render { samples.allSatisfy { $0.last == target } }
   }
 
   func updateRoster(_ expanded: Bool) {
@@ -184,10 +189,14 @@ private final class HoverAnimationFixture {
     render()
   }
 
-  private func render() {
+  /// Pumps frames for at least the animation's length, then until `isSettled`: a slow runner
+  /// gets more frames instead of a failure.
+  private func render(until isSettled: () -> Bool = { true }) {
     // Exercise SwiftUI's real presentation frames; a TestClock cannot drive AppKit rendering.
-    let deadline = Date().addingTimeInterval(0.35)
-    while Date() < deadline {
+    let start = Date()
+    let minimum = start.addingTimeInterval(0.35)
+    let deadline = start.addingTimeInterval(10)
+    while Date() < minimum || (Date() < deadline && !isSettled()) {
       RunLoop.main.run(until: Date().addingTimeInterval(0.01))
       host.layoutSubtreeIfNeeded()
       host.displayIfNeeded()

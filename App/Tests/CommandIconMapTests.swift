@@ -85,6 +85,12 @@ struct CommandIconMapTests {
     #expect(CommandIconMap.iconForFirstToken("devin: Prowl")?.assetName == "Devin")
     #expect(CommandIconMap.iconForFirstToken("agy")?.assetName == "Antigravity")
     #expect(CommandIconMap.iconForFirstToken("antigravity")?.assetName == "Antigravity")
+    // TraeCode CLI: every alias the classifier accepts resolves to the asset.
+    #expect(CommandIconMap.iconForFirstToken("trae")?.assetName == "Trae")
+    #expect(CommandIconMap.iconForFirstToken("traecli")?.assetName == "Trae")
+    #expect(CommandIconMap.iconForFirstToken("traex")?.assetName == "Trae")
+    #expect(CommandIconMap.iconForFirstToken("trae-cli")?.assetName == "Trae")
+    #expect(CommandIconMap.iconForFirstToken("trae-agent")?.assetName == "Trae")
     // Aider has no bundled brand asset — sparkle fallback only.
     #expect(CommandIconMap.iconForFirstToken("aider")?.systemSymbol == "sparkle")
     #expect(CommandIconMap.iconForFirstToken("aider")?.assetName == nil)

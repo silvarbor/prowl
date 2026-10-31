@@ -19,6 +19,7 @@
 | 2026-03-26 | Homebrew cask automation from published releases | #73, #74, #75 — see [002](002-homebrew-cask-automation.md) |
 | 2026-03-27 | Hardened `install-dev-build`/`install-release`: `set -euo pipefail`, strict destination guards, `trash` instead of `rm -rf` | #78 |
 | 2026-04-05 | Sparkle appcast served from GitHub Releases; Prowl-Site appcast push removed | #154 — see [003](003-appcast-from-github-releases.md) |
+| 2026-10-18 | Upstream sync retired: `upstream` remote, `sync-upstream-main.sh`, and the runbook's sync sections removed — see [017](../017-upstream-sync-process/001-action.md) | this PR |
 
 ## Outcome & current state (as of 2026-07-12)
 
@@ -32,7 +33,7 @@
 - `scripts/release-notes.sh` — gathers commits + PR descriptions since the
   previous tag and generates notes via the `claude` CLI, falling back to GitHub
   auto-notes; enforces `### New/Fixed/Improved` headings.
-- `scripts/sync-upstream-main.sh` — sync automation as designed.
+- `scripts/sync-upstream-main.sh` was removed on 2026-10-18, when upstream sync was retired.
   `release-to-fork.sh` (deprecated legacy pipeline) was removed in the 2026-07 docs-ai migration; see git history.
 - `supacode/Info.plist` — `SUFeedURL` =
   `https://github.com/onevcat/Prowl/releases/latest/download/appcast.xml`,
@@ -49,9 +50,8 @@
   ("Tip channel is no longer published separately"); `UpdateChannel` in
   `supacode/Features/Settings/Models/UpdateChannel.swift` still declares `case tip`.
 - The `/sync-upstream` command no longer exists: it was removed in the commands→skills
-  migration (`01d4e04f`, 2026-04-08). Upstream review is handled by the
-  `.claude/skills/check-upstream-changes` skill; the merge runbook stays in
-  `docs-ai/001-fork-bootstrap-and-release-pipeline/release-runbook.md`.
+  migration (`01d4e04f`, 2026-04-08). Since 2026-10-18 the fork no longer syncs from
+  upstream: the `check-upstream-changes` skill and the runbook's merge steps are removed.
 - The pipeline's shape later constrained other decisions: the 2026-04-20 upstream review
   (`docs-ai/017-upstream-sync-process/upstream-ledger.md`) skipped upstream's Tuist migration partly because it
   would force rewriting the `/release` skill, notarization flow, and appcast generation.
@@ -68,9 +68,6 @@
 
 ## Open questions
 
-- `docs-ai/001-fork-bootstrap-and-release-pipeline/release-runbook.md` still says "use the `/sync-upstream` command",
-  but that command was removed in `01d4e04f` (2026-04-08). The living doc looks stale on
-  this point (left untouched by this backfill).
 - The `Makefile` `bump-and-release` target (inherited from upstream, `e30b747b`) pushes
   a tag and creates a GitHub Release with generated notes but no notarized artifacts —
   it bypasses `release.sh` entirely, conflicts with the notarized-only policy, and its
