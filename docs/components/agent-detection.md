@@ -486,6 +486,16 @@ the screen and the native/log files again, with their usual reasons; a finished 
 wakes the probe described below, which keeps the authority when the same agent is still
 there and releases the entry when it is gone. There is no silence timeout.
 
+Codex reports `working` for a live background terminal as well as for a running turn,
+so a pane whose turn ended can stay `working` for as long as the terminal runs. A Codex
+root that says `working` therefore keeps reading the screen on the 2 s delegated tick.
+When the empty composer rule (`codex.emptyComposer`: the live prompt with no draft and no
+`esc to interrupt` footer) matches on two reads at least 1 s apart, the pane is Idle with
+reason `osc.working.inputReady` and no outstanding work, so idle waits and dispatch
+accept it, as for a Claude Code pane that only has background shells. A running-turn
+footer, a draft, or a new root state brings Working back and restarts the 1 s clock.
+Blocked is never overridden.
+
 Producers that never report (older versions, `CLAUDE_CODE_DISABLE_TERMINAL_TITLE`,
 `PI_PROGRAM_STATUS=0`, Oh My Pi's `terminal.programStatus: false`) get today's screen and provider detection unchanged. The
 available producer controls are the escape hatch; Codex 0.163.0, Amp, Antigravity, Devin, Droid, and Grok Build have none
