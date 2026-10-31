@@ -28,7 +28,7 @@ struct RepositorySectionViewTests {
     #expect(expandableIDs == [gitRepository.id])
     #expect(
       SidebarListView.repositoryListHeaderAction(
-        expandedRepoIDs: [],
+        expandedRepoIDs: Set<Repository.ID>(),
         expandableRepositoryIDs: [],
         activeRepositoryIDs: []
       )
@@ -130,7 +130,7 @@ struct RepositorySectionViewTests {
     )
   }
 
-  @Test func activeRepositoryIDsIncludesOnlyExpandableReposWithOpenTabs() {
+  @Test func openTabRepositoriesIncludePlainFoldersButOnlyExpandableOnesAreActiveNodes() {
     let manager = WorktreeTerminalManager(runtime: GhosttyRuntime())
     let busyWorktree = makeWorktree(repoRoot: "/tmp/busy", path: "/tmp/busy/main", branch: "main")
     let busyRepository = makeRepository(
@@ -143,7 +143,7 @@ struct RepositorySectionViewTests {
       name: "idle",
       worktrees: [makeWorktree(repoRoot: "/tmp/idle", path: "/tmp/idle/main", branch: "main")]
     )
-    // Plain folder with a tab: not expandable, so never part of the active set.
+    // Plain folder with a tab: active for its group, but not an expandable node.
     let plainRepository = makeRepository(
       id: "/tmp/plain",
       name: "plain",
@@ -159,20 +159,22 @@ struct RepositorySectionViewTests {
     let plainTarget = Worktree(
       id: plainRepository.id,
       name: plainRepository.name,
-      detail: plainRepository.rootURL.path(percentEncoded: false),
-      workingDirectory: plainRepository.rootURL,
-      repositoryRootURL: plainRepository.rootURL
+      detail: plainRepository.localURL!.path(percentEncoded: false),
+      workingDirectory: plainRepository.localURL!,
+      repositoryRootURL: plainRepository.localURL!
     )
     _ = manager.state(for: plainTarget).tabManager.createTab(title: "folder", icon: nil)
 
-    #expect(
-      SidebarListView.activeRepositoryIDs(
-        in: repositories,
-        expandableRepositoryIDs: expandableIDs,
-        terminalManager: manager
-      )
-        == [busyRepository.id]
+    let withOpenTabs = SidebarListView.repositoryIDsWithOpenTabs(in: repositories, terminalManager: manager)
+    #expect(withOpenTabs == [busyRepository.id, plainRepository.id])
+    let expansion = SidebarListView.SidebarExpansionState(
+      groups: [],
+      expandableRepositoryIDs: expandableIDs,
+      activeRepositoryIDs: withOpenTabs,
+      expandedRepositoryIDs: [],
+      collapsedGroupIDs: []
     )
+    #expect(expansion.activeExpandableRepositoryIDs == [busyRepository.id])
   }
 
   @Test func explicitSelectionIncludesPrimarySelectedWorktree() {
@@ -475,9 +477,9 @@ struct RepositorySectionViewTests {
     let terminalTarget = Worktree(
       id: repository.id,
       name: repository.name,
-      detail: repository.rootURL.path(percentEncoded: false),
-      workingDirectory: repository.rootURL,
-      repositoryRootURL: repository.rootURL
+      detail: repository.localURL!.path(percentEncoded: false),
+      workingDirectory: repository.localURL!,
+      repositoryRootURL: repository.localURL!
     )
 
     let state = manager.state(for: terminalTarget)

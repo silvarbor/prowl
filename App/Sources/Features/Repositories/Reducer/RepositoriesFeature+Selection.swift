@@ -3,7 +3,7 @@ import Foundation
 
 func queuePullRequestRefresh(
   repositoryID: Repository.ID,
-  repositoryRootURL: URL,
+  repositoryLocation: RepositoryLocation,
   worktreeIDs: [Worktree.ID],
   refreshesByRepositoryID: inout [Repository.ID: RepositoriesFeature.PendingPullRequestRefresh]
 ) {
@@ -15,7 +15,7 @@ func queuePullRequestRefresh(
     refreshesByRepositoryID[repositoryID] = pending
   } else {
     refreshesByRepositoryID[repositoryID] = RepositoriesFeature.PendingPullRequestRefresh(
-      repositoryRootURL: repositoryRootURL,
+      repositoryLocation: repositoryLocation,
       worktreeIDs: worktreeIDs
     )
   }
@@ -147,6 +147,20 @@ func setSingleWorktreeSelection(
   } else {
     state.sidebarSelectedWorktreeIDs = []
   }
+}
+
+/// Picking a terminal target from the sidebar while the archived list is showing
+/// leaves the list. When the list was opened from Shelf, reactivate Shelf so the
+/// pick opens as a book instead of dropping the user into the Normal layout.
+func restoreShelfWhenLeavingArchivedList(state: inout RepositoriesFeature.State) {
+  guard state.isShowingArchivedWorktrees else { return }
+  if state.preArchivedTopSegment == .shelf {
+    state.isShelfActive = true
+  }
+  state.preArchivedSelection = nil
+  state.preArchivedWorkspaceChildID = nil
+  state.preArchivedCanvasCard = nil
+  state.preArchivedTopSegment = nil
 }
 
 enum WorktreeHistoryDirection {
@@ -283,8 +297,10 @@ func repositoryForWorktreeCreation(
   return nil
 }
 
-func prunePinnedWorktreeIDs(state: inout RepositoriesFeature.State) -> Bool {
-  let availableIDs = Set(state.repositories.flatMap { $0.worktrees.map(\.id) })
+func prunePinnedWorktreeIDs(
+  where isRemoved: (Worktree.ID) -> Bool,
+  state: inout RepositoriesFeature.State
+) -> Bool {
   let mainIDs = Set(
     state.repositories.compactMap { repository in
       repository.worktrees.first(where: { state.isMainWorktree($0) })?.id
@@ -292,7 +308,7 @@ func prunePinnedWorktreeIDs(state: inout RepositoriesFeature.State) -> Bool {
   )
   let archivedSet = state.archivedWorktreeIDSet
   let pruned = state.pinnedWorktreeIDs.filter {
-    availableIDs.contains($0)
+    !isRemoved($0)
       && !mainIDs.contains($0)
       && !archivedSet.contains($0)
   }
@@ -303,25 +319,24 @@ func prunePinnedWorktreeIDs(state: inout RepositoriesFeature.State) -> Bool {
   return false
 }
 
-func pruneRepositoryOrderIDs(
-  roots: [URL],
-  state: inout RepositoriesFeature.State
+/// Removes the layout entries of repositories that are neither roots nor loaded, also
+/// from groups. Groups stay, and `isKept` IDs keep their places (docs-ai 086).
+func pruneSidebarLayout(
+  roots: [RepositoryLocation],
+  state: inout RepositoriesFeature.State,
+  keeping isKept: (Repository.ID) -> Bool = { _ in false }
 ) -> Bool {
-  let rootIDs = roots.map { $0.standardizedFileURL.path(percentEncoded: false) }
+  let rootIDs = roots.map { $0.standardized.id }
   let availableIDs = Set(rootIDs + state.repositories.map(\.id))
-  let pruned = state.repositoryOrderIDs.filter { availableIDs.contains($0) }
-  if pruned != state.repositoryOrderIDs {
-    state.repositoryOrderIDs = pruned
-    return true
-  }
-  return false
+  return state.sidebarLayout.removeRepositories { !availableIDs.contains($0) && !isKept($0) }
 }
 
 func pruneWorktreeOrderByRepository(
-  roots: [URL],
-  state: inout RepositoriesFeature.State
+  roots: [RepositoryLocation],
+  state: inout RepositoriesFeature.State,
+  keeping isKept: (Repository.ID) -> Bool = { _ in false }
 ) -> Bool {
-  let rootIDs = Set(roots.map { $0.standardizedFileURL.path(percentEncoded: false) })
+  let rootIDs = Set(roots.map { $0.standardized.id })
   let repositoriesByID = Dictionary(
     state.repositories.map { ($0.id, $0) },
     uniquingKeysWith: { first, _ in first }
@@ -331,7 +346,7 @@ func pruneWorktreeOrderByRepository(
   var pruned: [Repository.ID: [Worktree.ID]] = [:]
   for (repoID, order) in state.worktreeOrderByRepository {
     guard let repository = repositoriesByID[repoID] else {
-      if rootIDs.contains(repoID), !order.isEmpty {
+      if rootIDs.contains(repoID) || isKept(repoID), !order.isEmpty {
         pruned[repoID] = order
       }
       continue
@@ -362,15 +377,25 @@ func pruneWorktreeOrderByRepository(
 }
 
 func pruneArchivedWorktrees(
-  availableWorktreeIDs: Set<Worktree.ID>,
+  where isRemoved: (Worktree.ID) -> Bool,
   state: inout RepositoriesFeature.State
 ) -> Bool {
-  let pruned = state.archivedWorktrees.filter { availableWorktreeIDs.contains($0.id) }
+  let pruned = state.archivedWorktrees.filter { !isRemoved($0.id) }
   if pruned != state.archivedWorktrees {
     state.archivedWorktrees = pruned
     return true
   }
   return false
+}
+
+func pruneProwlCreatedWorktreeIDs(
+  where isRemoved: (Worktree.ID) -> Bool,
+  state: inout RepositoriesFeature.State
+) {
+  guard state.prowlCreatedWorktreeIDs.contains(where: isRemoved) else { return }
+  state.$prowlCreatedWorktreeIDs.withLock {
+    $0.removeAll(where: isRemoved)
+  }
 }
 
 func firstAvailableWorktreeID(

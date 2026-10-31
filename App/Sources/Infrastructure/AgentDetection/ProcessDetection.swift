@@ -2,12 +2,29 @@ import Darwin
 import Foundation
 
 struct ForegroundProcess: Equatable, Sendable {
-  let pid: pid_t
-  let parentProcessID: pid_t?
+  let ref: ProcessRef
+  /// The parent's pid in the namespace of `ref`. It relates members of one job only.
+  let parentPID: Int32?
   let name: String
   let argv0: String?
   let cmdline: String?
   let arguments: [String]?
+
+  nonisolated init(
+    ref: ProcessRef,
+    parentPID: Int32? = nil,
+    name: String,
+    argv0: String?,
+    cmdline: String?,
+    arguments: [String]? = nil
+  ) {
+    self.ref = ref
+    self.parentPID = parentPID
+    self.name = name
+    self.argv0 = argv0
+    self.cmdline = cmdline
+    self.arguments = arguments
+  }
 
   nonisolated init(
     pid: pid_t,
@@ -17,12 +34,9 @@ struct ForegroundProcess: Equatable, Sendable {
     cmdline: String?,
     arguments: [String]? = nil
   ) {
-    self.pid = pid
-    self.parentProcessID = parentProcessID
-    self.name = name
-    self.argv0 = argv0
-    self.cmdline = cmdline
-    self.arguments = arguments
+    self.init(
+      ref: .local(pid), parentPID: parentProcessID, name: name, argv0: argv0, cmdline: cmdline,
+      arguments: arguments)
   }
 }
 
@@ -30,17 +44,17 @@ struct ForegroundJob: Equatable, Sendable {
   let processGroupID: pid_t
   let processes: [ForegroundProcess]
 
-  /// The job member the shell launched on behalf of `pid`: its topmost ancestor
+  /// The job member the shell launched on behalf of `process`: its topmost ancestor
   /// that is still part of this job. A runtime that forks an engine child
   /// (Droid's `droid exec`) moves the identified process while this stays put.
-  nonisolated func launchProcessID(of pid: pid_t) -> pid_t {
-    var current = pid
+  nonisolated func launchProcess(of process: ProcessRef) -> ProcessRef {
+    var current = process
     var hops = 0
     while hops < processes.count,
-      let parent = processes.first(where: { $0.pid == current })?.parentProcessID,
-      processes.contains(where: { $0.pid == parent })
+      let parent = processes.first(where: { $0.ref == current })?.parentPID,
+      let parentProcess = processes.first(where: { $0.ref.namespacePID == parent })
     {
-      current = parent
+      current = parentProcess.ref
       hops += 1
     }
     return current
@@ -98,6 +112,18 @@ actor AgentProcessProbe {
       now.timeIntervalSince(cached.capturedAt) < cacheLifetime
     }
   }
+}
+
+/// A process's writable open files. `failures` holds the `errno` of each vnode descriptor
+/// whose path could not be read (`EILSEQ` for a path that does not decode); callers decide
+/// what an unreadable descriptor means for them.
+nonisolated struct OpenFileInventory: Sendable, Equatable {
+  var paths: [String]
+  var failures: [Int32]
+  /// The process has more descriptors than one listing returns.
+  var isTruncated = false
+
+  var isComplete: Bool { failures.isEmpty && !isTruncated }
 }
 
 nonisolated enum ProcessDetection {
@@ -216,6 +242,22 @@ nonisolated enum ProcessDetection {
     return result == Int32(size) ? info : nil
   }
 
+  /// The current working directory of a same-user process.
+  static func currentDirectory(pid: pid_t) -> String? {
+    var info = proc_vnodepathinfo()
+    let size = MemoryLayout<proc_vnodepathinfo>.size
+    let result = withUnsafeMutablePointer(to: &info) { pointer in
+      proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, pointer, Int32(size))
+    }
+    guard result == Int32(size) else { return nil }
+    return withUnsafeBytes(of: info.pvi_cdir.vip_path) { rawBuffer -> String? in
+      let bytes = rawBuffer.bindMemory(to: UInt8.self)
+      let end = bytes.firstIndex(of: 0) ?? bytes.endIndex
+      guard end > bytes.startIndex else { return nil }
+      return String(bytes: bytes[..<end], encoding: .utf8)
+    }
+  }
+
   static func processStartDate(pid: pid_t) -> Date? {
     guard let info = processBSDInfo(pid: pid), info.pbi_start_tvsec > 0 else { return nil }
     return Date(
@@ -232,8 +274,15 @@ nonisolated enum ProcessDetection {
   /// State attribution must reject an incomplete inventory. Existing session
   /// lookup callers can still use the best-effort wrapper above.
   static func openFilePaths(pid: pid_t, complete: inout Bool) -> [String] {
-    complete = false
-    guard pid > 0 else { return [] }
+    let inventory = openFileInventory(pid: pid)
+    complete = inventory?.isComplete == true
+    return inventory?.paths ?? []
+  }
+
+  /// The writable vnode paths of `pid`, plus the descriptors that could not be read. Nil when
+  /// the descriptor list is unavailable.
+  static func openFileInventory(pid: pid_t) -> OpenFileInventory? {
+    guard pid > 0 else { return nil }
     var capacity = 256
     var descriptors: [proc_fdinfo] = []
     var count = 0
@@ -242,41 +291,44 @@ nonisolated enum ProcessDetection {
       let filled = descriptors.withUnsafeMutableBytes { buffer in
         proc_pidinfo(pid, PROC_PIDLISTFDS, 0, buffer.baseAddress, Int32(buffer.count))
       }
-      guard filled > 0 else { return [] }
+      guard filled > 0 else { return nil }
       count = Int(filled) / MemoryLayout<proc_fdinfo>.stride
       if count < capacity { break }
       capacity *= 2
     }
-    complete = count < descriptors.count
 
-    return descriptors.prefix(count).compactMap { descriptor -> String? in
-      guard descriptor.proc_fdtype == PROX_FDTYPE_VNODE else { return nil }
+    var inventory = OpenFileInventory(paths: [], failures: [], isTruncated: count >= descriptors.count)
+    for descriptor in descriptors.prefix(count) where descriptor.proc_fdtype == PROX_FDTYPE_VNODE {
       var info = vnode_fdinfowithpath()
       let size = MemoryLayout<vnode_fdinfowithpath>.size
+      var failure: Int32 = 0
       let result = withUnsafeMutablePointer(to: &info) { pointer in
-        proc_pidfdinfo(pid, descriptor.proc_fd, PROC_PIDFDVNODEPATHINFO, pointer, Int32(size))
+        let result = proc_pidfdinfo(pid, descriptor.proc_fd, PROC_PIDFDVNODEPATHINFO, pointer, Int32(size))
+        failure = errno
+        return result
       }
       guard result == Int32(size) else {
-        complete = false
-        return nil
+        inventory.failures.append(failure)
+        continue
       }
       // Only writable descriptors identify a session an agent OWNS. Agents
       // transiently open other sessions read-only (resume pickers, history
       // browsing); every legitimate signal (Codex rollout, Amp thread log,
       // Cursor store.db) is open for writing.
-      guard info.pfi.fi_openflags & UInt32(FWRITE) != 0 else { return nil }
-      return withUnsafeBytes(of: info.pvip.vip_path) { rawBuffer -> String? in
+      guard info.pfi.fi_openflags & UInt32(FWRITE) != 0 else { continue }
+      let path = withUnsafeBytes(of: info.pvip.vip_path) { rawBuffer -> String? in
         let bytes = rawBuffer.bindMemory(to: UInt8.self)
         let end = bytes.firstIndex(of: 0) ?? bytes.endIndex
-        guard end > bytes.startIndex, end < bytes.endIndex,
-          let path = String(bytes: bytes[..<end], encoding: .utf8)
-        else {
-          complete = false
-          return nil
-        }
-        return path
+        guard end > bytes.startIndex, end < bytes.endIndex else { return nil }
+        return String(bytes: bytes[..<end], encoding: .utf8)
+      }
+      if let path {
+        inventory.paths.append(path)
+      } else {
+        inventory.failures.append(EILSEQ)
       }
     }
+    return inventory
   }
 
   static func comm(from info: proc_bsdinfo) -> String? {

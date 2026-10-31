@@ -38,6 +38,7 @@ struct CommandPaletteFeature {
     case newWorktree
     case openRepository
     case newWorkspace
+    case addRemoteFolder
     case deleteWorktree(Worktree.ID, Repository.ID)
     case viewArchivedWorktrees
     case refreshWorktrees
@@ -243,18 +244,30 @@ struct CommandPaletteFeature {
       items.append(contentsOf: canvasCommandItems())
     }
     let worktreeActionTargetID = actionTargetWorktreeID ?? repositories.selectedWorktreeID
+    // A remote folder has no Finder, terminal, script or local launch yet (docs-ai 084 A4b),
+    // so the palette leaves those items out. A worktree ID is its encoded location.
+    // A selected plain folder has no worktree ID; its terminal target stands in, as for the
+    // actions themselves.
+    let targetLocation =
+      worktreeActionTargetID.flatMap(RepositoryLocation.init(id:)) ?? repositories.selectedTerminalWorktree?.location
+    let opensTerminals = targetLocation?.availability(of: .terminalTab).isAvailable != false
     // Diff view items follow the broader diff target (worktree or workspace
     // child); the navigation/action items below stay worktree-scoped.
     if repositories.selectedDiffTargetID != nil {
       items.append(contentsOf: selectedWorktreeViewCommandItems())
     }
     if repositories.selectedWorktreeID != nil {
-      items.append(contentsOf: worktreeNavigationCommandItems())
+      // Reveal in Finder acts on the selected worktree, like the other navigation items.
+      let selectedLocation = repositories.selectedWorktreeID.flatMap(RepositoryLocation.init(id:))
+      items.append(
+        contentsOf: worktreeNavigationCommandItems(
+          includesFinder: selectedLocation?.availability(of: .finder).isAvailable != false))
       items.append(
         contentsOf: worktreeActionCommandItems(
           repositories: repositories,
           worktreeID: worktreeActionTargetID,
-          runScriptStatusByWorktreeID: runScriptStatusByWorktreeID
+          runScriptStatusByWorktreeID: runScriptStatusByWorktreeID,
+          includesRunScript: opensTerminals
         )
       )
     } else if worktreeActionTargetID != nil {
@@ -263,11 +276,23 @@ struct CommandPaletteFeature {
           repositories: repositories,
           worktreeID: worktreeActionTargetID,
           runScriptStatusByWorktreeID: runScriptStatusByWorktreeID,
-          includeSelectionScopedItems: false
+          includeSelectionScopedItems: false,
+          includesRunScript: opensTerminals
         )
       )
     }
-    items.append(contentsOf: customCommandItems(customCommands))
+    if repositories.selectedWorktreeID == nil, repositories.selectedRepository != nil {
+      // A selected folder or workspace can be revealed in its group (docs-ai 086).
+      items.append(revealInSidebarCommandItem())
+    }
+    if opensTerminals {
+      // A command that cannot run in the target is left out (docs-ai 084 C3c).
+      items.append(
+        contentsOf: customCommandItems(
+          customCommands.filter {
+            targetLocation?.availability(of: $0.command.execution.repositoryFeature).isAvailable != false
+          }))
+    }
     items.append(
       contentsOf: workflowCommandItems(
         workflowItems,
@@ -420,6 +445,18 @@ private func globalCommandItems(
       keywords: ["New Workspace", "workspace", "multi repo", "many repos", "工作区", "多仓库"]
     ),
   ]
+  if RemoteFolders.isEnabledInThisProcess {
+    items.append(
+      CommandPaletteItem(
+        id: CommandPaletteItemID.globalAddRemoteFolder,
+        title: String(localized: "Add Remote Project"),
+        subtitle: nil,
+        kind: .addRemoteFolder,
+        category: .app,
+        defaultSuggestion: true,
+        keywords: ["Add Remote Project", "remote folder", "remote", "ssh", "server", "远程", "远程项目", "远程文件夹"]
+      ))
+  }
   if showsNewWorktreeAction {
     items.append(
       .appShortcut(
@@ -479,12 +516,15 @@ private func worktreeActionCommandItems(
   repositories: RepositoriesFeature.State,
   worktreeID: Worktree.ID?,
   runScriptStatusByWorktreeID: [Worktree.ID: Bool],
-  includeSelectionScopedItems: Bool = true
+  includeSelectionScopedItems: Bool = true,
+  includesRunScript: Bool = true
 ) -> [CommandPaletteItem] {
   guard let worktreeID else { return [] }
   var items: [CommandPaletteItem] = []
   let isRunScriptRunning = runScriptStatusByWorktreeID[worktreeID] ?? false
-  if isRunScriptRunning {
+  if !includesRunScript {
+    // A remote folder runs no script yet (docs-ai 084 C3).
+  } else if isRunScriptRunning {
     items.append(
       .appShortcut(
         id: CommandPaletteItemID.globalStopRunScript,
@@ -600,11 +640,13 @@ func agentProfileLaunchItems(
       explicitTargetID: actionTargetWorktreeID
     )
   else { return [] }
+  // A remote folder launches no Agent Profile yet (docs-ai 084 A4a).
+  guard worktree.availability(of: .profileLaunch).isAvailable else { return [] }
   @Shared(.userGlobalSettings) var globalSettings
   let profiles = globalSettings.agentProfiles
   let enabled = profiles.filter(\.isEnabled)
   guard !enabled.isEmpty else { return [] }
-  @Shared(.userRepositorySettings(worktree.repositoryRootURL)) var repositorySettings
+  @Shared(.userRepositorySettings(worktree.repositoryLocation)) var repositorySettings
   let recommendedID = AgentProfileRecommendation.recommendedProfile(
     profiles: profiles,
     designatedID: repositorySettings.defaultAgentProfileID,
@@ -651,6 +693,7 @@ func workflowCommandItems(
       explicitTargetID: actionTargetWorktreeID
     )
   else { return [] }
+  guard worktree.availability(of: .workflow).isAvailable else { return [] }
   return workflows.filter(\.isRunnable).map { item in
     let subtitle =
       item.workflowDescription
@@ -686,15 +729,17 @@ private func customCommandExecutionDescription(for command: UserCustomCommand) -
   }
 }
 
-private func worktreeNavigationCommandItems() -> [CommandPaletteItem] {
-  [
+private func worktreeNavigationCommandItems(includesFinder: Bool = true) -> [CommandPaletteItem] {
+  let finder: [CommandPaletteItem] = [
     .appShortcut(
       id: CommandPaletteItemID.globalRevealInFinder,
       title: "Reveal in Finder",
       category: .navigation,
       kind: .revealInFinder,
       keywords: ["finder", "open", "show", "访达", "打开", "显示"]
-    ),
+    )
+  ]
+  return (includesFinder ? finder : []) + [
     .appShortcut(
       id: CommandPaletteItemID.globalCopyPath,
       title: "Copy Path",
@@ -702,14 +747,18 @@ private func worktreeNavigationCommandItems() -> [CommandPaletteItem] {
       kind: .copyPath,
       keywords: ["copy", "path", "clipboard", "复制", "路径", "剪贴板"]
     ),
-    .appShortcut(
-      id: CommandPaletteItemID.globalRevealInSidebar,
-      title: "Reveal in Sidebar",
-      category: .navigation,
-      kind: .revealInSidebar,
-      keywords: ["reveal", "locate", "find worktree", "显示", "定位", "工作树"]
-    ),
+    revealInSidebarCommandItem(),
   ]
+}
+
+private func revealInSidebarCommandItem() -> CommandPaletteItem {
+  .appShortcut(
+    id: CommandPaletteItemID.globalRevealInSidebar,
+    title: "Reveal in Sidebar",
+    category: .navigation,
+    kind: .revealInSidebar,
+    keywords: ["reveal", "locate", "find worktree", "显示", "定位", "工作树"]
+  )
 }
 
 private func selectedWorktreeViewCommandItems() -> [CommandPaletteItem] {

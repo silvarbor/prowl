@@ -77,10 +77,11 @@ struct GitEnvironmentRecoveryTests {
         TextState("Git unavailable details")
       }
     }
-    await store.send(.alert(.presented(.retryRepositoryLoad)))
+    await store.send(.alert(.presented(.retryRepositoryLoad))) {
+      $0.alert = nil
+    }
     await store.receive(\.refreshWorktrees) { $0.isRefreshingWorktrees = true }
     await store.receive(\.reloadRepositories) {
-      $0.alert = nil
       $0.isRefreshingWorktrees = false
     }
     await store.finish()

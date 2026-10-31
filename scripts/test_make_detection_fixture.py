@@ -186,13 +186,33 @@ class TailLimits(unittest.TestCase):
 
 
 class Reduction(unittest.TestCase):
-    def test_claude_and_antigravity_keep_the_full_screen(self):
+    def test_claude_antigravity_and_trae_keep_the_full_screen(self):
         # Mirrors `DetectedAgent.detectionScreenText(from:)`: trimming a Claude
-        # capture can delete the very row that reproduces a bug, and trimming an
-        # Antigravity capture can delete the composer box its detector anchors on.
+        # capture can delete the very row that reproduces a bug, trimming an
+        # Antigravity capture can delete the composer box its detector anchors on,
+        # and trimming a traecli capture can delete the running hint that heads its
+        # live block.
         text = "\n".join(f"line {index}" for index in range(40))
-        self.assertEqual(fixture.detection_screen_text(text, "claude"), text)
-        self.assertEqual(fixture.detection_screen_text(text, "antigravity"), text)
+        for agent in ("claude", "antigravity", "trae"):
+            self.assertEqual(fixture.detection_screen_text(text, agent), text)
+
+    def test_trae_keeps_a_long_checklist_and_its_running_hint(self):
+        # The traecli live block is a running hint followed by a todo checklist that
+        # grows without bound. A 24-line tail drops the hint, so a fixture captured
+        # from such a screen would classify as Idle where the screen itself
+        # classifies as Working — the failure this branch exists to prevent.
+        border = "─" * 120
+        screen = "\n".join(
+            ["✦ Working… (12m 4s • esc to interrupt)"]
+            + [f"  ◻ Checklist item number {n} for the running plan" for n in range(30)]
+            + [border, "❯ Find and fix a bug in @filename", border, "  DeepSeek-V4.1-Flash · Context 46% left"]
+        )
+        self.assertGreater(len(screen.split("\n")), fixture.DETECTOR_TAIL_LIMIT)
+        reduced = fixture.detection_screen_text(screen, "trae")
+        self.assertEqual(reduced, screen)
+        self.assertIn("esc to interrupt", reduced)
+        # The bounded tail the other agents take loses it.
+        self.assertNotIn("esc to interrupt", fixture.detection_screen_text(screen, "codex"))
 
     def test_pi_takes_the_wider_bounded_tail(self):
         # Mirrors the `.pi` branch: 32 non-blank lines, not the default 24.
@@ -210,9 +230,9 @@ class Reduction(unittest.TestCase):
         text = "\n".join(f"line {index}" for index in range(40))
         widths = {
             agent: len(fixture.detection_screen_text(text, agent).split("\n"))
-            for agent in ("claude", "pi", "codex")
+            for agent in ("claude", "pi", "codex", "trae")
         }
-        self.assertEqual(widths, {"claude": 40, "pi": 32, "codex": 24})
+        self.assertEqual(widths, {"claude": 40, "pi": 32, "codex": 24, "trae": 40})
 
     def test_blank_lines_do_not_count_toward_the_tail_budget(self):
         rows = [f"line {index}" for index in range(30)]

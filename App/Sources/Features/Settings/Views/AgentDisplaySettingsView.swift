@@ -26,6 +26,21 @@ struct AgentDisplaySettingsView: View {
         )
         .help("Overlay detected agent status on the owning tab icon in Shelf View.")
       }
+      Section("SSH Sessions") {
+        Toggle(
+          isOn: Binding(
+            get: { store.remoteAgentDetection.showsEnabled },
+            set: { store.send(.setRemoteAgentDetection($0 ? .enabled : .disabled)) })
+        ) {
+          Text("Detect agents in SSH sessions")
+          Text(
+            """
+            When a pane runs ssh, Prowl opens its own connection to the same host and runs a \
+            read-only check to find agents. It installs nothing on the host.
+            """)
+        }
+        .help("Let Prowl open its own SSH connection to show the agents that run on the host.")
+      }
       AgentIslandSettingsSection(
         store: store,
         effectiveKeybindings: effectiveKeybindings,

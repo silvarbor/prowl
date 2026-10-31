@@ -99,6 +99,44 @@ When “profile” and “configuration” meet in one sentence, write 设置 fo
 | mirror (n., one connected viewer) | 镜像 (`%lld 个镜像`) |
 | Last seen / Last connected | 上次在线 / 上次连接 |
 
+## SSH remote agents
+
+| English | 中文 |
+| --- | --- |
+| SSH session / remote host | SSH 会话 / 远程主机 (主机 alone, as in Remote Mirror) |
+| agent detection / Agents not detected | Agent 检测 / 无法检测 Agent (Prowl cannot read the pane, not “found none”) |
+| read-only check | 只读检查 |
+| its own (separate) SSH connection | 自己的 / 独立的 SSH 连接 |
+| Turn On / Turn Off / Not Now | 开启 / 关闭 / 以后再说 |
+| connected to / disconnected from %@ | 已连接到 %@ / 已断开与 %@ 的连接 |
+
+## Remote projects
+
+The UI calls a repository or folder on an SSH host a remote project. A folder in the remote
+folder browser stays 文件夹.
+
+| English | 中文 |
+| --- | --- |
+| remote project / project | 远程项目 / 项目 (a repository stays 仓库) |
+| Add Remote Project | 添加远程项目 |
+| folder (in the remote folder browser) / enclosing folder | 文件夹 / 上级文件夹 |
+| through (a jump host) | 经由 |
+| SSH configuration | SSH 配置 |
+| target (of a host's SSH configuration) / reaches | 目标 / 指向 |
+| Rebind Host / rebind | 重新绑定主机 / 重新绑定 |
+| Connected / Not connected / Not answering | 已连接 / 未连接 / 无响应 |
+| Connect Again | 重新连接 |
+| host list | 主机列表 |
+| is not available for remote projects / … yet | 远程项目不支持… / 暂不支持…, 暂时无法… |
+
+## Sidebar groups, clipboard, and links
+
+| English | 中文 |
+| --- | --- |
+| group / project group / Ungroup | 分组 / 项目分组 / 取消分组 |
+| clipboard / paste / Allow / Deny | 剪贴板 / 粘贴 / 允许 / 拒绝 |
+| link target / blocked | 链接目标 / 已阻止 |
+
 ## Playful copy
 
 The loading messages of `App/Sources/App/AppLoadingView.swift` are jokes. Do not translate them

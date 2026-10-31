@@ -8,6 +8,111 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct AgentDispatchStoreTests {
+  @Test func paneClosureOverridesBufferedAttentionEvidence() async throws {
+    let clock = TestClock()
+    let fixture = try makeBoundStore(id: "d1", clock: clock)
+    let pending = try #require(fixture.store.snapshot(dispatchID: "d1"))
+    fixture.store.noteTerminalEvidence(dispatchID: "d1", evidence: .needsInput)
+    fixture.store.surfaceClosed(surfaceID: fixture.binding.surfaceID)
+    await registerCoalescingTask()
+    await clock.advance(by: .milliseconds(300))
+    await registerCoalescingTask()
+    let gone = try #require(fixture.store.snapshot(dispatchID: "d1"))
+    #expect(gone.record.state == .gone)
+    #expect(fixture.store.revalidate(.needsInput(pending)) == .snapshot(gone))
+  }
+
+  @Test func invalidationClearsCandidatesAndRetainedEvidence() async throws {
+    for commitBeforeInvalidation in [false, true] {
+      let clock = TestClock()
+      let fixture = try makeBoundStore(id: "d1", clock: clock)
+      fixture.store.noteTerminalEvidence(dispatchID: "d1", evidence: .turnEnded)
+      await registerCoalescingTask()
+      if commitBeforeInvalidation {
+        await clock.advance(by: .milliseconds(300))
+        await registerCoalescingTask()
+      }
+      fixture.store.invalidateEvidence(
+        surfaceID: fixture.binding.surfaceID, evidenceEpoch: fixture.binding.evidenceEpoch)
+      await clock.advance(by: .milliseconds(300))
+      await registerCoalescingTask()
+      let pending = try #require(fixture.store.snapshot(dispatchID: "d1"))
+      var waiter = try fixture.store.observe(dispatchID: "d1").makeAsyncIterator()
+      #expect(await waiter.next() == .snapshot(pending))
+      #expect(fixture.store.revalidate(.incomplete(pending)) == .snapshot(pending))
+      let completion = try fixture.store.complete(
+        dispatchID: "d1", outcome: .succeeded, summary: "Done", callerSurfaceID: fixture.binding.surfaceID)
+      #expect(fixture.store.revalidate(.incomplete(pending)) == .snapshot(completion.snapshot))
+    }
+  }
+
+  @Test func invalidationMatchesEpochAndPreservesSurfaceClosure() async throws {
+    let clock = TestClock()
+    let fixture = try makeBoundStore(id: "d1", clock: clock)
+    let pending = try #require(fixture.store.snapshot(dispatchID: "d1"))
+    fixture.store.noteTerminalEvidence(dispatchID: "d1", evidence: .needsInput)
+    fixture.store.invalidateEvidence(surfaceID: fixture.binding.surfaceID, evidenceEpoch: UUID())
+    #expect(fixture.store.revalidate(.needsInput(pending)) == .needsInput(pending))
+    fixture.store.invalidateEvidence(
+      surfaceID: fixture.binding.surfaceID, evidenceEpoch: fixture.binding.evidenceEpoch)
+    #expect(fixture.store.revalidate(.needsInput(pending)) == .snapshot(pending))
+
+    fixture.store.noteTerminalEvidence(dispatchID: "d1", evidence: .sessionEnd)
+    fixture.store.surfaceClosed(surfaceID: fixture.binding.surfaceID)
+    fixture.store.invalidateEvidence(
+      surfaceID: fixture.binding.surfaceID, evidenceEpoch: fixture.binding.evidenceEpoch)
+    await registerCoalescingTask()
+    await clock.advance(by: .milliseconds(300))
+    await registerCoalescingTask()
+    guard case .gone(_, _, _, .surfaceClosed) = fixture.store.snapshot(dispatchID: "d1")?.record else {
+      Issue.record("Surface closure must survive signal invalidation")
+      return
+    }
+  }
+
+  @Test func candidateCommitAndLateObservationRefreshEvidence() async throws {
+    let clock = TestClock()
+    let fixture = try makeBoundStore(id: "d1", clock: clock)
+    fixture.store.refreshEvidence = { surfaceID in
+      fixture.store.invalidateEvidence(surfaceID: surfaceID, evidenceEpoch: fixture.binding.evidenceEpoch)
+    }
+    fixture.store.noteTerminalEvidence(dispatchID: "d1", evidence: .turnEnded)
+    await registerCoalescingTask()
+    await clock.advance(by: .milliseconds(300))
+    await registerCoalescingTask()
+    fixture.store.refreshEvidence = { _ in }
+    let pending = try #require(fixture.store.snapshot(dispatchID: "d1"))
+    #expect(fixture.store.revalidate(.incomplete(pending)) == .snapshot(pending))
+    fixture.store.noteTerminalEvidence(dispatchID: "d1", evidence: .needsInput)
+    fixture.store.refreshEvidence = { surfaceID in
+      fixture.store.invalidateEvidence(surfaceID: surfaceID, evidenceEpoch: fixture.binding.evidenceEpoch)
+    }
+    var waiter = try fixture.store.observe(dispatchID: "d1").makeAsyncIterator()
+    #expect(await waiter.next() == .snapshot(pending))
+    fixture.store.refreshEvidence = { _ in }
+  }
+
+  @Test func evidenceObservedBeforeIssuanceCannotSettleTheDispatch() async throws {
+    let clock = TestClock()
+    let fixture = try makeBoundStore(id: "d1", clock: clock)
+    let pending = try #require(fixture.store.snapshot(dispatchID: "d1"))
+    fixture.store.noteTerminalEvidence(
+      surfaceID: fixture.binding.surfaceID, evidenceEpoch: fixture.binding.evidenceEpoch,
+      evidence: .turnEnded, observedAt: Self.start.addingTimeInterval(-1))
+    await registerCoalescingTask()
+    await clock.advance(by: .milliseconds(300))
+    await registerCoalescingTask()
+    #expect(fixture.store.revalidate(.incomplete(pending)) == .snapshot(pending))
+
+    fixture.store.noteTerminalEvidence(
+      surfaceID: fixture.binding.surfaceID, evidenceEpoch: fixture.binding.evidenceEpoch,
+      evidence: .turnEnded, observedAt: Self.start)
+    await registerCoalescingTask()
+    await clock.advance(by: .milliseconds(300))
+    await registerCoalescingTask()
+    #expect(fixture.store.revalidate(.incomplete(pending)) == .incomplete(pending))
+  }
+
   @Test func issuanceBindingAndImmutableTargetSurviveCompletion() throws {
     let store = makeStore(ids: ["d1"])
     let issued = try store.issue()

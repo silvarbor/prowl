@@ -52,7 +52,7 @@ func insertWorktree(
   worktrees.insert(worktree, at: 0)
   state.repositories[index] = Repository(
     id: repository.id,
-    rootURL: repository.rootURL,
+    location: repository.location,
     name: repository.name,
     worktrees: worktrees
   )
@@ -71,20 +71,27 @@ func removeWorktree(
   worktrees.remove(id: worktreeID)
   state.repositories[index] = Repository(
     id: repository.id,
-    rootURL: repository.rootURL,
+    location: repository.location,
     name: repository.name,
     worktrees: worktrees
   )
   return true
 }
 
+/// The path Git and Prowl use for the same worktree folder, without a trailing slash.
+func comparableWorktreePath(_ url: URL) -> String {
+  let path = GitClient.canonicalWorktreePath(url.path(percentEncoded: false))
+  return path.count > 1 && path.hasSuffix("/") ? String(path.dropLast()) : path
+}
+
 func cleanupFailedWorktree(
   repositoryID: Repository.ID,
+  repositoryLocation: RepositoryLocation,
   name: String?,
-  baseDirectory: URL,
+  worktreeLocation: RepositoryLocation?,
   state: inout RepositoriesFeature.State
 ) -> FailedWorktreeCleanup {
-  guard let name, !name.isEmpty else {
+  guard let name, !name.isEmpty, let worktreeLocation else {
     return FailedWorktreeCleanup(
       didRemoveWorktree: false,
       didUpdatePinned: false,
@@ -92,13 +99,11 @@ func cleanupFailedWorktree(
       worktree: nil
     )
   }
-  let repositoryRootURL = URL(fileURLWithPath: repositoryID).standardizedFileURL
-  let normalizedBaseDirectory = baseDirectory.standardizedFileURL
-  let worktreeURL =
-    normalizedBaseDirectory
-    .appending(path: name, directoryHint: .isDirectory)
-    .standardizedFileURL
-  guard isPathInsideBaseDirectory(worktreeURL, baseDirectory: normalizedBaseDirectory) else {
+  let location = worktreeLocation.standardized
+  let worktreeID = location.id
+  let knownWorktree = state.repositories[id: repositoryID]?.worktrees[id: worktreeID]
+  // A known worktree on another branch belongs to another creation.
+  if let knownWorktree, knownWorktree.name != name {
     return FailedWorktreeCleanup(
       didRemoveWorktree: false,
       didUpdatePinned: false,
@@ -106,15 +111,14 @@ func cleanupFailedWorktree(
       worktree: nil
     )
   }
-  let worktreeID = worktreeURL.path(percentEncoded: false)
   let worktree =
-    state.repositories[id: repositoryID]?.worktrees[id: worktreeID]
+    knownWorktree
     ?? Worktree(
       id: worktreeID,
       name: name,
       detail: "",
-      workingDirectory: worktreeURL,
-      repositoryRootURL: repositoryRootURL
+      location: location,
+      repositoryLocation: repositoryLocation.standardized
     )
   let cleanup = cleanupWorktreeState(
     worktreeID,
@@ -127,10 +131,6 @@ func cleanupFailedWorktree(
     didUpdateOrder: cleanup.didUpdateOrder,
     worktree: worktree
   )
-}
-
-func isPathInsideBaseDirectory(_ path: URL, baseDirectory: URL) -> Bool {
-  PathPolicy.contains(path, in: baseDirectory)
 }
 
 struct WorktreeCleanupStateResult {
@@ -236,13 +236,13 @@ func updateWorktreeName(
       id: worktree.id,
       name: name,
       detail: worktree.detail,
-      workingDirectory: worktree.workingDirectory,
-      repositoryRootURL: worktree.repositoryRootURL,
+      location: worktree.location,
+      repositoryLocation: worktree.repositoryLocation,
       createdAt: worktree.createdAt
     )
     repository = Repository(
       id: repository.id,
-      rootURL: repository.rootURL,
+      location: repository.location,
       name: repository.name,
       worktrees: worktrees
     )

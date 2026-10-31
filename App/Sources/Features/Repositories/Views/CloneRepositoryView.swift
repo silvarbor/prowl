@@ -150,7 +150,7 @@ struct CloneRepositoryView: View {
     return await withCheckedContinuation { continuation in
       let process = Process()
       process.executableURL = git.url
-      process.environment = ProcessInfo.processInfo.environment.merging(git.environment) { _, selected in selected }
+      process.environment = git.processEnvironment
       process.arguments = ["clone", "--", url, destination.path]
       process.standardOutput = FileHandle.nullDevice
       let errorLogURL = FileManager.default.temporaryDirectory

@@ -34,9 +34,13 @@ it to a git repository and refreshes the sidebar.
 
 ## Git availability and load errors
 
-Prowl uses a working Git from the app PATH, your login shell PATH, or common
-installation locations. Apple Git requires working Command Line Tools; a full
-Xcode installation is not required. Independent Git installations can also be used.
+Prowl uses the first working Git on your login shell PATH. If there is none, it tries
+the app PATH, then common installation locations. Apple Git requires working Command
+Line Tools; a full Xcode installation is not required. Independent Git installations
+can also be used. Git and the bundled `wt` run with your login shell PATH, so Git hooks
+and helpers (`git-lfs`, credential helpers, `ssh`) find the same tools as in a terminal.
+If an earlier Git on that PATH does not work, the selected Git's folder goes first.
+Without a login shell PATH, they use the app PATH.
 Each executable or login-shell probe has a five-second timeout. A stalled probe
 is stopped, including its child processes, before discovery tries the next source.
 Cancelling one request does not interrupt discovery for other active requests.
@@ -55,8 +59,13 @@ terminals stay open. Background refreshes do not repeatedly open error dialogs.
 - **Shortcut:** `⌘⇧O` (`open_repository`)
 - **Toolbar:** the **Add...** button (folder-with-plus icon) at the top of the
   sidebar. Use the popover to browse for a local folder, drag a folder onto the
-  drop zone, clone a remote git URL into a chosen directory, or start workspace
-  creation.
+  drop zone, clone a remote git URL into a chosen directory, start workspace
+  creation, or add a project group.
+- **Sidebar context menu:** right-click an empty part of the sidebar list. The menu
+  goes straight to **New Group…**, **Add Repository…**, **Clone Repository…**,
+  **Add Remote Project…**, and **Add Workspace…**. It also has **Expand All**,
+  **Collapse All**, **Show Active Agents** or **Hide Active Agents**,
+  **Refresh Worktrees**, and **Archived Worktrees**.
 - **Command Palette:** "Open Repository".
 
 Pick one or more directories. Prowl detects git vs plain, de-duplicates, and
@@ -64,6 +73,9 @@ persists the list. Paths that don't exist or can't be read are reported in an
 alert after the load. Repositories added after the initial app load are selected
 automatically. If a repository was added through a symbolic link, Prowl resolves
 and stores its actual git root so branches and worktrees continue to load.
+
+To add a project on another machine over SSH, use **Add Remote Project...** (or **Add Remote
+Project** in the Add popover). See [remote projects](remote-folders.md).
 
 ## Creating a worktree
 
@@ -100,6 +112,11 @@ progress through stages: reading local branches → choosing a name → checking
 mode → resolving the base ref → fetching → creating. A **Pending** row shows the
 live status until it's ready.
 
+If creation fails, the error shows the end of Git's output, where Git and hooks
+report the cause. Prowl removes the worktree folder only if this attempt created it
+on the new branch, and keeps the branch. A Git hook that exits with an error fails
+the creation, even when the checkout itself succeeded.
+
 **Copying uncommitted files:** new worktrees can optionally copy `.gitignore`'d
 files (`copyIgnoredOnWorktreeCreate`) and/or untracked files
 (`copyUntrackedOnWorktreeCreate`) from the source — set globally or per repo.
@@ -111,8 +128,9 @@ new worktree (see [custom-actions](custom-actions.md)).
 
 Prowl watches Git's worktree registry for worktrees added, removed, or moved by
 external commands such as `git worktree move`. Changes trigger a sidebar refresh
-after a two-second debounce, including while Prowl is in the background. While
-active, Prowl also refreshes every 30 seconds as a fallback.
+after a two-second debounce, including while Prowl is in the background. When
+Prowl becomes the active app, it also reloads every repository once, to catch a
+change that a watcher missed.
 
 ## Selecting & switching worktrees
 
@@ -120,7 +138,9 @@ active, Prowl also refreshes every 30 seconds as a fallback.
 - **`⌃1`–`⌃9`** jump to worktree 1–9.
 - **`⌘⌃↓` / `⌘⌃↑`** select next / previous worktree.
 - **`⌘⌥[` / `⌘⌥]`** go back / forward through worktree selection history.
-- **`⌘⇧L`** reveals the currently focused worktree in the sidebar.
+- **`⌘⇧L`** reveals the currently focused worktree (or selected folder) in the
+  sidebar. It opens a collapsed repository and a collapsed group to show it.
+  Selecting a worktree any other way does not open a collapsed group.
 
 ## Pinning & ordering
 
@@ -129,17 +149,63 @@ active, Prowl also refreshes every 30 seconds as a fallback.
   the main worktree.)
 - **Reorder:** drag repositories or worktrees to rearrange; a thin accent line
   shows the drop target. Order is persisted. You can repeat the drag or cancel
-  with Escape and start another drag without reopening the app.
+  with Escape and start another drag without reopening the app. Repositories
+  and groups drag the same way; see [Repository groups](#repository-groups).
 - **Expand / Collapse:** click the chevron on a repo header, or cycle the
   sidebar's header button: from all-collapsed it offers **Expand Active**
   (double chevron `»` — expands only repos/workspaces that have open terminal
-  tabs), then **Expand All** (single chevron `›`), then **Collapse All**
-  (chevron rotated down). Expand Active is skipped when no repo (or every
-  repo) has open tabs. Collapsed state is remembered.
+  tabs, and the groups that contain a repo or folder with open tabs), then
+  **Expand All** (single chevron `›`), then **Collapse All** (chevron rotated
+  down). The button acts on groups and repositories together. Expand Active is
+  skipped when no repo (or every repo) has open tabs. Collapsed state is
+  remembered.
 - **Tab count badges:** a collapsed repo header shows its total open-tab count;
   expanding a git repo moves the count onto the individual worktree rows
   (hidden at zero). Workspaces and plain folders always show the count on the
   header.
+
+## Repository groups
+
+Groups put related repositories under one collapsible header in the sidebar.
+Groups and ungrouped repositories mix at the top level. A group holds
+repositories only; groups do not nest.
+
+- **Create:** right-click an empty part of the sidebar list → **New Group…**, or
+  choose **Add Project Group** in the **Add...** panel, then type a name. The empty
+  group goes to the end of the list; drag projects into it. To start a group from
+  a repository, right-click it → **New Group…**. That group takes the repository's
+  place.
+- **Move:** right-click a repository → **Move to Group** → a group. The
+  repository goes to the end of that group. **Remove from Group** puts it right
+  after the group.
+- **Drag:** drag a repository between the rows of a group to put it there, or
+  onto a group header to put it at the end of that group (the header
+  highlights). Drag it above a group header or between top-level rows to take it
+  out of its group. Drag a group by its header to move the whole group; a group
+  drops only between top-level rows, never into another group. To drop after
+  the last entry, drop below it. A repository dropped into a collapsed group
+  stays hidden until you open the group.
+- **Edit:** right-click a group header (or hover it → `…`) → **Rename Group…**,
+  **Group Color** (a quiet background behind the group, or None), **Group Icon**,
+  or **Ungroup**. Ungroup keeps the repositories in the group's place and removes
+  no repository.
+- **Icon:** a group shows a folder before its name: a filled folder when the
+  group is collapsed and an empty folder when it is open. **Group Icon** →
+  **Choose Symbol…** picks an SF Symbol, **Choose Image…** imports an image file,
+  and **Use Default Icon** brings the folder back. A chosen icon stays the same
+  when the group opens or closes. Symbols and SVG images take the group color;
+  other images keep their own colors. Imported images are copied to
+  `~/.prowl/group-icons/` and deleted when the icon changes or the group is
+  ungrouped.
+- **Layout:** the members of a group sit a small step in from the top-level rows,
+  and their worktrees move with them.
+- **Collapse:** click a group header or its chevron. A collapsed group keeps the
+  expansion of each repository in it, and its worktrees are skipped by `⌃1`–`⌃9`
+  and `⌘⌃↓` / `⌘⌃↑`.
+- **Order:** the sidebar order, groups included, is the order of worktree
+  hotkeys, `prowl list`, Shelf, and toolbar notifications.
+- **Storage:** the layout is saved in `~/.prowl/sidebar-layout.json` at the
+  first change. Before that file exists, the existing repository order is used.
 
 ## Archiving a worktree
 
@@ -151,8 +217,11 @@ Archiving hides a worktree from the main list without deleting it.
 - If the repo defines an **archive script**, it runs first (live progress); if it
   fails, archiving stops and the worktree stays active.
 - **View archived:** `⌘⌃A` toggles the Archived Worktrees panel (press again to
-  return to the previous worktree), grouped by repo, with **Unarchive** and
-  **Delete Selected** (`⌘⇧⌫`) buttons.
+  return to the previous worktree or folder and view mode — Default, Canvas, or Shelf),
+  grouped by repo, with **Unarchive** and **Delete Selected** (`⌘⇧⌫`) buttons.
+  When the panel was opened from Shelf, picking a worktree in the sidebar also
+  returns to Shelf and opens it as a book. Returning to Canvas restores keyboard
+  focus to the previously focused tab and its active pane.
 - **Auto-delete:** if `archivedAutoDeletePeriod` is set, archived worktrees older
   than the period are deleted automatically. When you pick a period in Settings →
   Worktree that would delete existing archived worktrees right away, Prowl lists

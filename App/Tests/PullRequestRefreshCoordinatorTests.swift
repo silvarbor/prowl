@@ -316,7 +316,6 @@ struct PullRequestRefreshCoordinatorTests {
     coordinator.enqueue(
       PullRequestRefreshCoordinator.Request(
         repositoryID: "alpha",
-        repositoryRootURL: URL(fileURLWithPath: "/tmp/alpha"),
         host: "github.com",
         owner: "khoi",
         repo: "alpha",
@@ -349,7 +348,6 @@ struct PullRequestRefreshCoordinatorTests {
     coordinator.enqueue(
       PullRequestRefreshCoordinator.Request(
         repositoryID: "alpha",
-        repositoryRootURL: URL(fileURLWithPath: "/tmp/alpha"),
         host: "github.com",
         owner: "khoi",
         repo: "alpha",
@@ -605,7 +603,7 @@ struct PullRequestRefreshCoordinatorTests {
 
     let snapshots = await outcomes.snapshot()
     let refreshed = snapshots.compactMap { outcome -> (Repository.ID, [String])? in
-      if case .refreshed(let id, _, _, let prs, _, _) = outcome {
+      if case .refreshed(let id, _, let prs, _, _) = outcome {
         return (id, Array(prs.keys))
       }
       return nil
@@ -652,7 +650,7 @@ struct PullRequestRefreshCoordinatorTests {
     #expect(calls.first?.requests.allSatisfy { $0.allowedHeadRepositories == expectedAllowedHeadRepositories } == true)
 
     let refreshed = await outcomes.snapshot().compactMap { outcome -> [String: GithubPullRequest]? in
-      if case .refreshed("local", _, _, let prsByBranch, _, _) = outcome {
+      if case .refreshed("local", _, let prsByBranch, _, _) = outcome {
         return prsByBranch
       }
       return nil
@@ -890,7 +888,7 @@ struct PullRequestRefreshCoordinatorTests {
     let snapshots = await outcomes.snapshot()
     let refresh = try #require(
       snapshots.compactMap { snapshot -> (String, [String: GithubPullRequest])? in
-        if case .refreshed(let id, _, _, let prs, _, _) = snapshot {
+        if case .refreshed(let id, _, let prs, _, _) = snapshot {
           return (id, prs)
         }
         return nil
@@ -994,19 +992,6 @@ private func makeCoordinator(
   }
 }
 
-@MainActor
-private func waitUntil(
-  _ condition: @MainActor @escaping () async -> Bool,
-  maxIterations: Int = 10_000
-) async {
-  for _ in 0..<maxIterations {
-    if await condition() {
-      return
-    }
-    await Task.yield()
-  }
-}
-
 private func advanceCoordinatorClock(
   _ clock: TestClock<Duration>,
   by duration: Duration
@@ -1029,7 +1014,6 @@ nonisolated private func request(
   let resolvedRepositoryID = repositoryID ?? repo
   return PullRequestRefreshCoordinator.Request(
     repositoryID: resolvedRepositoryID,
-    repositoryRootURL: URL(fileURLWithPath: rootPath ?? "/tmp/\(resolvedRepositoryID)"),
     host: host,
     owner: "khoi",
     repo: repo,
@@ -1115,7 +1099,7 @@ nonisolated private struct RefreshedAnswer: Sendable {
   let isPartial: Bool
 
   init?(outcome: PullRequestRefreshCoordinator.Outcome, repositoryID: Repository.ID) {
-    guard case .refreshed(repositoryID, _, _, let prsByBranch, let confirmedNoPrBranches, let isPartial) = outcome
+    guard case .refreshed(repositoryID, _, let prsByBranch, let confirmedNoPrBranches, let isPartial) = outcome
     else {
       return nil
     }
@@ -1138,7 +1122,7 @@ actor OutcomeCollector {
 
   func refreshedRepositories() -> [String] {
     outcomes.compactMap {
-      if case .refreshed(let id, _, _, _, _, _) = $0 {
+      if case .refreshed(let id, _, _, _, _) = $0 {
         return id
       }
       return nil

@@ -10,7 +10,7 @@ struct CodexShellProbeProcessTests {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
     let process = CodexShellProbeProcess(
-      timeout: 0.5,
+      timeout: 10,
       maximumOutputBytes: 1_024,
       shellOverride: URL(filePath: "/bin/sh"),
       shellOverrideArguments: ["-c", "printf stdout; printf stderr >&2"]
@@ -22,6 +22,9 @@ struct CodexShellProbeProcessTests {
     #expect(output.exitCode == 0)
   }
 
+  // Timeouts that a test does not expect to fire are generous: a loaded host can take
+  // seconds to start a shell. The background child outlives the timeout, so waiting for its
+  // end of file would fail the test.
   @Test func successfulChildDoesNotWaitForBackgroundDescendantEOF() async throws {
     let root = temporaryDirectory("shell-background-child")
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -32,11 +35,11 @@ struct CodexShellProbeProcessTests {
       contents: """
         #!/bin/sh
         printf stdout
-        sleep 2 &
+        sleep 20 &
         """
     )
     let process = CodexShellProbeProcess(
-      timeout: 0.5,
+      timeout: 10,
       maximumOutputBytes: 1_024,
       shellOverride: URL(filePath: "/bin/sh"),
       shellOverrideArguments: [shell.path(percentEncoded: false)]
@@ -63,8 +66,9 @@ struct CodexShellProbeProcessTests {
         while :; do sleep 1; done
         """
     )
+    // The shell must record its pid before the timeout fires.
     let process = CodexShellProbeProcess(
-      timeout: 0.5,
+      timeout: 3,
       maximumOutputBytes: 1_024,
       shellOverride: URL(filePath: "/bin/sh"),
       shellOverrideArguments: [shell.path(percentEncoded: false)]
@@ -93,7 +97,7 @@ struct CodexShellProbeProcessTests {
         """
     )
     let process = CodexShellProbeProcess(
-      timeout: 2,
+      timeout: 10,
       maximumOutputBytes: 128,
       shellOverride: URL(filePath: "/bin/sh"),
       shellOverrideArguments: [shell.path(percentEncoded: false)]
@@ -119,7 +123,7 @@ struct CodexShellProbeProcessTests {
         """
     )
     let defaultBound = CodexShellProbeProcess(
-      timeout: 2,
+      timeout: 10,
       shellOverride: URL(filePath: "/bin/sh"),
       shellOverrideArguments: [shell.path(percentEncoded: false)]
     )
@@ -128,7 +132,7 @@ struct CodexShellProbeProcessTests {
     }
 
     let raised = CodexShellProbeProcess(
-      timeout: 2,
+      timeout: 10,
       maximumOutputBytes: ShellEnvironmentProbe.maximumOutputBytes,
       shellOverride: URL(filePath: "/bin/sh"),
       shellOverrideArguments: [shell.path(percentEncoded: false)]

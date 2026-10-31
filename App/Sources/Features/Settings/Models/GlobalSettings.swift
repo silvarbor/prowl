@@ -50,6 +50,8 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   var detectRepositoryIconsAutomatically: Bool = true
   /// A Ghostty config file used instead of Ghostty's default files; `nil` shares Ghostty's config.
   var ghosttyConfigPath: String?
+  /// Whether Prowl may open its own SSH connection to detect remote agents (docs-ai 082).
+  var remoteAgentDetection: RemoteAgentDetectionConsent = .undecided
 
   static let `default` = GlobalSettings(
     appearanceMode: .dark,
@@ -247,6 +249,7 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     try container.encode(externalDiffCustomCommand, forKey: .externalDiffCustomCommand)
     try container.encode(detectRepositoryIconsAutomatically, forKey: .detectRepositoryIconsAutomatically)
     try container.encodeIfPresent(ghosttyConfigPath, forKey: .ghosttyConfigPath)
+    try container.encode(remoteAgentDetection, forKey: .remoteAgentDetection)
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -300,6 +303,7 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     case externalDiffCustomCommand
     case detectRepositoryIconsAutomatically
     case ghosttyConfigPath
+    case remoteAgentDetection
     // Legacy keys for migration
     case automaticallyArchiveMergedWorktrees
     case notificationSoundEnabled
@@ -400,11 +404,20 @@ nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     detectRepositoryIconsAutomatically =
       try container.decodeIfPresent(Bool.self, forKey: .detectRepositoryIconsAutomatically)
       ?? true
+    remoteAgentDetection = try Self.decodeRemoteAgentDetection(from: container)
     let toolbarAndDock = try Self.decodeToolbarAndDockSettings(from: container)
     showRunButtonInToolbar = toolbarAndDock.showRunButtonInToolbar
     showDefaultEditorInToolbar = toolbarAndDock.showDefaultEditorInToolbar
     dockBounceMode = toolbarAndDock.dockBounceMode
     showNotificationDotOnDock = toolbarAndDock.showNotificationDotOnDock
+  }
+
+  /// An unknown value (a newer build's) asks again instead of failing the whole file.
+  private static func decodeRemoteAgentDetection(
+    from container: KeyedDecodingContainer<CodingKeys>
+  ) throws -> RemoteAgentDetectionConsent {
+    try container.decodeIfPresent(String.self, forKey: .remoteAgentDetection)
+      .flatMap(RemoteAgentDetectionConsent.init(rawValue:)) ?? .undecided
   }
 
   private struct DecodedAgentIslandSettings {

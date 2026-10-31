@@ -11,8 +11,17 @@ import SwiftUI
 /// assets ignore it. Missing user images fall back to a neutral SF
 /// Symbol so a deleted file on disk doesn't turn into a blank slot.
 struct RepositoryIconImage: View {
+  /// Where the imported image files live.
+  enum ImageLocation: Equatable {
+    /// The settings folder of this local root. Nil for a remote repository: its
+    /// images fall back like a missing file.
+    case repository(URL?)
+    /// The images of sidebar group icons (docs-ai 086).
+    case groupIcons
+  }
+
   let icon: RepositoryIconSource
-  let repositoryRootURL: URL
+  let imageLocation: ImageLocation
   /// Color used for tintable artwork. Pass `nil` to keep the
   /// renderer's natural foreground (`.primary` / template default).
   let tintColor: Color?
@@ -22,12 +31,19 @@ struct RepositoryIconImage: View {
 
   init(
     icon: RepositoryIconSource,
-    repositoryRootURL: URL,
+    repositoryRootURL: URL?,
     tintColor: Color? = nil,
     size: CGFloat = 16
   ) {
     self.icon = icon
-    self.repositoryRootURL = repositoryRootURL
+    self.imageLocation = .repository(repositoryRootURL)
+    self.tintColor = tintColor
+    self.size = size
+  }
+
+  init(groupIcon icon: RepositoryIconSource, tintColor: Color? = nil, size: CGFloat = 16) {
+    self.icon = icon
+    self.imageLocation = .groupIcons
     self.tintColor = tintColor
     self.size = size
   }
@@ -60,10 +76,14 @@ struct RepositoryIconImage: View {
 
   @ViewBuilder
   private func userImage(filename: String) -> some View {
-    let url = ProwlPaths.repositoryIconFileURL(
-      filename: filename, repositoryRootURL: repositoryRootURL
-    )
-    if let nsImage = Self.loadImage(at: url, asTemplate: icon.isTintable) {
+    let url: URL? =
+      switch imageLocation {
+      case .repository(let rootURL):
+        rootURL.map { ProwlPaths.repositoryIconFileURL(filename: filename, repositoryRootURL: $0) }
+      case .groupIcons:
+        ProwlPaths.groupIconsDirectory.appending(path: filename, directoryHint: .notDirectory)
+      }
+    if let url, let nsImage = Self.loadImage(at: url, asTemplate: icon.isTintable) {
       if icon.isTintable {
         Image(nsImage: nsImage)
           .resizable()

@@ -34,6 +34,24 @@ nonisolated func isConfirmedNonRepository(_ error: Error, at directory: URL) -> 
   }
 }
 
+/// The most output lines per stream that a Git error message keeps.
+nonisolated let gitErrorOutputLineLimit = 20
+
+/// Keeps the end of a command's output, where Git and hooks report the failure.
+/// Progress output rewrites one line with carriage returns, so only the text after
+/// the last carriage return of each line stays.
+nonisolated func gitErrorOutputSummary(_ output: String) -> String {
+  let lines =
+    output
+    .split(separator: "\n", omittingEmptySubsequences: false)
+    .map { line in
+      line.split(separator: "\r").last { !$0.allSatisfy(\.isWhitespace) }.map(String.init) ?? ""
+    }
+    .filter { !$0.allSatisfy(\.isWhitespace) }
+  guard lines.count > gitErrorOutputLineLimit else { return lines.joined(separator: "\n") }
+  return (["…"] + lines.suffix(gitErrorOutputLineLimit)).joined(separator: "\n")
+}
+
 nonisolated func wrapShellError(
   _ error: Error,
   operation: GitOperation,
@@ -44,11 +62,13 @@ nonisolated func wrapShellError(
   if let shellError = error as? ShellClientError {
     exitCode = shellError.exitCode
     var messageParts: [String] = []
-    if !shellError.stdout.isEmpty {
-      messageParts.append("stdout:\n\(shellError.stdout)")
+    let stdout = gitErrorOutputSummary(shellError.stdout)
+    if !stdout.isEmpty {
+      messageParts.append("stdout:\n\(stdout)")
     }
-    if !shellError.stderr.isEmpty {
-      messageParts.append("stderr:\n\(shellError.stderr)")
+    let stderr = gitErrorOutputSummary(shellError.stderr)
+    if !stderr.isEmpty {
+      messageParts.append("stderr:\n\(stderr)")
     }
     let message = messageParts.joined(separator: "\n")
     gitError = .commandFailed(command: command, message: message)

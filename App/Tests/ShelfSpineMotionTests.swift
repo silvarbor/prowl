@@ -118,7 +118,7 @@ private final class SpineMotionFixture {
       rootView: Host(model: model, chrome: chrome, hover: hoverRecorder, frame: frame))
     window.contentView = host
     window.orderBack(nil)
-    render()
+    render { frame.view != nil }
   }
 
   func close() {
@@ -129,19 +129,24 @@ private final class SpineMotionFixture {
     positions = []
     chrome.samples = []
     model.moved = moved
-    render()
+    let target: CGFloat = moved ? 160 : 0
+    render { positions.last.map { abs($0 - target) < 0.5 } ?? false }
   }
 
   func hover() {
     hoverRecorder.samples = []
     model.hovered = true
-    render()
+    render { hoverRecorder.samples.last == 1 }
   }
 
-  private func render() {
+  /// Pumps frames for at least the animations' length, then until `isSettled`: a slow runner
+  /// gets more frames instead of a failure.
+  private func render(until isSettled: () -> Bool) {
     // AppKit presentation frames use the real run loop, not an injected TestClock.
-    let deadline = Date().addingTimeInterval(0.35)
-    while Date() < deadline {
+    let start = Date()
+    let minimum = start.addingTimeInterval(0.35)
+    let deadline = start.addingTimeInterval(10)
+    while Date() < minimum || (Date() < deadline && !isSettled()) {
       RunLoop.main.run(until: Date().addingTimeInterval(0.01))
       host.layoutSubtreeIfNeeded()
       host.displayIfNeeded()
