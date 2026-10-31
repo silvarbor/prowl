@@ -1,5 +1,66 @@
 # Changelog
 
+## [2026.10.31](https://github.com/onevcat/Prowl/releases/tag/v2026.10.31)
+
+Organize projects with sidebar groups and get more control over terminal clipboard access and links.
+
+### New
+
+- Create named, collapsible sidebar groups: right-click an empty sidebar area and choose **New Group**, or choose **Add Project Group** in the add panel. Customize groups with colors, symbols, or images.
+- Drag projects into or out of groups, reorder members, and move entire groups by their headers. Press ⌘⇧L to reveal the selected project, folder, or workspace inside a collapsed group.
+- Right-click an empty sidebar area to add projects, expand or collapse the list, and show or hide Active Agents.
+- Updated the terminal engine to Ghostty 1.4.0.
+
+### Fixed
+
+- Clipboard confirmation settings now work: Prowl asks before potentially unsafe pastes and program clipboard access when configured to do so. Requests from background panes wait until you focus them; Return and Escape cancel or deny.
+- ⌘-clicked terminal links now receive safety checks. Web and email links open directly, other URL schemes require confirmation, and unsafe file targets—including apps and executables—are blocked with an option to copy the link.
+- Fixed SSH failing when Ghostty’s `ssh-env` or `ssh-terminfo` shell integration is enabled.
+- Fixed styled terminal cells without text appearing blank in remote mirror views.
+
+## [2026.10.29](https://github.com/onevcat/Prowl/releases/tag/v2026.10.29)
+
+This release brings SSH remote projects to Prowl and improves Canvas, worktree management, and session reliability.
+
+### New
+
+- Work with projects over SSH, including remote terminals, splits, scripts, and worktree creation. Choose **Add Remote Project** in the add panel, enter a host with key-based authentication, then type a path or use **Browse…** to select a folder on the host. Hosts that ask for a password or a verification code are not supported yet.
+- Remote projects show connection status and refresh Git and pull request information automatically. Saved terminal layouts reconnect when you open the project, without rerunning scripts, and remain saved while the host is unavailable.
+
+### Fixed
+
+- Fixed blank terminal cards when entering Canvas and a Canvas crash on macOS versions before 26.4. Leaving Archived Worktrees now restores your previous view, selection, and Canvas pane focus; unarchiving keeps the list open for further restores.
+- Git operations now use your login shell’s PATH, fixing worktree creation failures involving tools such as `mise` and `git-lfs`. Failure alerts stay open and show clearer errors.
+- Repositories with the same folder name now keep separate settings, with existing settings copied automatically. Repository load failures no longer erase pins, archived entries, or Prowl-created worktree markers.
+- Returning to Prowl now refreshes repositories and change counts reliably. Switching away saves the terminal layout and pauses remote polling, which resumes on return.
+- Fixed Codex workflow commands failing with `SOURCE_REQUIRED` and transcript binding stopping after the pane that started its shared daemon was closed.
+- Git operations and file transfers over SSH no longer trigger remote-agent detection prompts for their transport connections.
+
+## [2026.10.21](https://github.com/onevcat/Prowl/releases/tag/v2026.10.21)
+
+Prowl now detects coding agents that run on another machine over SSH, including inside remote tmux. This release also adds TraeCode CLI support and makes agent status and dispatch waits more reliable.
+
+### New
+
+- **Agents over SSH.** When a pane runs `ssh`, Prowl now shows the agent on the remote host (Linux or macOS) in Active Agents, with its Working, Blocked, and Idle state. Nothing is installed on the host and no shell configuration is changed: Prowl opens its own SSH connection to the same target and runs a read-only probe.
+  - Prowl asks before it opens that connection. At the first `ssh`, choose **Turn On**, **Not Now**, or **Turn Off** in the toolbar status. You can change it later in **Settings › Agents › Display › Detect agents in SSH sessions**.
+  - Agents inside a remote tmux session are detected from the active tmux pane, and their state comes from that pane's screen.
+  - Remote panes show `user@host` in their corner, and their tabs show a network glyph. Active Agents shows the host and the connection health: a remote agent that has not been confirmed for 10 seconds is greyed out with "Last seen … ago", and a warning tells you why a host cannot be read.
+  - Remote agents are for monitoring. `prowl agents dispatch` and workflow roles do not accept them yet.
+- Added TraeCode CLI (`traecli`) support with agent status, approval and question detection, and completion notifications. Select **TraeCode CLI** in an Agent Profile to configure launches and an optional dedicated home for account isolation.
+
+### Fixed
+
+- Claude Code now shows Idle when its turn ends with background shells still running, so new dispatches and idle waits can proceed.
+- Fixed Codex dispatch waits ending early because of unrelated temporary sessions or missing recent completion events. Completion evidence is also kept when the assigned agent exits.
+- Fixed misaligned Model and Reasoning Effort fields in Agent Profile settings on macOS 27.
+
+## [2026.10.17](https://github.com/onevcat/Prowl/releases/tag/v2026.10.17)
+
+### Improved
+
+- Codex 0.163.0 and later now reports its status to Prowl directly, so Codex sessions update their status immediately. Approval requests and questions appear as blocked while waiting for your response.
+
 ## [2026.10.15](https://github.com/onevcat/Prowl/releases/tag/v2026.10.15)
 
 ### New

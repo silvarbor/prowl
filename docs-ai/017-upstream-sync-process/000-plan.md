@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| **Status** | Implemented (retrospective) |
+| **Status** | Retired (2026-10-18) |
 | **Anchor date** | 2026-04-08 |
 | **Documented** | 2026-07-12 (backfilled) |
 | **Primary PRs** | #193 (process establishment); review rounds landed as #268, #547, #549 and direct docs commits `013be91e`, `2948302e` |

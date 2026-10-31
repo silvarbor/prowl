@@ -10,7 +10,7 @@ extension RepositoriesFeature {
     action: Action
   ) -> Effect<Action> {
     switch action {
-    case .worktreeCreation, .worktreeLifecycle, .worktreeOrdering, .githubIntegration,
+    case .worktreeCreation, .worktreeLifecycle, .worktreeOrdering, .sidebarGroups, .githubIntegration,
       .repositoryManagement,
       .workspaceCreation,
       .workspaceEditing:
@@ -67,13 +67,13 @@ extension RepositoriesFeature {
           let pinned = await repositoryPersistence.loadPinnedWorktreeIDs()
           let archived = await repositoryPersistence.loadArchivedWorktrees()
           let lastFocused = await repositoryPersistence.loadLastFocusedWorktreeID()
-          let repositoryOrderIDs = await repositoryPersistence.loadRepositoryOrderIDs()
+          let sidebarLayout = await repositoryPersistence.loadSidebarLayout()
           let worktreeOrderByRepository =
             await repositoryPersistence.loadWorktreeOrderByRepository()
           let repositorySnapshot = await repositoryPersistence.loadRepositorySnapshot()
           await send(.pinnedWorktreeIDsLoaded(pinned))
           await send(.archivedWorktreesLoaded(archived))
-          await send(.repositoryOrderIDsLoaded(repositoryOrderIDs))
+          await send(.sidebarLayoutLoaded(sidebarLayout))
           await send(.worktreeOrderByRepositoryLoaded(worktreeOrderByRepository))
           await send(.lastFocusedWorktreeIDLoaded(lastFocused))
           await send(.repositorySnapshotLoaded(repositorySnapshot))
@@ -81,12 +81,15 @@ extension RepositoriesFeature {
         }
       )
 
-    case .repositorySnapshotLoaded(let repositories):
+    case .repositorySnapshotLoaded(let snapshot):
+      let repositories = snapshot.map { snapshot in
+        remoteFoldersEnabled ? snapshot : snapshot.filter { !RepositoryLocation.hasRemoteForm($0.id) }
+      }
       guard let repositories, !repositories.isEmpty else {
         return .none
       }
       state.isRefreshingWorktrees = false
-      let roots = repositories.map(\.rootURL)
+      let roots = repositories.map(\.location)
       let previousSelection = state.selectedWorktreeID
       let previousSelectedWorktree = state.worktree(for: previousSelection)
       let incomingRepositories = IdentifiedArray(uniqueElements: repositories)
@@ -94,7 +97,7 @@ extension RepositoriesFeature {
       _ = applyRepositories(
         repositories,
         roots: roots,
-        shouldPruneArchivedWorktrees: true,
+        origin: .snapshot,
         state: &state,
         animated: false
       )
@@ -160,8 +163,8 @@ extension RepositoriesFeature {
           target.worktreeID, target.repositoryID, deleteBranch: shouldDeleteBranch
         ))
 
-    case .repositoryOrderIDsLoaded(let repositoryOrderIDs):
-      state.repositoryOrderIDs = repositoryOrderIDs
+    case .sidebarLayoutLoaded(let sidebarLayout):
+      state.sidebarLayout = sidebarLayout
       return .none
 
     case .worktreeOrderByRepositoryLoaded(let worktreeOrderByRepository):
@@ -182,16 +185,19 @@ extension RepositoriesFeature {
     case .loadPersistedRepositories:
       state.alert = nil
       state.isRefreshingWorktrees = false
+      let knownRemoteRepositories = state.retainedRemoteRepositories
       return .run { send in
-        let entries = await loadPersistedRepositoryEntries()
-        let roots = entries.map { URL(fileURLWithPath: $0.path) }
-        let (repositories, failures) = await loadRepositoriesData(entries)
+        let entries = await shownEntries(await loadPersistedRepositoryEntries())
+        let roots = entries.map(\.location)
+        let (repositories, failures) = await loadRepositoriesData(
+          entries, knownRemoteRepositories: knownRemoteRepositories)
         await send(
           .repositoriesLoaded(
             repositories,
             failures: failures,
             roots: roots,
-            animated: false
+            animated: false,
+            reusedRemoteRepositoryIDs: Self.reusedIDs(knownRemoteRepositories, in: repositories)
           )
         )
       }
@@ -202,15 +208,16 @@ extension RepositoriesFeature {
       return .send(.reloadRepositories(animated: false))
 
     case .reloadRepositories(let animated):
-      state.alert = nil
       let roots = state.repositoryRoots
       guard !roots.isEmpty else {
         state.isRefreshingWorktrees = false
         return .none
       }
-      return loadRepositories(fallbackRoots: roots, animated: animated)
+      return loadRepositories(
+        fallbackRoots: roots, animated: animated, knownRemoteRepositories: state.retainedRemoteRepositories)
 
-    case .repositoriesLoaded(let repositories, let failures, let roots, let animated):
+    case .repositoriesLoaded(let loadedRepositories, let failures, let roots, let animated, let reusedIDs):
+      let repositories = state.reconcilingReusedRemoteRepositories(loadedRepositories, reusedIDs: reusedIDs)
       state.isRefreshingWorktrees = false
       let wasRestoringSnapshot = state.snapshotPersistencePhase == .restoring
       state.snapshotPersistencePhase = state.snapshotPersistencePhase.afterLiveLoad(
@@ -222,17 +229,21 @@ extension RepositoriesFeature {
       let applyResult = applyRepositories(
         repositories,
         roots: roots,
-        shouldPruneArchivedWorktrees: failures.isEmpty,
+        origin: .live(failedRootIDs: Set(failures.map(\.rootID))),
         state: &state,
         animated: animated
       )
       state.repositoryRoots = roots
       state.isInitialLoadComplete = true
-      state.loadFailuresByID = Dictionary(
-        failures.map { ($0.rootID, $0.message) },
-        uniquingKeysWith: { first, _ in first }
-      )
-      state.gitUnavailableRepositoryIDs = Set(failures.filter(\.isGitUnavailable).map(\.rootID))
+      // A remote repository that this load did not keep as it was came through its host.
+      let failedIDs = Set(failures.map(\.rootID))
+      state.answeredRemoteRepositoryIDs = state.answeredRemoteRepositoryIDs
+        .intersection(state.repositories.ids)
+        .union(
+          repositories.lazy
+            .filter { $0.location.hostProfileID != nil && !reusedIDs.contains($0.id) && !failedIDs.contains($0.id) }
+            .map(\.id))
+      let rebindChange = recordLoadFailures(failures, state: &state)
       let selectedWorktree = state.worktree(for: state.selectedWorktreeID)
       let selectionChanged = selectionDidChange(
         previousSelectionID: previousSelection,
@@ -240,7 +251,7 @@ extension RepositoriesFeature {
         selectedWorktreeID: state.selectedWorktreeID,
         selectedWorktree: selectedWorktree
       )
-      var allEffects: [Effect<Action>] = []
+      var allEffects: [Effect<Action>] = [connectionHoldEffects(for: rebindChange, state: state)]
       if repositoriesChanged || wasRestoringSnapshot {
         allEffects.append(.send(.delegate(.repositoriesChanged(state.repositories))))
       }
@@ -255,10 +266,10 @@ extension RepositoriesFeature {
           })
       }
       if applyResult.didPruneRepositoryOrder {
-        let repositoryOrderIDs = state.repositoryOrderIDs
+        let sidebarLayout = state.sidebarLayout
         allEffects.append(
           .run { _ in
-            await repositoryPersistence.saveRepositoryOrderIDs(repositoryOrderIDs)
+            await repositoryPersistence.saveSidebarLayout(sidebarLayout)
           })
       }
       if applyResult.didPruneWorktreeOrder {
@@ -293,7 +304,17 @@ extension RepositoriesFeature {
         allEffects.append(effect)
       }
       allEffects.append(refreshWorkspaceChildrenEffect(state: state))
+      allEffects.append(syncRemoteRefreshSchedules(state: &state))
       return .merge(allEffects)
+
+    case .remoteRepositoryRefreshDue(let repositoryID):
+      return reduceRemoteRefreshDue(repositoryID, state: &state)
+
+    case .remoteRepositoryRefreshed(let repositoryID, let result):
+      return reduceRemoteRefreshed(repositoryID, result, state: &state)
+
+    case .setRemoteRefreshActive(let isActive):
+      return setRemoteRefreshActive(isActive, state: &state)
 
     case .refreshAllCustomTitles:
       // Fan out across the current repository list, reading each
@@ -305,7 +326,7 @@ extension RepositoriesFeature {
       return .run { send in
         var dict: [Repository.ID: String] = [:]
         for repository in repositoriesForTitleRefresh {
-          @Shared(.repositorySettings(repository.rootURL)) var settings
+          @Shared(.repositorySettings(repository.location)) var settings
           let trimmed = settings.customTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
           if let trimmed, !trimmed.isEmpty {
             dict[repository.id] = trimmed
@@ -314,13 +335,13 @@ extension RepositoriesFeature {
         await send(.customTitlesLoaded(dict))
       }
 
-    case .refreshCustomTitle(let rootURL):
-      guard let repository = state.repositories.first(where: { $0.rootURL == rootURL }) else {
+    case .refreshCustomTitle(let location):
+      guard let repository = state.repositories.first(where: { $0.location == location }) else {
         return .none
       }
       let repositoryID = repository.id
       return .run { send in
-        @Shared(.repositorySettings(rootURL)) var settings
+        @Shared(.repositorySettings(location)) var settings
         let trimmed = settings.customTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalized = (trimmed?.isEmpty ?? true) ? nil : trimmed
         await send(.customTitleUpdated(repositoryID, normalized))
@@ -351,25 +372,71 @@ extension RepositoriesFeature {
       return .none
 
     case .selectArchivedWorktrees:
-      state.isShelfActive = false
-      // Toggle: if already showing archived, return to the previous worktree.
+      // Toggle: if already showing archived, return to the previous layout and worktree.
       if state.isShowingArchivedWorktrees {
-        defer { state.preArchivedWorktreeID = nil }
-        if let previousID = state.preArchivedWorktreeID,
+        let previousSegment = state.preArchivedTopSegment ?? .tabbed
+        defer {
+          state.preArchivedSelection = nil
+          state.preArchivedWorkspaceChildID = nil
+          state.preArchivedCanvasCard = nil
+          state.preArchivedTopSegment = nil
+        }
+        if previousSegment == .canvas, state.canEnterShelf {
+          // `preCanvasWorktreeID` / `preCanvasTerminalTargetID` still describe the
+          // Canvas session, so re-enter it directly instead of via `.selectCanvas`,
+          // which would overwrite them with the archived list's empty selection.
+          state.selection = .canvas
+          // The saved tab can close while the list is open; a request for it would never resolve.
+          if let card = state.preArchivedCanvasCard.flatMap(terminalClient.canvasRestorableCard),
+            state.terminalWorktree(for: card.worktreeID) != nil
+          {
+            requestCanvasFocus(.tab(card.tabID), viewport: .reveal, openedWorktreeID: card.worktreeID, state: &state)
+          }
+          return .run { _ in
+            await terminalClient.send(.setCanvasMode(true))
+          }
+        }
+        if case .worktree(let previousID) = state.preArchivedSelection,
           isSelectionValid(previousID, state: state)
         {
           setSingleWorktreeSelection(previousID, state: &state, recordHistory: false)
           state.openedWorktreeIDs.insert(previousID)
           state.pendingTerminalFocusWorktreeIDs.insert(previousID)
+          if previousSegment == .shelf {
+            state.isShelfActive = true
+          }
           return .send(.delegate(.selectedWorktreeChanged(state.worktree(for: previousID))))
+        }
+        if case .repository(let repositoryID) = state.preArchivedSelection,
+          let repository = state.repositories[id: repositoryID]
+        {
+          state.selection = .repository(repositoryID)
+          state.selectedWorkspaceChildID =
+            state.resolvedWorkspaceChildren(in: repository)
+            .first { $0.id == state.preArchivedWorkspaceChildID }?.id
+          state.sidebarSelectedWorktreeIDs = []
+          if let worktree = repository.terminalWorktree {
+            state.openedWorktreeIDs.insert(worktree.id)
+            state.pendingTerminalFocusWorktreeIDs.insert(worktree.id)
+            state.isShelfActive = previousSegment == .shelf
+          }
+          return .send(.delegate(.selectedWorktreeChanged(state.selectedTerminalWorktree)))
         }
         state.selection = nil
         state.selectedWorkspaceChildID = nil
         state.sidebarSelectedWorktreeIDs = []
+        if previousSegment == .shelf, state.canEnterShelf {
+          // The previous book is gone; let Shelf pick its usual fallback book.
+          return .send(.toggleShelf)
+        }
         return .send(.delegate(.selectedWorktreeChanged(nil)))
       }
-      // Entering archived view — remember current worktree for later restore.
-      state.preArchivedWorktreeID = state.selectedWorktreeID
+      // Entering archived view — remember the current layout and worktree for later restore.
+      state.preArchivedTopSegment = state.topSegment
+      state.isShelfActive = false
+      state.preArchivedSelection = state.selection
+      state.preArchivedWorkspaceChildID = state.selectedWorkspaceChildID
+      state.preArchivedCanvasCard = state.isShowingCanvas ? terminalClient.canvasFocusedCard() : nil
       recordWorktreeHistoryTransition(from: state.selectedWorktreeID, to: nil, state: &state)
       state.selection = .archivedWorktrees
       state.selectedWorkspaceChildID = nil
@@ -576,6 +643,9 @@ extension RepositoriesFeature {
       let selectRepoToken = repositoriesLogger.beginInterval("reducer.selectRepository")
       defer { repositoriesLogger.endInterval(selectRepoToken) }
       guard let repositoryID, state.repositories[id: repositoryID] != nil else { return .none }
+      if state.repositories[id: repositoryID]?.kind == .plain {
+        restoreShelfWhenLeavingArchivedList(state: &state)
+      }
       recordWorktreeHistoryTransition(from: state.selectedWorktreeID, to: nil, state: &state)
       state.selection = .repository(repositoryID)
       state.selectedWorkspaceChildID = nil
@@ -588,23 +658,17 @@ extension RepositoriesFeature {
 
     case .openWorkspaceChild(let childID):
       guard let child = state.allResolvedWorkspaceChildren().first(where: { $0.id == childID }),
-        let workspaceRepository = state.repositories[id: child.workspaceID]
+        let workspaceWorktree = state.repositories[id: child.workspaceID]?.terminalWorktree
       else {
         return .none
       }
+      restoreShelfWhenLeavingArchivedList(state: &state)
       recordWorktreeHistoryTransition(from: state.selectedWorktreeID, to: nil, state: &state)
       state.selection = .repository(child.workspaceID)
       state.selectedWorkspaceChildID = child.id
       state.sidebarSelectedWorktreeIDs = []
       state.openedWorktreeIDs.insert(child.workspaceID)
       state.pendingTerminalFocusWorktreeIDs.insert(child.workspaceID)
-      let workspaceWorktree = Worktree(
-        id: workspaceRepository.id,
-        name: workspaceRepository.name,
-        detail: workspaceRepository.rootURL.path(percentEncoded: false),
-        workingDirectory: workspaceRepository.rootURL,
-        repositoryRootURL: workspaceRepository.rootURL
-      )
       return .merge(
         .send(.delegate(.selectedWorktreeChanged(workspaceWorktree))),
         .run { _ in
@@ -620,6 +684,9 @@ extension RepositoriesFeature {
     case .selectWorktree(let worktreeID, let focusTerminal, let recordHistory):
       let selectWtToken = repositoriesLogger.beginInterval("reducer.selectWorktree")
       defer { repositoriesLogger.endInterval(selectWtToken) }
+      if worktreeID != nil {
+        restoreShelfWhenLeavingArchivedList(state: &state)
+      }
       setSingleWorktreeSelection(worktreeID, state: &state, recordHistory: recordHistory)
       if focusTerminal, let worktreeID {
         state.pendingTerminalFocusWorktreeIDs.insert(worktreeID)
@@ -632,12 +699,19 @@ extension RepositoriesFeature {
 
     case .newTerminalTab(let worktreeID):
       guard let worktree = state.worktree(for: worktreeID) else { return .none }
-      // Pin the new tab's cwd to the worktree root: Ghostty's default new-tab
-      // behavior inherits the focused surface's cwd, which is wrong when the
-      // user targets a worktree from the sidebar.
+      if let reason = worktree.availability(of: .terminalTab).unavailableReason {
+        return .send(.showToast(.warning(reason.message)))
+      }
       let createTab: Effect<Action> = .run { _ in
-        await terminalClient.send(
-          .createTabInDirectory(worktree, directory: worktree.workingDirectory))
+        if let worktreeDirectory = worktree.localURL {
+          // Pin the new tab's cwd to the worktree root: Ghostty's default new-tab
+          // behavior inherits the focused surface's cwd, which is wrong when the
+          // user targets a worktree from the sidebar.
+          await terminalClient.send(.createTabInDirectory(worktree, directory: worktreeDirectory))
+        } else {
+          // A remote tab starts in the remote folder itself (docs-ai 084 C3b).
+          await terminalClient.send(.createTab(worktree, runSetupScriptIfNew: false))
+        }
       }
       // Canvas focuses and reveals the new card itself when it appears, like
       // every other tab created while Canvas is showing.
@@ -736,16 +810,33 @@ extension RepositoriesFeature {
       return navigateWorktreeHistory(direction: .forward, state: &state)
 
     case .revealSelectedWorktreeInSidebar:
-      guard let worktreeID = state.selectedWorktreeID,
-        let repositoryID = state.repositoryID(containing: worktreeID)
-      else { return .none }
-      state.$collapsedRepositoryIDs.withLock {
-        $0.removeAll { $0 == repositoryID }
+      let repositoryID: Repository.ID
+      let target: SidebarScrollID
+      if let worktreeID = state.selectedWorktreeID,
+        let containingRepositoryID = state.repositoryID(containing: worktreeID)
+      {
+        repositoryID = containingRepositoryID
+        target = .worktree(worktreeID)
+        state.$collapsedRepositoryIDs.withLock {
+          $0.removeAll { $0 == repositoryID }
+        }
+      } else if let selectedRepositoryID = state.selectedRepositoryID,
+        state.repositories[id: selectedRepositoryID] != nil
+      {
+        repositoryID = selectedRepositoryID
+        target = .repository(selectedRepositoryID)
+      } else {
+        return .none
+      }
+      if let groupID = state.sidebarLayout.groupID(containing: repositoryID) {
+        state.$collapsedGroupIDs.withLock {
+          $0.removeAll { $0 == groupID.uuidString }
+        }
       }
       state.nextPendingSidebarRevealID += 1
       state.pendingSidebarReveal = .init(
         id: state.nextPendingSidebarRevealID,
-        worktreeID: worktreeID
+        target: target
       )
       return .none
 
@@ -790,9 +881,11 @@ extension RepositoriesFeature {
         return .none
       }
       analyticsClient.capture("branch_renamed", nil)
+      let repositoryHost = repositoryHost
+      let worktreeLocation = worktree.location
       return .run { send in
         do {
-          try await gitClient.renameBranch(worktree.workingDirectory, trimmed)
+          try await repositoryHost.renameBranch(in: worktreeLocation, to: trimmed)
           await send(.reloadRepositories(animated: true))
         } catch {
           await send(
@@ -803,6 +896,48 @@ extension RepositoriesFeature {
           )
         }
       }
+
+    case .remoteHostRebindRequested(let hostProfileID):
+      return reduceRemoteHostRebindRequested(hostProfileID)
+
+    case .remoteHostRebindResolved(let target):
+      state.alert = rebindAlert(for: target)
+      return .none
+
+    case .remoteHostRebindFailed(let message):
+      state.alert = messageAlert(
+        title: String(localized: "Prowl could not rebind the host"), message: message)
+      return .none
+
+    case .alert(.presented(.rebindRemoteHost(let hostProfileID, let key))):
+      state.alert = nil
+      return reduceRebindRemoteHost(hostProfileID, to: key)
+
+    case .alert(.presented(.confirmRemoveFailedRepository(let repositoryID))):
+      return .send(.repositoryManagement(.removeFailedRepository(repositoryID)))
+
+    case .remoteHostRebound(let hostProfileID):
+      return reduceRemoteHostRebound(hostProfileID, state: &state)
+
+    case .addRemoteFolderRequested:
+      guard remoteFoldersEnabled else { return .none }
+      @Shared(.hostProfiles) var hostProfiles: [HostProfile]
+      state.addRemoteFolder = AddRemoteFolderFeature.State(hostProfiles: hostProfiles)
+      return .none
+
+    case .addRemoteFolder(.presented(.delegate(.hostRebound(let hostProfileID)))):
+      return .send(.remoteHostRebound(hostProfileID))
+
+    case .addRemoteFolder(.presented(.delegate(.cancel))):
+      state.addRemoteFolder = nil
+      return .none
+
+    case .addRemoteFolder(.presented(.delegate(.added(let location, let kind)))):
+      state.addRemoteFolder = nil
+      return .send(.repositoryManagement(.openRemoteRepository(location, kind: kind)))
+
+    case .addRemoteFolder:
+      return .none
 
     case .worktreeCreationPrompt(.presented(.delegate(.cancel))):
       return .send(.worktreeCreation(.promptCanceled))
@@ -920,6 +1055,7 @@ extension RepositoriesFeature {
       return .none
 
     case .alert(.presented(.retryRepositoryLoad)):
+      state.alert = nil
       return .send(.refreshWorktrees)
 
     case .alert(.presented(.copyRepositoryLoadFailure(let detail))):
@@ -957,26 +1093,28 @@ extension RepositoriesFeature {
         guard let worktree = state.worktree(for: worktreeID) else {
           return .none
         }
-        let worktreeURL = worktree.workingDirectory
-        let gitClient = gitClient
+        let worktreeLocation = worktree.location
+        let repositoryHost = repositoryHost
         return .run { send in
-          if let name = await gitClient.branchName(worktreeURL) {
+          if let name = await repositoryHost.branchName(of: worktreeLocation) {
             await send(.worktreeBranchNameLoaded(worktreeID: worktreeID, name: name))
           }
         }
       case .filesChanged(let worktreeID):
-        guard let worktree = state.worktree(for: worktreeID) else {
+        guard let worktree = state.worktree(for: worktreeID),
+          worktree.availability(of: .lineCounts).isAvailable
+        else {
           return .none
         }
-        @Shared(.repositorySettings(worktree.repositoryRootURL)) var repositorySettings
+        @Shared(.repositorySettings(worktree.repositoryLocation)) var repositorySettings
         guard repositorySettings.observesLineDiffsAutomatically else {
           return .none
         }
-        let worktreeURL = worktree.workingDirectory
-        let gitClient = gitClient
+        let worktreeLocation = worktree.location
+        let repositoryHost = repositoryHost
         let previousLineChanges = normalizedLineChanges(state.worktreeInfoByID[worktreeID])
         return .run { send in
-          if let changes = await gitClient.lineChanges(worktreeURL) {
+          if let changes = await repositoryHost.lineChanges(in: worktreeLocation) {
             let nextLineChanges = normalizedLineChanges(changes)
             guard nextLineChanges != previousLineChanges else {
               return
@@ -991,39 +1129,21 @@ extension RepositoriesFeature {
         }
       case .repositoryWorktreesChanged:
         return .send(.reloadRepositories(animated: true))
-      case .repositoryRemoteConfigurationChanged(let repositoryRootURL):
+      case .repositoryRemoteConfigurationChanged(let location):
         guard
+          let changedRoot = location.localURL?.standardizedFileURL,
           let repository = state.repositories.first(where: {
-            $0.rootURL.standardizedFileURL == repositoryRootURL.standardizedFileURL
+            $0.location.localURL?.standardizedFileURL == changedRoot
           })
         else {
           return .none
         }
-        let repositories = IdentifiedArrayOf(uniqueElements: [repository])
-        var effects: [Effect<Action>] = []
-        let worktreeIDs = repository.worktrees.map(\.id)
-        // A changed remote can point every branch at different pull requests.
-        state.pullRequestRefreshForcedWorktreeIDs.formUnion(worktreeIDs)
-        if repository.capabilities.supportsPullRequests, !worktreeIDs.isEmpty {
-          effects.append(
-            .send(
-              .githubIntegration(
-                .repositoryPullRequestRefreshRequested(
-                  repositoryRootURL: repository.rootURL,
-                  worktreeIDs: worktreeIDs
-                )
-              ))
-          )
-        }
-        if let effect = detectCodeHostsEffect(for: repositories, includeUnknown: true) {
-          effects.append(effect)
-        }
-        return effects.isEmpty ? .none : .concatenate(effects)
-      case .repositoryPullRequestRefresh(let repositoryRootURL, let worktreeIDs):
+        return remoteConfigurationChanged(repository, state: &state)
+      case .repositoryPullRequestRefresh(let location, let worktreeIDs):
         return .send(
           .githubIntegration(
             .repositoryPullRequestRefreshRequested(
-              repositoryRootURL: repositoryRootURL,
+              repositoryLocation: location,
               worktreeIDs: worktreeIDs
             )
           )

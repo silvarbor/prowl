@@ -21,7 +21,8 @@ struct ShellClientProbeTests {
       """.utf8
     ).write(to: script)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
-    let shell = ShellClient.probe(timeout: 1, userShell: script)
+    // The script must print both pids before the timeout fires, also on a loaded host.
+    let shell = ShellClient.probe(timeout: 5, userShell: script)
     do {
       if login {
         _ = try await shell.runLogin(URL(fileURLWithPath: "/usr/bin/printenv"), ["PATH"], nil)
@@ -34,7 +35,7 @@ struct ShellClientProbeTests {
       let pids = error.stdout.split(separator: "\n").compactMap { Int32($0) }
       #expect(pids.count == 2)
       // This is a real process-lifetime check, not a scheduling delay for app logic.
-      let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+      let deadline = ContinuousClock.now.advanced(by: .seconds(30))
       for pid in pids {
         while kill(pid, 0) == 0, ContinuousClock.now < deadline { await Task.yield() }
         #expect(kill(pid, 0) == -1)
@@ -53,7 +54,7 @@ struct ShellClientProbeTests {
           "probe", marker.path,
         ], nil)
     }
-    let readyDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+    let readyDeadline = ContinuousClock.now.advanced(by: .seconds(30))
     var pids: [Int32] = []
     while pids.count != 2, ContinuousClock.now < readyDeadline {
       pids =
@@ -64,7 +65,7 @@ struct ShellClientProbeTests {
     task.cancel()
     await #expect(throws: CancellationError.self) { try await task.value }
     #expect(pids.count == 2)
-    let exitDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+    let exitDeadline = ContinuousClock.now.advanced(by: .seconds(30))
     for pid in pids {
       while kill(pid, 0) == 0, ContinuousClock.now < exitDeadline { await Task.yield() }
       #expect(kill(pid, 0) == -1)

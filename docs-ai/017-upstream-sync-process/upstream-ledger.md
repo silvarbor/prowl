@@ -1,6 +1,6 @@
 # Fork Change Log
 
-> Living document of entry 017. Migrated from `doc-onevcat/change-list.md` on 2026-07-12; update in place.
+> Retired on 2026-10-18. The repository no longer tracks `supabitapp/supacode`, so this ledger is history only; do not update it.
 
 ## Upstream Baseline
 

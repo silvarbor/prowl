@@ -5,7 +5,7 @@ import ProwlCLIShared
 struct AgentsReadCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "read",
-    abstract: "Read an immediate semantic snapshot of a Codex or Claude Code agent."
+    abstract: "Read an immediate semantic snapshot of a Codex, Claude Code, or TraeCode CLI agent."
   )
 
   @Argument(help: "Target agent pane handle (pN) or pane UUID from prowl agents.")

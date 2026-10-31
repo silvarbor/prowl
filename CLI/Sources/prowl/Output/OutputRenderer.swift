@@ -252,7 +252,7 @@ enum OutputRenderer {
       lines.append(
         "\(projectName.cyan.bold)\(":".dim)\(first.worktree.name) (\(statusText))  \(first.worktree.id.dim)"
       )
-      lines.append("  \("path:".dim) \(first.worktree.path)")
+      lines.append("  \("path:".dim) \(first.worktree.displayPath)")
 
       // Group panes by tab within this worktree.
       var tabOrder: [String] = []
@@ -330,7 +330,20 @@ enum OutputRenderer {
       let paneHandle = agent.pane.handle.map { "p\($0)" } ?? agent.pane.id
       let sessionLabel = agent.session.map { "  session=\($0.id) [\($0.confidence)]" } ?? ""
       return "\(statusLabel)  \(agent.name)  \(projectLabel)  \(agent.tab.title)  \(paneHandle)\(sessionLabel)"
+        + (agent.remote.map(remoteLabel) ?? "")
     }.joined(separator: "\n")
+  }
+
+  /// `  remote=alice@box [stale]`: the host plus every qualifier that makes the state weaker
+  /// than a fresh probed observation.
+  static func remoteLabel(_ remote: AgentsCommandRemote) -> String {
+    var qualifiers: [String] = []
+    if remote.confidence != "probed" { qualifiers.append(remote.confidence) }
+    if remote.freshness != "fresh" { qualifiers.append(remote.freshness) }
+    if !remote.stateKnown { qualifiers.append("state unknown") }
+    if remote.correlation != "correlated" { qualifiers.append(remote.correlation) }
+    let suffix = qualifiers.isEmpty ? "" : " [\(qualifiers.joined(separator: ", "))]"
+    return "  remote=\(remote.host ?? "unresolved")\(suffix)"
   }
 
   static func agentSignalWarningLines(_ payload: AgentSignalCommandPayload) -> [String] {

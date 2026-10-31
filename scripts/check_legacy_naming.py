@@ -24,7 +24,7 @@ ALLOWED = (
     r"`supacode(?:/\.\.\.)?`",  # the bare old name in prose that explains this rule
 )
 # History and third-party content is not maintained text.
-EXCLUDED_PREFIXES = ("docs-ai/", "ThirdParty/", ".claude/skills/check-upstream-changes/")
+EXCLUDED_PREFIXES = ("docs-ai/", "ThirdParty/")
 EXCLUDED_FILES = ("CHANGELOG.md", "scripts/check_legacy_naming.py", "scripts/test_legacy_naming.py")
 TEXT_SUFFIXES = {
     ".swift", ".md", ".json", ".yaml", ".yml", ".py", ".sh", ".awk", ".toml", ".xcconfig", ".plist",

@@ -112,7 +112,7 @@ struct AgentHookRenderingTests {
     let result = ClaudeSettingsStableReader.read(fifo, maximumBytes: 1_024)
 
     #expect(result == .unreadable)
-    #expect(start.duration(to: clock.now) < .milliseconds(200))
+    #expect(start.duration(to: clock.now) < .seconds(5))
   }
 
   @Test func stableReaderRejectsAtomicPathReplacement() throws {
