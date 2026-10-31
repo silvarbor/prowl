@@ -637,6 +637,50 @@ extension RepositoriesFeature.State {
     return sections.allRows
   }
 
+  var worktreeRankInputs: WorktreeRankInputs {
+    WorktreeRankInputs(
+      repositories: repositories,
+      repositoryRoots: repositoryRoots,
+      sidebarLayout: sidebarLayout,
+      pinnedWorktreeIDs: pinnedWorktreeIDs,
+      worktreeOrderByRepository: worktreeOrderByRepository,
+      archivedWorktrees: archivedWorktrees
+    )
+  }
+
+  var worktreeRankTrigger: WorktreeRankTrigger {
+    WorktreeRankTrigger(inputs: worktreeRankInputs, hasAgents: !activeAgents.entries.isEmpty)
+  }
+
+  /// The position of each worktree in the order the Active Agents panel lists agents: pinned
+  /// worktrees of every repository first (repository order, then pin order), then the rest in
+  /// sidebar order (repositories in `sidebarLayout` order with group members in place, main
+  /// worktree, unpinned worktrees; a folder or workspace ranks by its own ID).
+  func worktreeRanks() -> [Worktree.ID: Int] {
+    let repositoriesByID = Dictionary(
+      repositories.map { ($0.id, $0) },
+      uniquingKeysWith: { first, _ in first }
+    )
+    var pinned: [Worktree.ID] = []
+    var others: [Worktree.ID] = []
+    for repository in orderedRepositoryIDs().compactMap({ repositoriesByID[$0] }) {
+      let pinnedWorktrees = orderedPinnedWorktrees(in: repository)
+      pinned.append(contentsOf: pinnedWorktrees.map(\.id))
+      let pinnedIDs = Set(pinnedWorktrees.map(\.id))
+      others.append(contentsOf: orderedWorktrees(in: repository).map(\.id).filter { !pinnedIDs.contains($0) })
+      // A runnable folder or workspace has no worktrees; its terminals run under a synthesized
+      // worktree whose ID is the repository ID (see `terminalWorktree(for:)`).
+      if repository.capabilities.supportsRunnableFolderActions, !repository.capabilities.supportsWorktrees {
+        others.append(repository.id)
+      }
+    }
+    var ranks: [Worktree.ID: Int] = [:]
+    for (rank, id) in (pinned + others).enumerated() {
+      ranks[id] = rank
+    }
+    return ranks
+  }
+
   func orderedWorktreeRows() -> [WorktreeRowModel] {
     orderedWorktreeRows(includingRepositoryIDs: Set(repositories.map(\.id)))
   }
@@ -651,6 +695,24 @@ extension RepositoriesFeature.State {
       .compactMap { repositoriesByID[$0] }
       .flatMap { worktreeRows(in: $0) }
   }
+}
+
+/// The state a sidebar order is derived from. Compared before and after every action, so it holds
+/// the stored values themselves: equal arrays share their buffer and compare in constant time.
+struct WorktreeRankInputs: Equatable {
+  var repositories: IdentifiedArrayOf<Repository>
+  var repositoryRoots: [RepositoryLocation]
+  var sidebarLayout: SidebarLayout
+  var pinnedWorktreeIDs: [Worktree.ID]
+  var worktreeOrderByRepository: [Repository.ID: [Worktree.ID]]
+  var archivedWorktrees: [ArchivedWorktree]
+}
+
+/// What decides whether the Active Agents panel needs the sidebar ranks: the sidebar inputs, and
+/// whether the panel lists any agent at all.
+struct WorktreeRankTrigger: Equatable {
+  var inputs: WorktreeRankInputs
+  var hasAgents: Bool
 }
 
 struct WorktreeRowSections: Equatable {

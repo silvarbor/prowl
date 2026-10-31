@@ -17,7 +17,12 @@ struct ActiveAgentsFeature {
 
   @ObservableState
   struct State: Equatable {
+    /// Kept sorted by `sortsBefore`: sidebar rank of the entry's worktree, then tab, then pane.
+    /// Every reader (panel, keyboard navigation, island) gets the order by indexing this array.
     var entries: IdentifiedArrayOf<ActiveAgentEntry> = []
+    /// Sidebar rank of each worktree, pushed by `RepositoriesFeature` whenever the sidebar order
+    /// changes. A worktree without a rank sorts after every ranked one.
+    var worktreeRanks: [Worktree.ID: Int] = [:]
     /// Surface that currently has terminal focus, mirrored from `focusChanged` events.
     /// Used as the anchor for keyboard list navigation; not persisted.
     var focusedSurfaceID: UUID?
@@ -32,6 +37,8 @@ struct ActiveAgentsFeature {
   enum Action: Equatable {
     case agentEntryChanged(ActiveAgentEntry, autoShowPanel: Bool)
     case agentEntryRemoved(ActiveAgentEntry.ID)
+    /// The sidebar order changed: `RepositoriesFeature` sends the rank of every worktree.
+    case worktreeRanksChanged([Worktree.ID: Int])
     case entryTapped(ActiveAgentEntry.ID)
     /// Context-menu "Run Workflow ▸": parents select the entry (Repositories) and open the
     /// start sheet with this entry's pane fixed as the source (App, docs-ai 063 C2).
@@ -65,6 +72,7 @@ struct ActiveAgentsFeature {
       switch action {
       case .agentEntryChanged(let entry, let autoShowPanel):
         state.entries[id: entry.id] = entry
+        state.sortEntries()
         if state.isIslandRosterExpanded {
           state.islandNavigation.reconcile(entries: state.entries)
         }
@@ -79,6 +87,15 @@ struct ActiveAgentsFeature {
           state.isIslandRosterExpanded = false
           state.islandNavigation = .init()
         } else if state.isIslandRosterExpanded {
+          state.islandNavigation.reconcile(entries: state.entries)
+        }
+        return .none
+
+      case .worktreeRanksChanged(let ranks):
+        guard state.worktreeRanks != ranks else { return .none }
+        state.worktreeRanks = ranks
+        state.sortEntries()
+        if state.isIslandRosterExpanded {
           state.islandNavigation.reconcile(entries: state.entries)
         }
         return .none
@@ -242,6 +259,26 @@ extension ActiveAgentsFeature.Action {
 }
 
 extension ActiveAgentsFeature.State {
+  /// Orders `lhs` before `rhs` by the sidebar rank of its worktree, then tab position, then pane.
+  /// Entries that tie keep their relative order.
+  func sortsBefore(_ lhs: ActiveAgentEntry, _ rhs: ActiveAgentEntry) -> Bool {
+    let lhsRank = worktreeRanks[lhs.worktreeID] ?? .max
+    let rhsRank = worktreeRanks[rhs.worktreeID] ?? .max
+    if lhsRank != rhsRank {
+      return lhsRank < rhsRank
+    }
+    if lhs.tabIndex != rhs.tabIndex {
+      return lhs.tabIndex < rhs.tabIndex
+    }
+    return lhs.paneIndex < rhs.paneIndex
+  }
+
+  mutating func sortEntries() {
+    let isSorted = zip(entries, entries.dropFirst()).allSatisfy { !sortsBefore($1, $0) }
+    guard !isSorted else { return }
+    entries.sort(by: sortsBefore)
+  }
+
   var islandAttentionEntries: [ActiveAgentEntry] {
     entries.filter { $0.displayState == .blocked || $0.displayState == .done }
       .sorted { lhs, rhs in

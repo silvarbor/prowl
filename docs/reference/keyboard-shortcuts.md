@@ -42,8 +42,8 @@ Symbols: **⌘** Command · **⇧** Shift · **⌥** Option · **⌃** Control �
 | Toggle Left Sidebar | ⌘⌃S | `toggle_left_sidebar` | yes |
 | Toggle Active Agents Panel | ⌘⌥P | `toggle_active_agents_panel` | yes |
 | Toggle Agent Island hot window | Unassigned | `toggle_agent_island` | yes |
-| Select Next Agent (in panel) | ⌥⌃↓ | `select_next_active_agent` | yes |
-| Select Previous Agent (in panel) | ⌥⌃↑ | `select_previous_active_agent` | yes |
+| Select Next Agent (in panel, sidebar order) | ⌥⌃↓ | `select_next_active_agent` | yes |
+| Select Previous Agent (in panel, sidebar order) | ⌥⌃↑ | `select_previous_active_agent` | yes |
 | Jump to Latest Unread | ⌘⌥U | `jump_to_latest_unread` | yes |
 | Show Diff | ⌘⇧Y | `show_diff` | yes |
 | Show Outgoing Changes | ⌘⌥⇧Y | `outgoing_changes` | yes |

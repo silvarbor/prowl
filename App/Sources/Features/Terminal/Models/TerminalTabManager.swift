@@ -12,6 +12,9 @@ final class TerminalTabManager {
       if tabs.count < oldValue.count {
         pruneTitleCoalescingState()
       }
+      if tabs.count != oldValue.count || !zip(tabs, oldValue).allSatisfy({ $0.id == $1.id }) {
+        onTabOrderChanged?()
+      }
       guard let editingTabID, !tabs.contains(where: { $0.id == editingTabID }) else { return }
       self.editingTabID = nil
     }
@@ -39,6 +42,8 @@ final class TerminalTabManager {
   @ObservationIgnored private var pendingTitleFlushTask: Task<Void, Never>?
   @ObservationIgnored private var scheduledPendingTitleFlushDate: Date?
   @ObservationIgnored var onCoalescedTitlesFlushed: (([TerminalTabID]) -> Void)?
+  /// Called after `tabs` gained, lost, or reordered a tab, never for a write to one tab's fields.
+  @ObservationIgnored var onTabOrderChanged: (() -> Void)?
 
   init(titleFlushClock: any Clock<Duration> = ContinuousClock()) {
     self.titleFlushClock = titleFlushClock
