@@ -296,6 +296,41 @@ struct WorktreeTerminalStateProgramStatusTests {
     #expect(codex.state.surfaceAgentStates[codex.surfaceID]?.displayState == .idle)
   }
 
+  @Test(arguments: [
+    (DetectedAgent.amp, "amp", "amp"),
+    (.antigravity, "agy", "antigravity"),
+    (.devin, "devin", "devin"),
+    (.droid, "droid", "droid"),
+    (.grok, "grok", "grok-build"),
+  ])
+  func productionTableVerifiesScreenOnlyProducer(agent: DetectedAgent, executable: String, app: String) async {
+    let probe = Probe()
+    let fixture = makeFixture(support: nil, probe: probe)
+    probe.job = ForegroundJob(
+      processGroupID: getpid(),
+      processes: [
+        ForegroundProcess(
+          pid: getpid(), parentProcessID: getppid(), name: executable, argv0: executable, cmdline: executable)
+      ])
+    fixture.state.lastAgentScreenScanBySurface[fixture.surfaceID] = WorktreeTerminalState.AgentScreenScan(
+      agent: agent, text: "", detection: AgentScreenDetection(state: .idle, reason: .legacyDetector))
+    #expect(await detect(fixture))
+    #expect(fixture.state.surfaceAgentStates[fixture.surfaceID]?.detectedAgent == agent)
+
+    fixture.state.handleProgramStatus(report(.working, app: app), surfaceID: fixture.surfaceID)
+
+    let pane = fixture.state.surfaceAgentStates[fixture.surfaceID]
+    #expect(pane?.state == .working)
+    #expect(pane?.decision?.reason.identifier == "osc.working")
+    #expect(fixture.state.agentDetectionCoordinators[fixture.surfaceID]?.isDelegated == true)
+    #expect(fixture.state.nextScheduleAfterTick(surfaceID: fixture.surfaceID, hasAgent: true) == .delegated)
+
+    fixture.state.handleProgramStatus(report(.blocked, app: app, kind: .permission), surfaceID: fixture.surfaceID)
+    #expect(fixture.state.surfaceAgentStates[fixture.surfaceID]?.state == .blocked)
+    #expect(
+      fixture.state.surfaceAgentStates[fixture.surfaceID]?.decision?.reason.identifier == "osc.blocked.permission")
+  }
+
   @Test func withdrawalPublishesNothingUntilAnObserveThatStartedAfterIt() async {
     let probe = Probe()
     let fixture = makeFixture(probe: probe)
@@ -786,12 +821,13 @@ struct WorktreeTerminalStateProgramStatusTests {
     var iterator = calls.stream.makeAsyncIterator()
     fixture.state.wakeAgentDetection(for: fixture.surface, tabId: fixture.tabID)
     _ = await iterator.next()
-    // The loop is now asleep on the warm interval (2 s); a wake must end that sleep.
-    let clock = ContinuousClock()
-    let start = clock.now
+    // The loop goes to sleep on the warm interval (2 s); a wake must end that sleep. The
+    // check is on the sleeper, not on elapsed time: a loaded host can delay the loop.
+    await waitUntil { fixture.state.agentDetectionSleepersBySurface[fixture.surfaceID] != nil }
+    let sleeper = fixture.state.agentDetectionSleepersBySurface[fixture.surfaceID]?.task
     fixture.state.wakeAgentDetection(for: fixture.surface, tabId: fixture.tabID)
+    #expect(sleeper?.isCancelled == true)
     _ = await iterator.next()
-    #expect(clock.now - start < .seconds(1))
     fixture.state.cleanupAllAgentDetectionState()
   }
 
@@ -800,7 +836,7 @@ struct WorktreeTerminalStateProgramStatusTests {
     let fixture = makeFixture(probe: probe)
     let id = fixture.surfaceID
     let old = Task { await fixture.state.sleepAgentDetection(forSurfaceID: id, token: 1, interval: .seconds(30)) }
-    while fixture.state.agentDetectionSleepersBySurface[id] == nil { await Task.yield() }
+    await waitUntil { fixture.state.agentDetectionSleepersBySurface[id] != nil }
     // The surface was closed and restored: a new loop owns the slot now.
     let newer = Task<Void, any Error> { try await Task.sleep(for: .seconds(30)) }
     fixture.state.agentDetectionSleepersBySurface[id] = WorktreeTerminalState.AgentDetectionSleeper(

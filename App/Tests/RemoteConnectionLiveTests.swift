@@ -28,7 +28,7 @@ struct RemoteConnectionLiveTests {
     let first = try #require(await owner.latest)
     #expect(first.outcome == .complete, "\(first.outcome)")
     #expect(first.report.map { !$0.bootID.isEmpty } == true)
-    // The second run reuses the master.
+    // The second run reuses the shared connection.
     await owner.requestRefresh()
     await owner.waitUntilIdle()
     let second = try #require(await owner.latest)

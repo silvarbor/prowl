@@ -55,6 +55,11 @@ enum CommandIconMap {
     "omp": TabIconSource(systemSymbol: "sparkle", assetName: "OMP"),
     "oh-my-pi": TabIconSource(systemSymbol: "sparkle", assetName: "OMP"),
     "pi": TabIconSource(systemSymbol: "sparkle", assetName: "Pi"),
+    "trae": TabIconSource(systemSymbol: "sparkle", assetName: "Trae"),
+    "trae-agent": TabIconSource(systemSymbol: "sparkle", assetName: "Trae"),
+    "trae-cli": TabIconSource(systemSymbol: "sparkle", assetName: "Trae"),
+    "traecli": TabIconSource(systemSymbol: "sparkle", assetName: "Trae"),
+    "traex": TabIconSource(systemSymbol: "sparkle", assetName: "Trae"),
 
     // Editors / IDEs / pagers
     "vim": TabIconSource(systemSymbol: "pencil.and.scribble", assetName: "Vim"),

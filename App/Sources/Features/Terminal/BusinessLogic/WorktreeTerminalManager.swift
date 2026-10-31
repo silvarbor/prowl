@@ -36,6 +36,7 @@ final class WorktreeTerminalManager {
   private var notificationsEnabled = true
   private var commandFinishedNotificationEnabled = true
   private var commandFinishedNotificationThreshold = 10
+  private var remoteAgentDetectionConsent: RemoteAgentDetectionConsent = .undecided
   private var preferredFontSize: Float32?
   private var lastNotificationIndicatorCount: Int?
   private var eventContinuation: AsyncStream<TerminalClient.Event>.Continuation?
@@ -92,6 +93,7 @@ final class WorktreeTerminalManager {
     self.codexVersionQuery = codexVersionQuery
     self.hookResourcesProvider = hookResourcesProvider
     self.forwardingRecordBaseDirectory = forwardingRecordBaseDirectory
+    configureDispatchEvidence()
     // A remembered size equal to the config's size means "follow the config".
     // Builds that read the config size as 0 saved such sizes, so clear them here
     // and send the cleared value to Settings.
@@ -122,6 +124,9 @@ final class WorktreeTerminalManager {
     if handleSearchCommand(command) {
       return
     }
+    if handleSettingsCommand(command) {
+      return
+    }
     handleManagementCommand(command)
   }
 
@@ -131,13 +136,21 @@ final class WorktreeTerminalManager {
     _ request: AgentProfileLaunchRequest,
     in worktree: Worktree
   ) -> Result<LaunchedSurface, AgentProfileLaunchError> {
-    state(for: worktree).launchAgentProfile(request)
+    if let reason = worktree.availability(of: .profileLaunch).unavailableReason {
+      return .failure(.unavailable(reason))
+    }
+    return state(for: worktree).launchAgentProfile(request)
   }
 
   func prepareAgentProfileLaunch(
     _ request: AgentProfileLaunchRequest,
     in worktree: Worktree
   ) async -> Result<PreparedAgentProfileLaunch, AgentProfileLaunchError> {
+    // Every launch path (Agents menu, palette, CLI, workflows) converges here;
+    // the check runs before a terminal state exists for the target.
+    if let reason = worktree.availability(of: .profileLaunch).unavailableReason {
+      return .failure(.unavailable(reason))
+    }
     let terminalState = state(for: worktree)
     guard terminalState.provisionAgentProfileHome(for: request.plan) else {
       return .failure(.homeProvisioningFailed)
@@ -488,16 +501,40 @@ final class WorktreeTerminalManager {
     return true
   }
 
+  /// Settings the app pushes to every terminal state.
+  private func handleSettingsCommand(_ command: TerminalClient.Command) -> Bool {
+    switch command {
+    case .setNotificationsEnabled(let enabled):
+      setNotificationsEnabled(enabled)
+    case .setCommandFinishedNotification(let enabled, let threshold):
+      setCommandFinishedNotification(enabled: enabled, threshold: threshold)
+    case .setRemoteAgentDetection(let consent):
+      remoteAgentDetectionConsent = consent
+      for state in states.values {
+        state.setRemoteAgentDetectionConsent(consent)
+      }
+    default:
+      return false
+    }
+    return true
+  }
+
   private func handleManagementCommand(_ command: TerminalClient.Command) {
     switch command {
     case .prune(let ids):
       prune(keeping: ids)
     case .prunePreservingRepositories(let ids, let repositoryIDs):
       prune(keeping: ids, preservingRepositoryIDs: repositoryIDs)
-    case .setNotificationsEnabled(let enabled):
-      setNotificationsEnabled(enabled)
-    case .setCommandFinishedNotification(let enabled, let threshold):
-      setCommandFinishedNotification(enabled: enabled, threshold: threshold)
+    case .discardSavedLayout(let repositoryID):
+      // The repository's own worktree has its ID. A linked worktree is found by the
+      // repository that its saved layout names.
+      let discarded = pendingRemoteLayouts.filter { id, layout in
+        id == repositoryID || layout.repositoryID == repositoryID
+      }.keys
+      for id in discarded {
+        pendingRemoteLayouts.removeValue(forKey: id)
+        states[id]?.pendingLayoutSnapshot = nil
+      }
     case .setCanvasMode(let enabled):
       if enabled {
         terminalLogger.info(
@@ -577,7 +614,7 @@ final class WorktreeTerminalManager {
   @discardableResult
   func recordAgentNativeHook(_ input: AgentNativeHookInput, caller: CallerPane) -> Bool {
     guard containsSurface(caller.surfaceID) else { return false }
-    refreshEvidenceEpoch(surfaceID: caller.surfaceID)
+    let evidence = refreshEvidenceEpoch(surfaceID: caller.surfaceID)
     switch agentObservationStore.recordManagedHook(
       input,
       callerAncestry: caller.processAncestry,
@@ -586,6 +623,10 @@ final class WorktreeTerminalManager {
     case .rejected:
       return false
     case .pending:
+      terminalLogger.debug(
+        "Managed hook deferred runtime=\(input.runtime.rawValue) pane=\(caller.surfaceID) "
+          + "hookSession=\(input.signal.sessionID) detectedSession=\(evidence.sessionID ?? "unknown")"
+      )
       return true
     case .accepted(let signal, let evidenceEpoch):
       noteDispatchEvidence(signal, surfaceID: caller.surfaceID, evidenceEpoch: evidenceEpoch)
@@ -602,12 +643,13 @@ final class WorktreeTerminalManager {
     let evidence = currentAgentEvidence(surfaceID: surfaceID)
     // Managed hooks belong to a local launch; an agent on another origin retires them
     // with the rest of the local evidence.
-    if evidence.isRemote { revokeManagedHook(surfaceID: surfaceID, state: nil) }
+    if evidence.isRemote { revokeManagedHook(surfaceID: surfaceID, state: nil, invalidatingEvidence: true) }
     handleEvidenceEpochUpdate(
       agentObservationStore.updateEvidenceEpoch(
         surfaceID: surfaceID,
         processGeneration: evidence.generation,
-        sessionID: evidence.sessionID
+        sessionID: evidence.sessionID,
+        isRemote: evidence.isRemote
       ),
       surfaceID: surfaceID
     )
@@ -622,10 +664,19 @@ final class WorktreeTerminalManager {
       guard let epoch = agentObservationStore.currentEvidenceEpoch(surfaceID: surfaceID) else {
         continue
       }
-      noteDispatchEvidence(signal, surfaceID: surfaceID, evidenceEpoch: epoch)
+      noteDispatchEvidence(signal, surfaceID: surfaceID, evidenceEpoch: epoch, observedAt: signal.timestamp)
     }
     for record in update.revokedForwardingRecords {
       retireForwardingRecord(record)
+    }
+  }
+
+  private func configureDispatchEvidence() {
+    agentObservationStore.onEvidenceInvalidated = { [weak self] surfaceID, epoch in
+      self?.agentDispatchStore.invalidateEvidence(surfaceID: surfaceID, evidenceEpoch: epoch)
+    }
+    agentDispatchStore.refreshEvidence = { [weak self] surfaceID in
+      _ = self?.refreshEvidenceEpoch(surfaceID: surfaceID)
     }
   }
 
@@ -636,26 +687,30 @@ final class WorktreeTerminalManager {
   private func noteDispatchEvidence(
     _ signal: AgentSignal,
     surfaceID: UUID,
-    evidenceEpoch: UUID
+    evidenceEpoch: UUID,
+    observedAt: Date? = nil
   ) {
     switch signal.kind {
     case .turnEnded:
       agentDispatchStore.noteTerminalEvidence(
         surfaceID: surfaceID,
         evidenceEpoch: evidenceEpoch,
-        evidence: .turnEnded
+        evidence: .turnEnded,
+        observedAt: observedAt
       )
     case .needsInput:
       agentDispatchStore.noteTerminalEvidence(
         surfaceID: surfaceID,
         evidenceEpoch: evidenceEpoch,
-        evidence: .needsInput
+        evidence: .needsInput,
+        observedAt: observedAt
       )
     case .sessionEnd:
       agentDispatchStore.noteTerminalEvidence(
         surfaceID: surfaceID,
         evidenceEpoch: evidenceEpoch,
-        evidence: .sessionEnd
+        evidence: .sessionEnd,
+        observedAt: observedAt
       )
     case .sessionStart, .progress:
       agentDispatchStore.noteActivity(surfaceID: surfaceID, evidenceEpoch: evidenceEpoch)
@@ -760,6 +815,10 @@ final class WorktreeTerminalManager {
     }
     guard snapshot.record.state == .pending else {
       throw AgentDispatchStoreError.alreadyTerminal
+    }
+    // Starting an epoch retires the pane's evidence, so reject a second assignment first.
+    guard agentDispatchStore.pendingSnapshot(surfaceID: surfaceID) == nil else {
+      throw AgentDispatchStoreError.surfacePending
     }
     let evidenceEpoch: UUID
     if agentObservationStore.hasManagedHook(surfaceID: surfaceID) {
@@ -888,6 +947,10 @@ final class WorktreeTerminalManager {
     try agentDispatchStore.observe(dispatchID: dispatchID)
   }
 
+  func revalidateAgentDispatch(_ event: AgentDispatchObservation) -> AgentDispatchObservation {
+    agentDispatchStore.revalidate(event)
+  }
+
   func agentDispatchSubscriberCount(dispatchID: String) -> Int {
     agentDispatchStore.subscriberCount(dispatchID: dispatchID)
   }
@@ -942,6 +1005,8 @@ final class WorktreeTerminalManager {
       enabled: commandFinishedNotificationEnabled,
       threshold: commandFinishedNotificationThreshold
     )
+    state.setRemoteAgentDetectionConsent(remoteAgentDetectionConsent)
+    wireRemoteCallbacks(of: state, worktree: worktree)
     state.undoCloseTimeout = closeUndoStack.timeout
     state.onCloseRecorded = { [weak self] record in
       guard let self else { return }
@@ -1015,6 +1080,7 @@ final class WorktreeTerminalManager {
       self?.emit(
         .customCommandSucceeded(worktreeID: worktree.id, name: name, durationMs: durationMs))
     }
+    state.pendingLayoutSnapshot = pendingRemoteLayouts[worktree.id]
     states[worktree.id] = state
     terminalLogger.info("Created terminal state for worktree \(worktree.id)")
     return state
@@ -1052,6 +1118,24 @@ final class WorktreeTerminalManager {
     }
   }
 
+  /// The remote callbacks of a worktree's terminal state: the L0 consent question
+  /// (docs-ai 082) and a remote tab that did not start (084 C3b).
+  private func wireRemoteCallbacks(of state: WorktreeTerminalState, worktree: Worktree) {
+    state.onRemoteAgentConsentNeeded = { [weak self] surfaceID, destination in
+      self?.emit(
+        .remoteAgentConsentNeeded(worktreeID: worktree.id, surfaceID: surfaceID, destination: destination))
+    }
+    state.onRemoteTerminalFailed = { [weak self] message in
+      self?.emit(.remoteTerminalFailed(worktreeID: worktree.id, message: message))
+    }
+    // A remote pane started: the folder's live tabs replace its saved layout from now on,
+    // in the save and for the next empty open.
+    state.onRemoteLaunchStarted = { [weak self, weak state] in
+      self?.pendingRemoteLayouts.removeValue(forKey: worktree.id)
+      state?.pendingLayoutSnapshot = nil
+    }
+  }
+
   @discardableResult
   private func createTabAsync(
     in worktree: Worktree,
@@ -1067,7 +1151,7 @@ final class WorktreeTerminalManager {
     // Skip setup injection when auto-close is requested so the setup script's
     // own exit code cannot trigger the close before the user's command runs.
     if !autoCloseOnSuccess, state.needsSetupScript() {
-      @SharedReader(.repositorySettings(worktree.repositoryRootURL))
+      @SharedReader(.repositorySettings(worktree.repositoryLocation))
       var settings = RepositorySettings.default
       setupScript = settings.setupScript
     } else {
@@ -1209,8 +1293,15 @@ final class WorktreeTerminalManager {
     }
   }
 
-  private func revokeManagedHook(surfaceID: UUID, state: WorktreeTerminalState?) {
-    guard let record = agentObservationStore.revokeManagedHook(surfaceID: surfaceID) else { return }
+  private func revokeManagedHook(
+    surfaceID: UUID,
+    state: WorktreeTerminalState?,
+    invalidatingEvidence: Bool = false
+  ) {
+    guard
+      let record = agentObservationStore.revokeManagedHook(
+        surfaceID: surfaceID, invalidatingEvidence: invalidatingEvidence)
+    else { return }
     if state?.isRetainedForUndo(surfaceID) == true {
       deferredForwardingRecords[surfaceID] = record
     } else {
@@ -1219,10 +1310,13 @@ final class WorktreeTerminalManager {
   }
 
   func prune(keeping worktreeIDs: Set<Worktree.ID>, preservingRepositoryIDs: Set<Repository.ID> = []) {
-    let failedRoots = Set(preservingRepositoryIDs.map { URL(fileURLWithPath: $0).standardizedFileURL })
+    // IDs are compared without trailing slashes: a failed repository's ID comes
+    // from its entry path, which lacks the slash that a path URL gains while the
+    // directory exists.
+    let failedIDs = Set(preservingRepositoryIDs.map(PathPolicy.trimmingTrailingSlashes))
     // A failed load is not evidence that its terminal sessions were removed.
     let preservedIDs = states.compactMap { id, state in
-      failedRoots.contains(state.repositoryRootURL.standardizedFileURL) ? id : nil
+      failedIDs.contains(PathPolicy.trimmingTrailingSlashes(state.repositoryID)) ? id : nil
     }
     let worktreeIDs = worktreeIDs.union(preservedIDs)
     var removed: [WorktreeTerminalState] = []
@@ -1232,6 +1326,9 @@ final class WorktreeTerminalManager {
       removedIDs.insert(id)
     }
     closeUndoStack.discard { removedIDs.contains($0) }
+    // A removed remote folder's saved layout goes with it. One that never loaded has no state
+    // here (its host is unreachable, or remote folders are off), so it is kept.
+    for id in removedIDs { pendingRemoteLayouts.removeValue(forKey: id) }
     for state in removed {
       state.closeAllSurfaces()
     }
@@ -1527,13 +1624,21 @@ final class WorktreeTerminalManager {
     }
   }
 
+  /// Saved remote folder layouts that no remote pane has replaced yet (docs-ai 084 C5).
+  private var pendingRemoteLayouts: [Worktree.ID: TerminalLayoutSnapshotPayload.SnapshotWorktree] = [:]
+
   private func makeLayoutSnapshotPayload() -> TerminalLayoutSnapshotPayload? {
-    let activeStates = activeWorktreeStates.sorted { $0.worktreeID < $1.worktreeID }
+    // A remote folder's saved layout that no remote pane has replaced yet (it never opened,
+    // its host never answered, or its restored panes still stage) is kept as it was, over
+    // its unstarted tabs (docs-ai 084 C5).
+    let pending = pendingRemoteLayouts.sorted { $0.key < $1.key }.map(\.value)
+    let activeStates = activeWorktreeStates.filter { pendingRemoteLayouts[$0.worktreeID] == nil }
+      .sorted { $0.worktreeID < $1.worktreeID }
     terminalLogger.info(
       "[LayoutRestore] makePayload: activeWorktreeStates=\(activeStates.count)"
-        + " totalStates=\(states.count)"
+        + " totalStates=\(states.count) pendingRemote=\(pending.count)"
     )
-    guard !activeStates.isEmpty else {
+    guard !activeStates.isEmpty || !pending.isEmpty else {
       return nil
     }
 
@@ -1548,8 +1653,10 @@ final class WorktreeTerminalManager {
       }
       snapshotWorktrees.append(snapshot)
     }
+    snapshotWorktrees.append(contentsOf: pending)
+    // The selection must name a saved worktree.
     return TerminalLayoutSnapshotPayload(
-      selectedWorktreeID: selectedWorktreeID,
+      selectedWorktreeID: snapshotWorktrees.contains { $0.worktreeID == selectedWorktreeID } ? selectedWorktreeID : nil,
       worktrees: snapshotWorktrees
     )
   }
@@ -1570,6 +1677,18 @@ final class WorktreeTerminalManager {
     var skippedWorktreeIDs: Set<Worktree.ID> = []
 
     for snapshot in payload.worktrees {
+      // A remote folder restores when its terminals first open (`pendingLayoutSnapshot`), so
+      // launch opens no burst of connections and an unreachable host never drops the local
+      // layout. Until a remote pane starts, its saved layout stays in the save (docs-ai 084 C5).
+      if RepositoryLocation.hasRemoteForm(snapshot.worktreeID) {
+        pendingRemoteLayouts[snapshot.worktreeID] = snapshot
+        if let worktree = worktreeByID[snapshot.worktreeID] {
+          state(for: worktree).pendingLayoutSnapshot = snapshot
+        } else {
+          skippedWorktreeIDs.insert(snapshot.worktreeID)
+        }
+        continue
+      }
       guard let worktree = worktreeByID[snapshot.worktreeID] else {
         terminalLogger.warning(
           "[LayoutRestore] apply: worktreeID \(snapshot.worktreeID) not found in available worktrees"
@@ -1623,6 +1742,7 @@ final class WorktreeTerminalManager {
       self.hookResourcesProvider = { nil }
       self.forwardingRecordBaseDirectory = ProwlPaths.agentHookForwardingDirectory
       self.closeUndoStack = TerminalCloseUndoStack(timeout: .zero)
+      configureDispatchEvidence()
     }
   #endif
 }

@@ -19,6 +19,7 @@
 Devin Profiles support launch roles and explicit delivery through the same workflow
 protocol. Use runtime token `devin` when a role specifically requires Devin.
 Antigravity Profiles work the same way under runtime token `antigravity`.
+TraeCode CLI Profiles work the same way under runtime token `trae`.
 
 ## What it is
 
@@ -92,6 +93,12 @@ in a right split beside the initiating agent, in the same tab, and reuses it acr
 rounds. The initiating agent follows the returned `self_initiated.line` to deliver
 its scope, plan, and verification brief. Local changes and existing PRs are both
 supported. `focus` adds an optional single-line review instruction.
+
+If caller identity is unavailable, an independently selected `--pane <UUID>` can
+serve as the source. There is no `self_initiated` task in that case: if you selected
+your own pane, end your turn so Prowl can deliver the first message. Follow the
+task's token-prefixed read and delivery commands. Later messages return to that
+same bound pane. See [the CLI fallback procedure](cli.md#workflow-fallback-when-caller-identity-is-unavailable).
 
 Each round includes a reviewer report and main's disposition. Review focuses on
 material correctness, plan gaps, architecture, and realistic UX regressions. Every

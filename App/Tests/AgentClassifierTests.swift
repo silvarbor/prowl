@@ -37,6 +37,29 @@ struct AgentClassifierTests {
     #expect(identifyAgent(processName: "antigravity_cli") == .antigravity)
     // The desktop IDE ships an `antigravity` launcher; only the CLI entrypoints map.
     #expect(identifyAgent(processName: "antigravity") == nil)
+    #expect(identifyAgent(processName: "traecli") == .trae)
+    #expect(identifyAgent(processName: "traex") == .trae)
+    #expect(identifyAgent(processName: "trae-cli") == .trae)
+    #expect(identifyAgent(processName: "trae-agent") == .trae)
+    // The desktop IDE ships a `trae` launcher; only the CLI entrypoints map.
+    #expect(identifyAgent(processName: "trae") == nil)
+  }
+
+  @Test func ignoresWrappedRuntimeWithTraeBinaryToken() {
+    // traecli is a native executable; its name in a wrapper's argv is a quoted
+    // prompt or install path, not the TUI. Only argv0/name evidence counts.
+    for cmdline in [
+      "node /tmp/app.js --model traecli",
+      "bun /tmp/script.ts traecli",
+    ] {
+      let job = ForegroundJob(
+        processGroupID: 42,
+        processes: [
+          ForegroundProcess(pid: 100, name: "node", argv0: "node", cmdline: cmdline)
+        ]
+      )
+      #expect(identifyAgentInJob(job) == nil)
+    }
   }
 
   @Test func identifiesGrokAgentAliasCommandLines() throws {

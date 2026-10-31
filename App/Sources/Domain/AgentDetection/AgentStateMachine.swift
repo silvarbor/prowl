@@ -80,6 +80,27 @@ nonisolated struct AgentStateMachine: Sendable {
   private var hasLogProvider = false
   private var screen = AgentScreenDetection(state: .unknown, reason: .noRuleMatched)
   private var stableScreen: AgentRawState = .unknown
+  /// Set by the coordinator for agents whose screen verdicts need a confirmed settle
+  /// before they may end a working turn (`DetectedAgent.requiresConfirmedIdleScreen`).
+  /// Only a lone Idle verdict over a Working stable screen is held: a screen-heuristic
+  /// agent repaints its live region on its own clock, so that one frame can be a
+  /// repaint gap rather than a settled turn, and no other evidence exists to reconcile
+  /// it against.
+  var requiresConfirmedIdleScreen = false
+  /// How long a lone Idle verdict must keep arriving before it may end a screen-only
+  /// agent's turn. Counting observations is not enough: a repaint gap is published as
+  /// several Idle frames, and repeated reads of the *same* frame arrive back to back —
+  /// an `agents read` on a pane polls it outside the detection cadence, so two Idle
+  /// reads a millisecond apart would confirm a turn the TUI is still drawing. traecli
+  /// 0.209.1 was observed dropping its running footer for as long as a second while it
+  /// repaints, so the window is set above that gap and below a delay a user would
+  /// notice at a real turn's end.
+  var confirmedIdleWindow: TimeInterval = 2
+  /// A screen Idle verdict held for the confirmation described above. Any readable
+  /// verdict that is not Idle releases the hold (`unknown` renders no verdict, so it
+  /// neither confirms nor cancels); a held Idle verdict is applied once it has kept
+  /// arriving for `confirmedIdleWindow`.
+  private var heldIdleSince: TimeInterval?
   private var suppressedScreen: AgentScreenDetection?
   private var screenContentID: Int?
   private var suppressedContentID: Int?
@@ -95,7 +116,7 @@ nonisolated struct AgentStateMachine: Sendable {
   mutating func receive(_ event: AgentDetectionEvent, now: TimeInterval) -> AgentStateDecision {
     switch event {
     case .screen(let detection, let contentID):
-      observeScreen(detection, contentID: contentID)
+      observeScreen(detection, contentID: contentID, now: now)
     case .native(let snapshot):
       observeNative(snapshot)
     case .inventory(let sessions):
@@ -195,10 +216,30 @@ nonisolated struct AgentStateMachine: Sendable {
     }
   }
 
-  private mutating func observeScreen(_ detection: AgentScreenDetection, contentID: Int?) {
+  private mutating func observeScreen(
+    _ detection: AgentScreenDetection,
+    contentID: Int?,
+    now: TimeInterval
+  ) {
     screen = detection
     screenContentID = contentID
-    if detection.state != .unknown { stableScreen = detection.state }
+    if detection.state != .unknown {
+      if requiresConfirmedIdleScreen, detection.state == .idle, stableScreen == .working {
+        // Hold until the Idle verdict has *kept* arriving for the window: two reads
+        // of one frame, or a burst of Idle frames from a repaint gap, are not proof
+        // that the redraw finished.
+        let since = heldIdleSince ?? now
+        if now - since >= confirmedIdleWindow {
+          heldIdleSince = nil
+          stableScreen = .idle
+        } else {
+          heldIdleSince = since
+        }
+      } else {
+        heldIdleSince = nil
+        stableScreen = detection.state
+      }
+    }
     if suppressedScreen != detection || suppressedContentID != contentID { suppressedScreen = nil }
   }
 

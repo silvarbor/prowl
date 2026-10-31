@@ -41,13 +41,14 @@ struct MirrorRelaySmokeTests {
     process.terminationHandler = { _ in ended.signal() }
     try process.run()
     defer { if process.isRunning { process.terminate() } }
+    // Generous caps: both waits end on the event, and a loaded host can take seconds to launch.
     var readiness = pollfd(fd: listener, events: Int16(POLLIN), revents: 0)
-    try #require(Darwin.poll(&readiness, 1, 5000) > 0)
+    try #require(Darwin.poll(&readiness, 1, 30_000) > 0)
     let peer = Darwin.accept(listener, nil, nil)
     try #require(peer >= 0)
     defer { Darwin.close(peer) }
     try input.fileHandleForWriting.close()
-    try #require(ended.wait(timeout: .now() + 5) == .success)
+    try #require(ended.wait(timeout: .now() + 30) == .success)
     #expect(process.terminationStatus == 0)
   }
 }

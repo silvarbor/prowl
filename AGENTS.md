@@ -1,4 +1,4 @@
-This fork is primarily for onevcat-specific customizations; before doing any release work, read `docs-ai/001-fork-bootstrap-and-release-pipeline/release-runbook.md` (and the upstream ledger `docs-ai/017-upstream-sync-process/upstream-ledger.md`) for fork publishing guidance. Fork history and design decisions are recorded under `docs-ai/` (see `docs-ai/README.md`).
+This fork is primarily for onevcat-specific customizations; before doing any release work, read `docs-ai/001-fork-bootstrap-and-release-pipeline/release-runbook.md` for fork publishing guidance. Fork history and design decisions are recorded under `docs-ai/` (see `docs-ai/README.md`).
 
 ## Build Commands
 
@@ -175,7 +175,7 @@ Reducer ← .terminalEvent(Event) ← AsyncStream<Event>
 - Automatically commit your changes and your changes only. Do not use `git add .`
 - Before you go on your task, check the current git branch name, if it's something generic like an animal name, name it accordingly. Do not do this for main branch
 - After implementing an execplan, always submit a PR if you're not in the main branch
-- PRs must target `onevcat/Prowl` (this fork), never the upstream `supabitapp/supacode`, unless explicitly requested.
+- PRs must target `onevcat/Prowl`.
 - Fork releases must be notarized. Never publish non-notarized releases (`ENABLE_NOTARIZATION=0` is forbidden).
 
 ## Submodules

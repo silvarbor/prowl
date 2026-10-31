@@ -19,7 +19,7 @@ ls "$prowl_docs/components/"   # cli.md, agent-detection.md, workflows.md, …
 
 Other `docs/components/*.md` references below live in that same folder.
 
-This skill ships inside the app: `prowl skills install prowl-cli` links it into every detected agent skill folder (`~/.claude/skills`, `~/.codex/skills`, `~/.agents/skills`, `~/.config/devin/skills`, `~/.gemini/antigravity-cli/skills` — whichever parent directories exist; add `--target <claude|codex|agents|devin|antigravity>` to pick or create specific ones) so it stays current across app updates. `prowl skills list` shows per-target status; the command is local and needs no running app.
+This skill ships inside the app: `prowl skills install prowl-cli` links it into every detected agent skill folder (`~/.claude/skills`, `~/.codex/skills`, `~/.agents/skills`, `~/.config/devin/skills`, `~/.gemini/antigravity-cli/skills`, `~/.trae/skills` — whichever parent directories exist; add `--target <claude|codex|agents|devin|antigravity|trae>` to pick or create specific ones) so it stays current across app updates. `prowl skills list` shows per-target status; the command is local and needs no running app.
 
 ## Who You Are
 
@@ -56,7 +56,16 @@ fi
 
 The variable is inherited, not verified: it is missing after `sudo`/`ssh`/containers and can name the wrong pane inside a tmux/screen session attached from elsewhere. A set value that matches no `pane.id` usually means `prowl` is talking to a different Prowl instance than the one hosting your pane (two apps running; see `PROWL_CLI_SOCKET` under Pitfalls). A match only proves that pane exists, not that you are running in it: trust the value only when your process ancestry reaches the pane's shell (no tmux/screen server or detached wrapper in between); under tmux/screen or a detached wrapper, identify your pane by other means — `prowl agents --json` for the pane hosting your own agent session, or a unique `pane.cwd` — and pass it explicitly. If it is unset or matches nothing, stop rather than guess: `pane.cwd` only narrows the candidates — several panes usually share one cwd — and may stand in for you only when the match is unique. Never assume the focused pane is you — `open` and `focus` move focus, and the user may be looking anywhere.
 
-Inside Codex, do not trust `PROWL_PANE_ID`. Codex 0.157+ runs the commands of a `codex` typed by hand in a shared background daemon that keeps the environment of whichever terminal last started it, so `PROWL_PANE_ID`, `PROWL_WORKTREE_PATH`, and `PROWL_ROOT_PATH` there can name another live pane or a closed one. `prowl list --json` reports `.data.caller` — the pane Prowl resolved from your `CODEX_THREAD_ID` — and omits it when your pane cannot be mapped yet (for example before your first message in that Codex session): then stop. Caller-scoped commands (`agents signal`, `agents dispatch-complete`, `workflow deliver`) resolve the same way on the server, so they need nothing from you.
+Inside Codex, do not trust `PROWL_PANE_ID`. Codex 0.157+ runs the commands of a `codex` typed by hand in a shared background daemon that keeps the environment of whichever terminal last started it, so `PROWL_PANE_ID`, `PROWL_WORKTREE_PATH`, and `PROWL_ROOT_PATH` there can name another live pane or a closed one. `prowl list --json` reports `.data.caller` — the pane Prowl resolved from your `CODEX_THREAD_ID` — and omits it when the mapping is unavailable. Do not guess your pane from focus, cwd, or a detected session entry. Caller-scoped commands such as `agents signal` and `agents dispatch-complete` resolve identity on the server; stop if that identity is unavailable.
+
+Workflows have a separate, limited fallback: start with `workflow run <id> --pane <UUID>`
+only when that source was independently selected (for example by the user or by a controller
+that created the pane). Later messages return to the run's fixed role bindings. This does
+not establish caller identity. Inspect `data.self_initiated`: follow it if present; if absent
+and the selected pane is yours, **end your turn** so Prowl can message the idle pane. Do not
+poll or hold that turn open. Use each task's exact token-prefixed `workflow read` and
+`workflow deliver` commands; they work with an unresolved caller. Use `workflow status <run-id>`
+for inspection from another pane. See the `prowl-workflow` skill for the full protocol.
 
 ## Safe Default Workflow
 
@@ -73,7 +82,7 @@ prowl focus --pane "$pane" --json
 
 Pick targets by `pane.id`, `tab.id`, `worktree.id`/`name`/`path`, and `pane.cwd`. Never trust tab titles: they are free-form and can lag or lie. For a Git worktree, `worktree.name` is the checked-out branch and stops matching after a checkout — automation should pass `worktree.id` (the path). Text `prowl list` / `prowl agents` also print short handles (`p7`, `t6`) that work in any target position for the life of the app process (`read p7`, `close t6`). UUIDs are the canonical identity of a *live* pane or tab, not a durable one: after an app restart restored tabs keep their tab UUID but panes are new surfaces with new UUIDs — never cache handles or pane UUIDs across a restart; re-run `prowl list`.
 
-For a currently active Codex or Claude Code agent, `prowl agents read p7 --json` returns an immediate semantic snapshot: `.data.agent.status`, `.data.blocker.text` when blocked, and `.data.result` — a result is trustworthy only when `.data.result.state == "complete"`.
+For a currently active Codex, Claude Code, or TraeCode CLI agent, `prowl agents read p7 --json` returns an immediate semantic snapshot: `.data.agent.status`, `.data.blocker.text` when blocked, and `.data.result` — a result is trustworthy only when `.data.result.state == "complete"`.
 
 Report an event only for the pane running the current process; `agents signal` has no target or focus fallback:
 
@@ -165,13 +174,14 @@ run="$(prowl workflow run review --role reviewer=Codex --input max_rounds=3 --js
 printf '%s\n' "$run" | jq -r '.data.id, .data.status.state, .data.self_initiated.line'
 ```
 
-A workflow with a `current` role runs from the pane you call it in (that pane becomes the
-role; `SOURCE_REQUIRED` outside a pane, `PANE_BUSY` when it already belongs to a run). Launch
+A workflow with a `current` role uses the resolved caller or an explicitly selected source
+pane (`SOURCE_REQUIRED` without either, `PANE_BUSY` when it already belongs to a run). Launch
 roles freeze a Profile before anything happens: `--role <role>=<profile name|UUID|auto>`, else
 the remembered, suggested, or Recommended one (`PROFILE_NOT_FOUND` when nothing qualifies);
-`pick` roles need `--role <role>=pN`. When the first step messages your own pane, nothing is
-typed: `.data.self_initiated.line` is the instruction to follow now, and its completion command
-delivers your output. Every step Prowl types into a pane ends with the exact command that
+`pick` roles need `--role <role>=pN`. When `.data.self_initiated.line` is present, nothing is
+typed: it is the instruction to follow now, and its completion command delivers your output.
+Without it, a selected source that is your own pane must become idle before receiving a
+message: end your turn. Every step Prowl types into a pane ends with the exact command that
 completes it — run it with the output on stdin when your work for that step is fully done:
 
 ```bash
@@ -234,7 +244,7 @@ Every `--json` response is `{ "ok", "command", "schema_version", "data": {...} }
 Key fields by command:
 
 - `list` → `.data.items[]` with `.worktree.{id,name,path,root_path,kind}`, `.tab.{id,title,selected}`, `.pane.{id,title,cwd,focused,agent}`, `.task.status` (`running`|`idle`|null).
-- `agents` → `.data.agents[]` with `.status`, `.raw_state`, `.detection_reason`, `.screen_reason`, `.type`, `.name`, `.pane.{id,focused,cwd}`, `.tab`, `.worktree`, `.project.{name,branch,path}`.
+- `agents` → `.data.agents[]` with `.status`, `.raw_state`, `.detection_reason`, `.screen_reason`, `.type`, `.name`, `.pane.{id,focused,cwd}`, `.tab`, `.worktree`, `.project.{name,branch,path}`, and `.remote.{host,correlation,confidence,freshness,state_known}` only for an agent behind the pane's `ssh` (a `stale` or `state_known: false` status is not evidence).
 - `agents read` → `.data.agent`, `.data.blocker.text`, `.data.result.{state,text}` — `pending`, `unavailable`, `missing`, `incomplete`, `too_large` carry no partial text; `pending` is returned whenever the agent is working or blocked, even if an earlier turn completed.
 - `agents signal` → `.data.pane.{id,worktree_id}`, `.data.signal.{event,source,confidence,binding,at,session_id,detail,claimed_origin}`, optional `.data.warnings[]` (`code=signal_unbound`); optional fields are omitted.
 - `agents dispatch` → `.data.target` and the new pending `.data.dispatch.{id,state,created_at}`; refusals carry `.error.details.{target,record,observation,signals}`.
@@ -254,7 +264,7 @@ Terminal text is `.data.text` (read) and `.data.capture.text` (send) — never `
 
 ## Reading Agent Output
 
-- For Codex/Claude Code, `prowl agents read` beats scraping: check `.data.agent.status`, inspect `.data.blocker.text` before answering a prompt with `send`/`key` (read and write are not atomic), and only trust `.data.result.text` when `state == "complete"`. The result belongs to the latest completed turn and is `pending` while the agent works or is blocked, so after re-prompting a pane wait for `--until changed` or idle before reading it. `--result-only` prints the raw trusted result and fails otherwise; it cannot combine with `--json`.
+- For Codex, Claude Code, or TraeCode CLI, `prowl agents read` beats scraping: check `.data.agent.status`, inspect `.data.blocker.text` before answering a prompt with `send`/`key` (read and write are not atomic), and only trust `.data.result.text` when `state == "complete"`. The result belongs to the latest completed turn and is `pending` while the agent works or is blocked, so after re-prompting a pane wait for `--until changed` or idle before reading it. `--result-only` prints the raw trusted result and fails otherwise; it cannot combine with `--json`. TraeCode CLI has no semantic result reader, so `.data.result` never reaches `complete` and `--result-only` always fails for it.
 - Prowl-launched Claude Code, Codex, Copilot, Droid, Qoder, Pi, Oh My Pi, and OpenCode
   Profiles may expose `verified_live` channels with `source=hook_<runtime>`; manually typing
   those runtimes does not. A managed hook

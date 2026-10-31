@@ -84,3 +84,33 @@ PR #824 review follow-up:
   immediately after removal instead of waiting for another Git reload. Exercise
   the full failure/removal reducer flow with a real terminal manager, including
   the last root and removal alongside healthy and still-failed roots.
+
+Issue #920 follow-up (2026-10-21):
+
+- The first version gave every Git child process the PATH where Git was found. For an
+  app started from the Dock, that is the launchd PATH (`/usr/bin:/bin:/usr/sbin:/sbin`).
+  Hooks, `git-lfs`, credential helpers, and `ssh` lost the login shell PATH that
+  worktree creation had before this entry (see a79045d00, #21). A `post-checkout`
+  hook that calls a Homebrew tool failed with exit 127.
+- Select Git from the login shell PATH first, then the process PATH, then common
+  locations. All app-owned Git and `wt` processes get the login PATH. Put the selected
+  Git's folder first only when an earlier Git on that PATH does not work, or an empty
+  or relative entry comes before it (`wt` runs bare `git`, which such an entry can
+  resolve to a `git` in the repository). A prepended folder such as `/usr/bin` also
+  shadows the user's `python3`, `ruby`, and other tools.
+  Without a login PATH, use the process PATH. Read only the last stdout line of the
+  login probe, because startup files can print (see 24027a919).
+- Callers that start `Process` directly use one shared environment
+  (`GitExecutable.processEnvironment`). The workflow context action now also inherits
+  the app environment, so Git can read `HOME` and the user's configuration.
+- Git error messages keep only the final state of carriage-return progress lines and
+  the last 20 lines of each stream, so that the hook's error is visible.
+- `reloadRepositories` no longer clears the repositories alert. App activation, the
+  worktree registry monitor, the 30-second timer, and the failure cleanup itself all
+  reload, so a failure alert closed within a second, before the user could read it.
+  Alert actions that start a reload clear the alert themselves.
+- Failed creation cleanup keeps its policy (remove the folder, keep the branch). It
+  now targets the actual destination, including a custom name or parent folder. It
+  removes the worktree only if that folder did not exist before the attempt and Git
+  registers it on the attempted branch: another creation can claim the same folder
+  between the check and `wt sw`.

@@ -199,4 +199,71 @@ struct AgentDetectionPipelineTests {
     #expect(pane.displayState == .working)
     #expect(pane.isBusy)
   }
+
+  /// TraeCode CLI 0.209.1: the running footer heads the live block directly above the
+  /// composer, with the rotating tip as its only sub-row and the tab title in the
+  /// composer's top border (captured from a live pane).
+  private static let traeWorkingScreen = """
+    ✔ Auto-reviewer approved TRAE CLI to run mkdir -p /tmp/probe this time
+
+    ◆ Almost there… (3m 12s • ↑ 13.3K tokens • esc to interrupt)
+      └ Tip: [tui.keymap] in ~/.trae/traecli.toml lets you rebind supported shortcuts.
+    ──────────────────────────────────────────────────────────────────── 排查traecli ─
+    ❯ Explain this codebase
+    ───────────────────────────────────────────────────────────────────────────────────
+      DeepSeek-V4.1-Flash (MAX) high · Context 92% left · ~/opt/Prowl · main ⛉ Auto Mode · ← for agents
+    """
+
+  /// The same pane with the running footer absent. Everything else — the composer and
+  /// its status row — is byte-identical to the working capture, so the footer is the
+  /// only evidence that separates the two verdicts.
+  private static let traeIdleScreen = """
+    ✔ Request approved for apply_patch
+
+    ◆ The doc is updated correctly on the Desktop.
+    ──────────────────────────────────────────────────────────────────── 排查traecli ─
+    ❯ Explain this codebase
+    ───────────────────────────────────────────────────────────────────────────────────
+      DeepSeek-V4.1-Flash (MAX) high · Context 92% left · ~/opt/Prowl · main ⛉ Auto Mode · ← for agents
+    """
+
+  @Test func traeIdleFrameIsConfirmedBeforeItEndsTheWorkingTurn() async throws {
+    // traecli redraws its live region on its own clock — verified on 0.209.1, which
+    // draws as slowly as once a second while a turn streams — so a poll can land on a
+    // frame whose running footer has not been painted back yet. That frame reads Idle
+    // raw, but Idle frames alone are not evidence that the turn ended: publishing the
+    // first one flipped the pane Working → Idle → Working for a single poll (and earned
+    // a spurious Done badge on an unviewed pane), and a burst of them at the poll
+    // cadence confirmed that same non-event. The verdict has to keep arriving for the
+    // confirmation window.
+    let before = try #require(await report(Self.traeWorkingScreen, agent: .trae))
+    #expect(before.fallbackState == .working)
+    #expect(before.displayState == .working)
+
+    clock.now += 0.3
+    let gap = try #require(await report(Self.traeIdleScreen, agent: .trae))
+    #expect(gap.fallbackState == .idle)
+    #expect(gap.displayState == .working)
+    #expect(gap.isBusy)
+
+    // The redraw-gap replay: Idle → Idle → Working at the 300 ms cadence, without ever
+    // publishing the intermediate Idle.
+    clock.now += 0.3
+    let secondGap = try #require(await report(Self.traeIdleScreen, agent: .trae))
+    #expect(secondGap.displayState == .working)
+    clock.now += 0.3
+    let resumed = try #require(await report(Self.traeWorkingScreen, agent: .trae))
+    #expect(resumed.displayState == .working)
+
+    // A genuine settle: the composer stays, and the Idle verdict keeps arriving past the
+    // window.
+    clock.now += 0.3
+    let settling = try #require(await report(Self.traeIdleScreen, agent: .trae))
+    #expect(settling.displayState == .working)
+    clock.now += 2
+    let settled = try #require(await report(Self.traeIdleScreen, agent: .trae))
+    #expect(settled.fallbackState == .idle)
+    #expect(settled.displayState == .idle)
+    #expect(!settled.isBusy)
+  }
 }

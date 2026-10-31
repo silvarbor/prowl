@@ -502,7 +502,7 @@ nonisolated struct HandoffStore: Sendable {
     guard let git = GitExecutableResolver.shared.cachedExecutable else { return nil }
     let process = Process()
     process.executableURL = git.url
-    process.environment = ProcessInfo.processInfo.environment.merging(git.environment) { _, selected in selected }
+    process.environment = git.processEnvironment
     process.arguments = ["-C", directory.path(percentEncoded: false)] + arguments
     let stdout = Pipe()
     process.standardOutput = stdout

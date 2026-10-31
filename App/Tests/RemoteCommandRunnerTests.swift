@@ -30,12 +30,13 @@ nonisolated struct RemoteCommandRunnerTests {
   }
 
   /// Runs `script` with `$PIDFILE` naming a file for the descendant's pid, and returns it.
+  /// The deadline also covers the shell's startup, so it leaves a loaded host time to set up.
   private func runRecordingDescendant(_ script: String) async throws -> (RemoteCommandOutcome, pid_t) {
     let file = FileManager.default.temporaryDirectory.appending(path: "prowl-runner-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: file) }
     let outcome = await runner.run(
-      URL(filePath: "/bin/sh"), ["-c", "PIDFILE='\(file.path(percentEncoded: false))'; \(script)"], Data(),
-      RemoteCommandLimits(deadline: 0.3, outputBytes: 1024))
+      URL(filePath: "/bin/sh"), ["-c", "export PIDFILE='\(file.path(percentEncoded: false))'; \(script)"], Data(),
+      RemoteCommandLimits(deadline: 3, outputBytes: 1024))
     let text = try String(contentsOf: file, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
     return (outcome, try #require(pid_t(text)))
   }
@@ -65,8 +66,9 @@ nonisolated struct RemoteCommandRunnerTests {
   @Test func readsAreAbandonedWhenADescendantLeftTheGroup() async throws {
     // The descendant outlives the run; returning while it still holds the pipes proves
     // the reads were abandoned instead of waiting for its end of file.
+    // The pid is written after `setpgrp`, so a descendant killed with the group fails the read.
     let (outcome, child) = try await runRecordingDescendant(
-      "/usr/bin/perl -e 'setpgrp(0, 0); sleep 120' & echo $! > \"$PIDFILE\"; wait")
+      "/usr/bin/perl -e 'setpgrp(0, 0); open(my $f, \">\", $ENV{PIDFILE}); print $f $$; close($f); sleep 120' & wait")
     defer { kill(child, SIGKILL) }
     #expect(outcome == .timedOut)
     #expect(!isDead(child))
@@ -90,6 +92,29 @@ nonisolated struct RemoteCommandRunnerTests {
     }
     #expect(result.exitCode == 3)
     #expect(result.errorOutput == "oops\n")
+  }
+
+  @Test func theCommandRunsInTheGivenDirectory() async throws {
+    let directory = FileManager.default.temporaryDirectory.appending(path: "prowl-runner-cwd-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let outcome = await runner.run(
+      URL(filePath: "/bin/pwd"), ["-P"], Data(), RemoteCommandLimits(),
+      workingDirectory: directory.path(percentEncoded: false))
+    guard case .exited(let result) = outcome else {
+      Issue.record("expected exit, got \(outcome)")
+      return
+    }
+    let printed = String(bytes: result.output, encoding: .utf8)?.trimmingCharacters(in: .newlines) ?? ""
+    #expect(printed.hasSuffix(directory.lastPathComponent))
+    // A directory that no longer exists falls back to the app's own.
+    let missing = await runner.run(
+      URL(filePath: "/bin/pwd"), [], Data(), RemoteCommandLimits(), workingDirectory: "/nonexistent/prowl")
+    guard case .exited(let fallback) = missing else {
+      Issue.record("expected exit, got \(missing)")
+      return
+    }
+    #expect(fallback.exitCode == 0)
   }
 
   @Test func aMissingExecutableFailsToLaunch() async {

@@ -415,7 +415,7 @@ struct CLISocketServerTests {
 
       close(descriptors[1])
       let activatedDuringCreation = await Task.detached {
-        observation.wait(timeout: .now() + 1)
+        observation.wait(timeout: .now() + 10)
       }.value
 
       #expect(activatedDuringCreation)

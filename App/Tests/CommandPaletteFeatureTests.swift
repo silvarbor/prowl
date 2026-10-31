@@ -15,6 +15,8 @@ struct CommandPaletteFeatureTests {
       "global.open-settings",
       "global.open-repository",
       "global.new-workspace",
+      // Remote folders are on unless `PROWL_REMOTE_FOLDERS=0` (docs-ai 084 C5).
+      "global.add-remote-folder",
       "global.new-worktree",
       "global.refresh-worktrees",
       "global.jump-to-latest-unread",
@@ -25,6 +27,7 @@ struct CommandPaletteFeatureTests {
       "global.toggle-canvas",
       "global.toggle-shelf",
     ]
+    if !RemoteFolders.isEnabledInThisProcess { expectedIDs.removeAll { $0 == "global.add-remote-folder" } }
     #if DEBUG
       expectedIDs.append(contentsOf: [
         "debug.toast.inProgress",
@@ -112,6 +115,16 @@ struct CommandPaletteFeatureTests {
     let ids = Set(items.map(\.id))
     #expect(ids.contains("global.reveal-in-finder"))
     #expect(ids.contains("global.copy-path"))
+    #expect(ids.contains("global.reveal-in-sidebar"))
+  }
+
+  @Test func commandPaletteItems_offersRevealInSidebarForASelectedFolder() {
+    let repository = makeRepository(rootPath: "/tmp/folder-reveal", name: "folder", kind: .plain, worktrees: [])
+    var state = RepositoriesFeature.State(repositories: [repository])
+    state.selection = .repository(repository.id)
+
+    let ids = Set(CommandPaletteFeature.commandPaletteItems(from: state).map(\.id))
+
     #expect(ids.contains("global.reveal-in-sidebar"))
   }
 
@@ -1038,7 +1051,7 @@ struct CommandPaletteFeatureTests {
     let repoA = makeRepository(rootPath: repoAPath, name: "Repo A", worktrees: [mainA])
     let repoB = makeRepository(rootPath: repoBPath, name: "Repo B", worktrees: [mainB])
     var state = RepositoriesFeature.State(repositories: [repoA, repoB])
-    state.repositoryRoots = [repoB.rootURL, repoA.rootURL]
+    state.repositoryRoots = [repoB.location, repoA.location]
 
     let items = CommandPaletteFeature.commandPaletteItems(from: state)
     let selectIDs = items.compactMap { item in
@@ -1840,7 +1853,7 @@ private func makeItem(
 
 private func testCategory(for kind: CommandPaletteItem.Kind) -> CommandPaletteItem.Category {
   switch kind {
-  case .checkForUpdates, .openSettings, .openRepository, .newWorkspace, .installCLI,
+  case .checkForUpdates, .openSettings, .openRepository, .newWorkspace, .addRemoteFolder, .installCLI,
     .openRepositorySettings, .editWorkspace:
     return .app
   case .newWorktree, .refreshWorktrees, .viewArchivedWorktrees,
@@ -1870,7 +1883,7 @@ private func testCategory(for kind: CommandPaletteItem.Kind) -> CommandPaletteIt
 
 private func testDefaultSuggestion(for kind: CommandPaletteItem.Kind) -> Bool {
   switch kind {
-  case .checkForUpdates, .openSettings, .openRepository, .newWorkspace, .installCLI,
+  case .checkForUpdates, .openSettings, .openRepository, .newWorkspace, .addRemoteFolder, .installCLI,
     .newWorktree, .refreshWorktrees, .viewArchivedWorktrees, .jumpToLatestUnread,
     .openPullRequest, .markPullRequestReady, .mergePullRequest, .closePullRequest,
     .copyFailingJobURL, .copyCiFailureLogs, .rerunFailedJobs, .openFailingCheckDetails,
