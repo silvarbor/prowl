@@ -281,6 +281,10 @@ struct CommandPaletteFeature {
         )
       )
     }
+    if repositories.selectedWorktreeID == nil, repositories.selectedRepository != nil {
+      // A selected folder or workspace can be revealed in its group (docs-ai 086).
+      items.append(revealInSidebarCommandItem())
+    }
     if opensTerminals {
       // A command that cannot run in the target is left out (docs-ai 084 C3c).
       items.append(
@@ -445,12 +449,12 @@ private func globalCommandItems(
     items.append(
       CommandPaletteItem(
         id: CommandPaletteItemID.globalAddRemoteFolder,
-        title: String(localized: "Add Remote Folder"),
+        title: String(localized: "Add Remote Project"),
         subtitle: nil,
         kind: .addRemoteFolder,
         category: .app,
         defaultSuggestion: true,
-        keywords: ["Add Remote Folder", "remote", "ssh", "server", "远程", "远程文件夹"]
+        keywords: ["Add Remote Project", "remote folder", "remote", "ssh", "server", "远程", "远程项目", "远程文件夹"]
       ))
   }
   if showsNewWorktreeAction {
@@ -743,14 +747,18 @@ private func worktreeNavigationCommandItems(includesFinder: Bool = true) -> [Com
       kind: .copyPath,
       keywords: ["copy", "path", "clipboard", "复制", "路径", "剪贴板"]
     ),
-    .appShortcut(
-      id: CommandPaletteItemID.globalRevealInSidebar,
-      title: "Reveal in Sidebar",
-      category: .navigation,
-      kind: .revealInSidebar,
-      keywords: ["reveal", "locate", "find worktree", "显示", "定位", "工作树"]
-    ),
+    revealInSidebarCommandItem(),
   ]
+}
+
+private func revealInSidebarCommandItem() -> CommandPaletteItem {
+  .appShortcut(
+    id: CommandPaletteItemID.globalRevealInSidebar,
+    title: "Reveal in Sidebar",
+    category: .navigation,
+    kind: .revealInSidebar,
+    keywords: ["reveal", "locate", "find worktree", "显示", "定位", "工作树"]
+  )
 }
 
 private func selectedWorktreeViewCommandItems() -> [CommandPaletteItem] {

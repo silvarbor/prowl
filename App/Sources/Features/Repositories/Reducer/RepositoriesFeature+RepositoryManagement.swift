@@ -134,10 +134,10 @@ extension RepositoriesFeature {
           })
       }
       if applyResult.didPruneRepositoryOrder {
-        let repositoryOrderIDs = state.repositoryOrderIDs
+        let sidebarLayout = state.sidebarLayout
         allEffects.append(
           .run { _ in
-            await repositoryPersistence.saveRepositoryOrderIDs(repositoryOrderIDs)
+            await repositoryPersistence.saveSidebarLayout(sidebarLayout)
           })
       }
       if applyResult.didPruneWorktreeOrder {
@@ -338,10 +338,10 @@ extension RepositoriesFeature {
         return .send(.repositoryManagement(.removeFailedRepository(repositoryID)))
       }
       state.alert = AlertState {
-        TextState(String(localized: "Remove folder?"))
+        TextState(String(localized: "Remove project?"))
       } actions: {
         ButtonState(role: .destructive, action: .confirmRemoveFailedRepository(repositoryID)) {
-          TextState(String(localized: "Remove folder"))
+          TextState(String(localized: "Remove project"))
         }
         ButtonState(role: .cancel) {
           TextState(String(localized: "Cancel"))

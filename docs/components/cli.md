@@ -136,9 +136,12 @@ and instead maps `CODEX_THREAD_ID` to the pane whose Codex TUI submitted to that
 `CODEX_TUI_RECORD_SESSION=1` and a pane-owned `CODEX_TUI_SESSION_LOG_PATH`. Codex writes
 the submitted prompts there (mode 0600); Prowl deletes the file once the pane's close can no
 longer be undone. A pane whose Codex has not submitted anything yet, or whose shell
-overrides those variables, cannot be mapped. An incomplete daemon file inventory can also
-prevent mapping of sessions that previously worked. Caller-scoped commands then fail with
-`SOURCE_REQUIRED`.
+overrides those variables, cannot be mapped. After the pane that started the daemon closes,
+the daemon holds a revoked terminal that Prowl cannot inspect. Prowl then maps a pane only
+through its newest message. A message that is queued but not yet sent to the thread, or
+another pane that may still drive the same thread, prevents mapping until the next turn.
+Any other daemon file that Prowl cannot read prevents mapping. Caller-scoped commands then
+fail with `SOURCE_REQUIRED`.
 Session logs larger than 64 MiB are not mapped. Restarting Codex in the pane resets its
 session log; its first indexed submit can establish the mapping again.
 Codex launched from an Agent Profile, or with `--no-daemon`, runs commands inside the pane
@@ -162,7 +165,9 @@ Each item contains:
   folder's `path` and `root_path` are paths on that host, not on this Mac. Text output
   shows them as `label:path`.
 - `tab`: `id`, `title`, `selected`
-- `pane`: `id`, `title`, `cwd`, `focused`, `visible`, `agent`
+- `pane`: `id`, `title`, `cwd`, `focused`, `visible`, `agent`. In a remote project,
+  `cwd` is the pane's directory on the host (or absent when Prowl cannot tell), not the
+  local `ssh` process's directory.
 - `task`: `status` (`running` | `idle` | null)
 
 The response also carries `caller` — `{"pane": {"id"}, "worktree": {"id"}}` — the pane
@@ -243,7 +248,7 @@ Each agent contains:
   additional confirmation.
 - `remote`: present only for an agent on a remote host behind the pane's `ssh` (see
   [agent detection](agent-detection.md#remote-agents-over-ssh)). It contains:
-  - `host` (`user@hostname`, or the host's alias in a tab of a remote folder), `user`,
+  - `host` (`user@hostname`, or the host's alias in a tab of a remote project), `user`,
     `hostname`, `port`: absent while the connection is not resolved.
   - `correlation`: `pending`, `correlated`, `ambiguous`, `unmapped`,
     `probe_unavailable`, `unsupported`, or `tmux_unreachable` (the pane shows a tmux
@@ -899,7 +904,7 @@ absent until Canvas has laid out cards), and `.data.card_count`. See
 ### `prowl create tab`
 Create a new terminal tab (deterministic — unlike `open`). A worktree is required,
 either positionally or with `--worktree`; `--path` must remain inside it.
-In a remote folder, the tab runs `ssh` to the host and lands in the folder (or in `--path`,
+In a remote project, the tab runs `ssh` to the host and lands in the folder (or in `--path`,
 a path on the host, checked by its text only). Its pane may show no output until Prowl has
 prepared the connection.
 
