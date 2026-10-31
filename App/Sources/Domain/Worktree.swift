@@ -4,12 +4,68 @@ nonisolated struct Worktree: Identifiable, Hashable, Sendable {
   let id: String
   let name: String
   let detail: String
-  let workingDirectory: URL
-  let repositoryRootURL: URL
+  /// The worktree's working directory.
+  let location: RepositoryLocation
+  /// The root of the worktree's repository, on the same host. It differs from
+  /// `location` for a linked worktree.
+  let repositoryLocation: RepositoryLocation
   let createdAt: Date?
   /// HEAD is detached, so `name` is the directory name rather than a branch.
   let isDetached: Bool
   let isMain: Bool
+
+  nonisolated init(
+    id: String,
+    name: String,
+    detail: String,
+    location: RepositoryLocation,
+    repositoryLocation: RepositoryLocation,
+    createdAt: Date? = nil,
+    isDetached: Bool = false
+  ) {
+    self.id = id
+    self.name = name
+    self.detail = detail
+    self.location = location
+    self.repositoryLocation = repositoryLocation
+    self.createdAt = createdAt
+    self.isDetached = isDetached
+    // Pre-compute the main-worktree flag at construction time so that hot SwiftUI
+    // paths never call the expensive `URL.standardizedFileURL` getter during view
+    // updates. The fast equality check covers the common case where callers
+    // already pass normalized URLs; the standardized fallback protects against
+    // any future call site that forgets to normalize first.
+    self.isMain =
+      switch (location, repositoryLocation) {
+      case (.local(let workingDirectory), .local(let repositoryRootURL)):
+        workingDirectory == repositoryRootURL
+          || workingDirectory.standardizedFileURL == repositoryRootURL.standardizedFileURL
+      case (.remote, .remote):
+        location == repositoryLocation
+      default:
+        false
+      }
+  }
+
+  /// The ID is the encoded location (docs-ai 084 D1).
+  nonisolated init(
+    name: String,
+    detail: String,
+    location: RepositoryLocation,
+    repositoryLocation: RepositoryLocation,
+    createdAt: Date? = nil,
+    isDetached: Bool = false
+  ) {
+    self.init(
+      id: location.id,
+      name: name,
+      detail: detail,
+      location: location,
+      repositoryLocation: repositoryLocation,
+      createdAt: createdAt,
+      isDetached: isDetached
+    )
+  }
 
   nonisolated init(
     id: String,
@@ -20,21 +76,25 @@ nonisolated struct Worktree: Identifiable, Hashable, Sendable {
     createdAt: Date? = nil,
     isDetached: Bool = false
   ) {
-    self.id = id
-    self.name = name
-    self.detail = detail
-    self.workingDirectory = workingDirectory
-    self.repositoryRootURL = repositoryRootURL
-    self.createdAt = createdAt
-    self.isDetached = isDetached
-    // Pre-compute the main-worktree flag at construction time so that hot SwiftUI
-    // paths never call the expensive `URL.standardizedFileURL` getter during view
-    // updates. The fast equality check covers the common case where callers
-    // already pass normalized URLs; the standardized fallback protects against
-    // any future call site that forgets to normalize first.
-    self.isMain =
-      workingDirectory == repositoryRootURL
-      || workingDirectory.standardizedFileURL == repositoryRootURL.standardizedFileURL
+    self.init(
+      id: id,
+      name: name,
+      detail: detail,
+      location: .local(workingDirectory),
+      repositoryLocation: .local(repositoryRootURL),
+      createdAt: createdAt,
+      isDetached: isDetached
+    )
+  }
+
+  /// The working directory on this Mac. Nil for a remote worktree.
+  var localURL: URL? {
+    location.localURL
+  }
+
+  /// The repository root on this Mac. Nil for a remote worktree.
+  var repositoryLocalURL: URL? {
+    repositoryLocation.localURL
   }
 }
 
@@ -42,8 +102,8 @@ extension Worktree {
   /// Environment variables exposed to all Prowl scripts.
   var scriptEnvironment: [String: String] {
     [
-      "PROWL_WORKTREE_PATH": workingDirectory.path(percentEncoded: false),
-      "PROWL_ROOT_PATH": repositoryRootURL.path(percentEncoded: false),
+      "PROWL_WORKTREE_PATH": location.path,
+      "PROWL_ROOT_PATH": repositoryLocation.path,
     ]
   }
 

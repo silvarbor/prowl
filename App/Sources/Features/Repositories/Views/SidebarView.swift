@@ -7,6 +7,7 @@ struct SidebarView: View {
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
   @Shared(.appStorage("sidebarCollapsedRepositoryIDs")) private var collapsedRepositoryIDs: [Repository.ID] = []
+  @Shared(.appStorage("sidebarCollapsedGroupIDs")) private var collapsedGroupIDs: [String] = []
   @State private var sidebarSelections: Set<SidebarSelection> = []
 
   var body: some View {
@@ -17,7 +18,9 @@ struct SidebarView: View {
       repositoryIDs: repositoryIDs,
       expandedRepoIDs: expandedRepoIDs
     )
-    let visibleHotkeyRows = state.orderedWorktreeRows(includingRepositoryIDs: expandedRepoIDs)
+    // Hotkeys and navigation skip the rows of collapsed groups (docs-ai 086).
+    let visibleHotkeyRows = state.orderedWorktreeRows(
+      includingRepositoryIDs: state.visibleRepositoryIDs(ownExpanded: expandedRepoIDs))
     let visibleWorktreeIDs = Set(visibleHotkeyRows.map(\.id))
     let effectiveSelectedRows = selectedRows(state: state)
     let confirmWorktreeAction = makeConfirmWorktreeAction(state: state)
@@ -27,6 +30,7 @@ struct SidebarView: View {
     return SidebarListView(
       store: store,
       expandedRepoIDs: expandedRepoIDsBinding,
+      collapsedGroupIDs: collapsedGroupIDsBinding,
       sidebarSelections: $sidebarSelections,
       terminalManager: terminalManager
     )
@@ -52,9 +56,20 @@ struct SidebarView: View {
     .onChange(of: repositoryIDs) { _, newValue in
       let collapsed = Set(collapsedRepositoryIDs).intersection(newValue)
       $collapsedRepositoryIDs.withLock {
-        $0 = Array(collapsed).sorted()
+        $0 = Self.storedCollapsedIDs(collapsed, previous: $0, loaded: newValue)
       }
     }
+  }
+
+  /// The collapsed IDs to store: `collapsed` among the loaded repositories, and the stored
+  /// remote folders that are not loaded. A remote folder can be hidden (no flag),
+  /// unreachable or not loaded yet, and keeps its state for when it shows again (docs-ai
+  /// 084 C1a).
+  nonisolated static func storedCollapsedIDs(
+    _ collapsed: Set<Repository.ID>, previous: [Repository.ID], loaded: Set<Repository.ID>
+  ) -> [Repository.ID] {
+    let unloadedRemote = previous.filter { !loaded.contains($0) && RepositoryLocation.hasRemoteForm($0) }
+    return Array(collapsed.union(unloadedRemote)).sorted()
   }
 
   private func expandedRepoIDsBinding(
@@ -66,7 +81,20 @@ struct SidebarView: View {
       set: { newValue in
         let collapsed = repositoryIDs.subtracting(newValue)
         $collapsedRepositoryIDs.withLock {
-          $0 = Array(collapsed).sorted()
+          $0 = Self.storedCollapsedIDs(collapsed, previous: $0, loaded: repositoryIDs)
+        }
+      }
+    )
+  }
+
+  /// Own collapse state of the groups. Ungroup drops the ID of its group; a write here
+  /// keeps every ID, so a write before the layout loads loses nothing.
+  private var collapsedGroupIDsBinding: Binding<Set<RepositoryGroup.ID>> {
+    Binding(
+      get: { Set(collapsedGroupIDs.compactMap(UUID.init(uuidString:))) },
+      set: { newValue in
+        $collapsedGroupIDs.withLock {
+          $0 = newValue.map(\.uuidString).sorted()
         }
       }
     )

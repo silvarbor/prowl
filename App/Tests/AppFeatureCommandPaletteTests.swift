@@ -654,7 +654,7 @@ struct AppFeatureCommandPaletteTests {
     await store.send(.commandPalette(.delegate(.copyPath)))
     await store.finish()
 
-    #expect(NSPasteboard.general.string(forType: .string) == worktree.workingDirectory.path)
+    #expect(NSPasteboard.general.string(forType: .string) == worktree.localURL!.path)
   }
 
   @Test(.dependencies) func copyPathWithoutSelectedWorktreeIsNoop() async {
@@ -691,6 +691,30 @@ struct AppFeatureCommandPaletteTests {
       $0.leftSidebarVisibility = .all
     }
     await store.receive(\.repositories.revealSelectedWorktreeInSidebar)
+  }
+
+  @Test(.dependencies) func revealInSidebarForASelectedFolderRevealsIt() async {
+    let folder = Repository(
+      id: "/tmp/folder-reveal",
+      rootURL: URL(fileURLWithPath: "/tmp/folder-reveal"),
+      name: "folder",
+      kind: .plain,
+      worktrees: []
+    )
+    var repositoriesState = RepositoriesFeature.State()
+    repositoriesState.repositories = [folder]
+    repositoriesState.selection = .repository(folder.id)
+    let store = TestStore(
+      initialState: AppFeature.State(repositories: repositoriesState, settings: SettingsFeature.State())
+    ) {
+      AppFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(.commandPalette(.delegate(.revealInSidebar)))
+    await store.receive(\.repositories.revealSelectedWorktreeInSidebar) {
+      $0.repositories.pendingSidebarReveal = PendingSidebarReveal(id: 1, target: .repository(folder.id))
+    }
   }
 
   @Test(.dependencies) func revealInSidebarWithoutSelectedWorktreeIsNoop() async {
@@ -1006,7 +1030,7 @@ struct AppFeatureCommandPaletteTests {
       worktrees: [],
       workspace: ProjectWorkspace(title: "Workspace", repositories: [entry])
     )
-    let childID = entry.resolvedURL(relativeTo: workspace.rootURL).path(percentEncoded: false)
+    let childID = entry.resolvedURL(relativeTo: workspace.localURL!).path(percentEncoded: false)
     var repositoriesState = RepositoriesFeature.State()
     repositoriesState.repositories = [workspace]
     repositoriesState.selection = .repository(workspace.id)
@@ -1066,7 +1090,7 @@ struct AppFeatureCommandPaletteTests {
       worktrees: [],
       workspace: ProjectWorkspace(title: "Workspace", repositories: [entry])
     )
-    let childID = entry.resolvedURL(relativeTo: workspace.rootURL).path(percentEncoded: false)
+    let childID = entry.resolvedURL(relativeTo: workspace.localURL!).path(percentEncoded: false)
     var repositoriesState = RepositoriesFeature.State()
     repositoriesState.repositories = [workspace]
     repositoriesState.selection = .repository(workspace.id)
@@ -1126,7 +1150,7 @@ struct AppFeatureCommandPaletteTests {
       worktrees: [],
       workspace: ProjectWorkspace(title: "Workspace", repositories: [entry])
     )
-    let childID = entry.resolvedURL(relativeTo: workspace.rootURL).path(percentEncoded: false)
+    let childID = entry.resolvedURL(relativeTo: workspace.localURL!).path(percentEncoded: false)
     var repositoriesState = RepositoriesFeature.State()
     repositoriesState.repositories = [workspace]
     repositoriesState.selection = .repository(workspace.id)

@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| **Status** | Planned |
+| **Status** | L0 implemented (#924–#933, #937); L1a–L1e superseded by [084-ssh-remote-folders](../084-ssh-remote-folders/000-plan.md); L1f–L1h and L2 planned |
 | **Anchor date** | 2026-10-16 (revised 2026-10-17 after review rounds 1 and 2) |
 | **Primary PRs** | #921 (this plan); implementation PRs per the slice table |
 | **Related** | [002-spike-findings.md](002-spike-findings.md), [079-program-status-osc-7501](../079-program-status-osc-7501/000-plan.md), [068-agent-state-providers](../068-agent-state-providers/architecture.md), [064-agent-completion-signals](../064-agent-completion-signals/000-plan.md), [069-undo-close-terminal](../069-undo-close-terminal/000-plan.md), [067-remote-mirror](../067-remote-mirror/000-plan.md), `docs/components/agent-detection.md` |
@@ -234,6 +234,11 @@ ticks; macOS: `kern.boottime` and `lstart`), elapsed time, cwd, the tmux mapping
 
 ### L1 — Remote folders
 
+> Slices L1a–L1e of this section are superseded by
+> [084-ssh-remote-folders](../084-ssh-remote-folders/000-plan.md), which calibrated them
+> against the code after L0 and changed the order, the remote identity, the terminal launch
+> and the consent rule. L1f and the parts below that L1f, L1g, L1h and L2 rely on stay here.
+
 L1 first makes "where the repository lives" an explicit dimension with one value (local),
 then adds the second value (remote). Feature code asks capabilities, never the location.
 
@@ -436,11 +441,7 @@ case passes.
 | 4 | S4 | L0 UX: host label, connection health, ssh-ended marker, CLI fields, docs; turns the S3 flag on | Manual remote agents appear |
 | 4c | S4c | L0 consent: stored `undecided`/`on`/`off`, consent panel at the first `ssh`, no connection before consent, Settings switch, side-channel toolbar status | No connection until the user agrees |
 | 5 | S5 | L0 tmux: user-owned tmux mapping and capture-based state | tmux panes detected |
-| 6 | L1a | `RepositoryLocation`, `localURL: URL?`, call-site triage | None |
-| 7 | L1b | `RepositoryHost` local implementation (fast paths kept); `GitClient` routed through it | None |
-| 8 | L1c | Capability policy with reasons, enforced at execution and admission | None for local |
-| 9 | L1d | Remote host implementation, `HostProfile` persistence and migration, add flow, polling | Remote folders appear |
-| 10 | L1e | Remote terminals, splits, scripts, layout restore | Remote tabs |
+| 6–10 | L1a–L1e | Superseded: see the slice table of [084](../084-ssh-remote-folders/000-plan.md) | — |
 | 11 | L2a | Session model: per-leaf session UUID, tags, create/attach/end, detach at close with notice and Undo, capture state, history read, worktree remove/archive confirmation and ordering | Persistent sessions |
 | 12 | L2b | Discovery, background sessions on the worktree row | Background sessions |
 | 13 | L1f | Remote Profile launches from structured invocation (create-once inside L2 sessions) | Remote Profiles |
@@ -541,3 +542,4 @@ case passes.
 - Updated 2026-10-17: revised in place after review round 2 — ownership-based evidence retirement and `ConnectionKey` in S1, replacement-interval OSC fence, effective-config overrides and authority rebinding, qualified secondary key, stale projection and remote-unprobed origin, scheduling rule and numeric budgets, detach at close with reconnect Undo, removal disclosure, exposure gates
 - Updated 2026-10-18: added "L1 advanced — Interactive authentication" (host-level authentication modes, askpass helper, shared connection, opt-in Keychain password, L0 sign-in action), slices L1g–L1h and criteria L1-9 to L1-15
 - Updated 2026-10-18: L0 item 12 (consent before the first side-channel connection, Settings switch, side-channel toolbar status), slice S4c, criteria L0-12 and L0-13
+- Updated 2026-10-22: L1a–L1e calibrated against the code after L0 and moved to a new entry with decisions D1–D8 (remote ID, consent, order, dirty state, launch, persistence, exposure) — see [084-ssh-remote-folders](../084-ssh-remote-folders/000-plan.md)

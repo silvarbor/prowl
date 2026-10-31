@@ -33,7 +33,7 @@ extension DependencyValues {
 private nonisolated struct ExternalDiffSnapshotBuilder {
   func makeSnapshotPair(at workingDirectory: URL) async throws -> ExternalDiffSnapshotPair {
     let git = try await GitExecutableResolver.shared.resolve()
-    let gitClient = GitClient()
+    let gitClient = GitClient.local
     async let trackedOutput = gitClient.diffNameStatus(at: workingDirectory)
     async let untrackedPaths = gitClient.untrackedFilePaths(at: workingDirectory)
     let trackedFiles = DiffChangedFile.parseNameStatus(await trackedOutput)
@@ -100,7 +100,7 @@ private nonisolated struct ExternalDiffSnapshotBuilder {
 
     let process = Process()
     process.executableURL = git.url
-    process.environment = ProcessInfo.processInfo.environment.merging(git.environment) { _, selected in selected }
+    process.environment = git.processEnvironment
     process.arguments = [
       "-C",
       worktreeURL.path(percentEncoded: false),

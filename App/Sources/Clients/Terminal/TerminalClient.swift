@@ -11,6 +11,10 @@ struct TerminalClient {
   var events: @MainActor @Sendable () -> AsyncStream<Event>
   /// Per-surface multicast stream. Independent from the single-consumer event stream.
   var observeAgentState: @MainActor @Sendable (UUID) -> AgentObservationStream
+  var canvasFocusedCard: @MainActor @Sendable () -> CanvasCardRef? = { nil }
+  /// The card to focus when Canvas returns to `card`: the card itself while its tab is open,
+  /// else the selected tab of its worktree, else the selected tab of another open worktree.
+  var canvasRestorableCard: @MainActor @Sendable (CanvasCardRef) -> CanvasCardRef? = { $0 }
   var canvasFocusedWorktreeID: @MainActor @Sendable () -> Worktree.ID?
   /// Active surface in the selected tab. Lets the reducer capture the target
   /// synchronously before an async dispatch races against AppKit focus reshuffle
@@ -61,6 +65,9 @@ struct TerminalClient {
     case focusSelectedTab(Worktree)
     case prune(Set<Worktree.ID>)
     case prunePreservingRepositories(keeping: Set<Worktree.ID>, repositoryIDs: Set<Repository.ID>)
+    /// A repository the user removed while it was not loaded: its saved remote layout goes too
+    /// (docs-ai 084 C5).
+    case discardSavedLayout(repositoryID: Repository.ID)
     case setNotificationsEnabled(Bool)
     case setCommandFinishedNotification(enabled: Bool, threshold: Int)
     case setCanvasMode(Bool)
@@ -88,6 +95,8 @@ struct TerminalClient {
     case agentEntryRemoved(ActiveAgentEntry.ID)
     /// A pane's `ssh` waits for the user's answer before Prowl connects (docs-ai 082).
     case remoteAgentConsentNeeded(worktreeID: Worktree.ID, surfaceID: UUID, destination: String)
+    /// A remote folder's tab did not start, so it closed (docs-ai 084 C3b).
+    case remoteTerminalFailed(worktreeID: Worktree.ID, message: String)
     /// A profile launch created its surface. The reducer records the per-repo
     /// launch memory on this event — not at dispatch — so a failed launch
     /// never shifts the Recommended resolution (docs-ai 053/005).

@@ -465,8 +465,8 @@ in the app, not a setting:
 
 | Support | Meaning |
 | --- | --- |
-| unverified | Records are stored and resolved, but only compared with the live decision; disagreements are logged (`AgentDetection` category). Every agent except Claude Code, Pi, Oh My Pi, and Codex today. |
-| verified | The root record is the first-priority state evidence, applied the moment the report arrives. Claude Code (2.1.295 and later, `app=claude-code`), Pi (1.1.0 and later, `app=pi`), Oh My Pi (18.8.7 and later, `app=omp`), and Codex (0.163.0 and later, `app=codex`). |
+| unverified | Records are stored and resolved, but only compared with the live decision; disagreements are logged (`AgentDetection` category). Every agent without a row in the verified list today. |
+| verified | The root record is the first-priority state evidence, applied the moment the report arrives. Claude Code (2.1.295 and later, `app=claude-code`), Pi (1.1.0 and later, `app=pi`), Oh My Pi (18.8.7 and later, `app=omp`), Codex (0.163.0 and later, `app=codex`), Amp (`app=amp`), Antigravity (`app=antigravity`), Devin (`app=devin`), Droid (`app=droid`), and Grok Build (`app=grok-build`). The last five were replayed on Amp 0.0.1793376030, Antigravity 1.4.11, Devin 3000.11.234, Droid 1.0.0, and Grok Build 1.0.70; older versions that do not report keep the screen rules. |
 
 For a verified producer the pane follows the **root** record only: `working` → Working
 (`osc.working`), `blocked` → Blocked (`osc.blocked.<kind>`, `unspecified` without a
@@ -488,7 +488,8 @@ there and releases the entry when it is gone. There is no silence timeout.
 
 Producers that never report (older versions, `CLAUDE_CODE_DISABLE_TERMINAL_TITLE`,
 `PI_PROGRAM_STATUS=0`, Oh My Pi's `terminal.programStatus: false`) get today's screen and provider detection unchanged. The
-available producer controls are the escape hatch; Codex 0.163.0 has none for OSC.
+available producer controls are the escape hatch; Codex 0.163.0, Amp, Antigravity, Devin, Droid, and Grok Build have none
+that Prowl knows of.
 Prowl has no setting for this.
 
 Independently of the support table, Ghostty's shell integration tells Prowl when the
@@ -531,7 +532,10 @@ so those frames keep the last trusted state instead of forcing Idle.
 ## Remote agents over SSH
 
 When a pane's foreground command is a local `ssh`, Prowl shows the agent that runs on the
-host (docs-ai 082, L0). Prowl installs nothing on the host and edits no rc file.
+host (docs-ai 082, L0). Prowl installs nothing on the host and edits no rc file. SSH processes
+started by Git, scp, sftp, or rsync are transports, not remote agent sessions: they do not
+show a consent prompt or start detection. Direct commands such as `ssh -t host claude` and
+`ssh host tmux attach` still qualify.
 
 - **Consent.** Prowl does not connect to a host before you agree. The first `ssh` that
   Prowl can read shows "Detect agents on <host>?" in the toolbar status, with its panel
@@ -542,6 +546,13 @@ host (docs-ai 082, L0). Prowl installs nothing on the host and edits no rc file.
   holds the answer; the switch shows on until you turn it off. The environment variable
   `PROWL_REMOTE_AGENT_DETECTION` overrides the setting and never asks: `0` turns the
   feature off, any other value turns it on.
+- **Remote projects.** A tab that Prowl opens for a remote project runs `ssh` itself. It asks
+  for no consent, because adding the folder already agreed to the connection, and it uses
+  the folder's stored SSH settings instead of reading the command line. Its pane and agents
+  show the host's alias. `PROWL_REMOTE_AGENT_DETECTION=0` still turns detection off. Once
+  that `ssh` ends, a later `ssh` in the same pane is your own and follows the rules above.
+- **Directory.** A remote agent's directory (its project in Active Agents and `prowl
+  agents`) is the one the probe reads on the host, not the pane's local directory.
 - **Toolbar status.** While the focused pane's `ssh` uses Prowl's own connection, the
   toolbar status shows the host and "Agent detection on", or "Agents not detected" with a
   warning glyph. Hover (or click) for a panel that tells what the extra connection does,
@@ -563,7 +574,10 @@ host (docs-ai 082, L0). Prowl installs nothing on the host and edits no rc file.
   corner reads "Disconnected from user@host" for five seconds. A suspended `ssh` (still
   running) only removes the label. When Prowl cannot read the pane's agents (the host has
   no session for the pane, the side channel fails, or the `ssh` command is not supported),
-  the label shows a yellow warning glyph instead, whether or not an agent is listed. Its
+  the label shows a yellow warning glyph instead, whether or not an agent is listed. On a
+  macOS host, a pane with only its shell in front has no session yet (macOS hides the
+  environment of the system shell; an agent that starts in the pane maps it), so that case
+  shows no warning. `prowl agents` still reports it as `unmapped`. Its
   tooltip gives the reason, and says that only agents that report their own status
   (OSC 7501) are detected.
 - **Host label and health.** The Active Agents row shows `user@host` with a network
