@@ -69,8 +69,11 @@ would jump past the rest of the group. A worktree selected from an expanded grou
 kept in `retainedInactiveWorktreeIDs` and stays in the group, so the navigation order
 holds while the group is walked. The set clears when the selection moves to a row
 outside the group (the rows opened from the group then leave it) and when the group
-folds. `setSingleWorktreeSelection` maintains it, which covers every path that selects
+folds. `setSingleWorktreeSelection` adds to it, which covers every path that selects
 one worktree: the next/previous commands, the numbered shortcuts, history, and clicks.
+A reducer that runs after every action releases the kept rows whenever the selection is
+not one of them, so a selection that bypasses that helper (a plain folder, a workspace
+child, Canvas, the archived list) releases them too.
 
 **Repository groups.** The Inactive row is part of a repository's rows
 (`WorktreeRowsView` inside `RepositorySectionView`), so a repository in a sidebar group

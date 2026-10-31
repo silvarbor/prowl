@@ -231,6 +231,51 @@ struct FoldInactiveWorktreesTests {
     #expect(sections.inactive.map(\.id) == [fixture.alpha.id, fixture.charlie.id])
   }
 
+  @Test func selectingAPlainFolderReleasesTheRowsKeptInTheGroup() async {
+    var fixture = makeExpandedGroupFixture()
+    let folder = Repository(
+      id: "/tmp/notes",
+      rootURL: URL(fileURLWithPath: "/tmp/notes"),
+      name: "notes",
+      kind: .plain,
+      worktrees: []
+    )
+    fixture.state.repositories.append(folder)
+    fixture.state.repositoryRoots.append(folder.location)
+    let store = TestStore(initialState: fixture.state) {
+      RepositoriesFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(.selectWorktree(fixture.bravo.id))
+    await store.skipReceivedActions()
+    await store.send(.selectRepository(folder.id))
+    await store.skipReceivedActions()
+
+    let sections = store.state.worktreeRowSections(in: fixture.repository)
+    #expect(sections.unpinned.map(\.id) == [fixture.bravo.id])
+    #expect(sections.inactive.map(\.id) == [fixture.alpha.id, fixture.charlie.id])
+  }
+
+  @Test func selectingCanvasReleasesTheRowsKeptInTheGroup() async {
+    let fixture = makeExpandedGroupFixture()
+    let store = TestStore(initialState: fixture.state) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.terminalClient.send = { _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.selectWorktree(fixture.bravo.id))
+    await store.skipReceivedActions()
+    await store.send(.selectCanvas)
+    await store.finish()
+
+    let sections = store.state.worktreeRowSections(in: fixture.repository)
+    #expect(sections.unpinned.map(\.id) == [fixture.bravo.id])
+    #expect(sections.inactive.map(\.id) == [fixture.alpha.id, fixture.charlie.id])
+  }
+
   @Test func foldingTheGroupReleasesTheRowsKeptInIt() async {
     var fixture = makeFixture()
     fixture.state.$expandedInactiveRepositoryIDs.withLock { $0 = [fixture.repository.id] }

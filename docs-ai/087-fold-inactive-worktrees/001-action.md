@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | 2026-10-18 | First version: fold worktrees with no open tab into a per-repository "Inactive (N)" group behind a `foldInactiveWorktrees` setting | fork review PR |
 | 2026-10-27 | Reworked per the maintainer's request on #939: always on, no setting, no Sidebar settings section; renumbered after 083 and 084 were taken | PR (see Primary PRs) |
-| 2026-10-31 | Merged upstream with repository groups (086) and renumbered to 087 after 085 and 086 were taken | PR (see Primary PRs) |
+| 2026-10-31 | Merged upstream with repository groups (086) and renumbered to 087 after 085 and 086 were taken; walking an expanded group keeps its order, and any selection outside the group releases the rows kept there | PR (see Primary PRs) |
 
 ## Outcome & current state (as of 2026-10-31)
 
@@ -27,8 +27,10 @@
   ⌘⌃↑/↓ and ⌃1–9 skip folded rows.
 - `retainedInactiveWorktreeIDs` keeps a worktree selected from an expanded group in
   that group, so ⌘⌃↑/↓ and ⌃1–9 walk it in row order. `setSingleWorktreeSelection`
-  adds to it, clears it when the selection moves outside the group, and
-  `toggleInactiveWorktreesExpanded` releases the repository's rows.
+  adds to it, a reducer at the end of `RepositoriesFeature.body` clears it whenever the
+  selection is not one of the kept rows (another worktree, a plain folder, a workspace
+  child, Canvas, the archived list), and `toggleInactiveWorktreesExpanded` releases the
+  repository's rows.
 - With repository groups (086), the Inactive row stays per repository inside the
   group that holds it. Hotkey rows and offset navigation read `navigableWorktreeRows`
   over 086's visible repositories, so collapsed groups and folded rows both drop out.
@@ -53,7 +55,8 @@
   navigation skipping folded rows and including them when expanded, palette rows
   unchanged, drag mapping in each group, the fold-state toggle and its pruning
   (including a failed load), Next and Previous walking an expanded group in row
-  order, and folding inside an open and a collapsed sidebar group.
+  order, the kept rows leaving when a plain folder or Canvas is selected, and
+  folding inside an open and a collapsed sidebar group.
 - `make check`, `make lint`, `make check-localization`, `make test-scripts`, and
   `make test` passed before the push; the PR records the counts.
 

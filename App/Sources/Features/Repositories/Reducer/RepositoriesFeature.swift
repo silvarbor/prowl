@@ -805,6 +805,20 @@ struct RepositoriesFeature {
         state.pendingRenameBranchRequest = nil
         return .none
       }
+      // A row stays in an expanded Inactive group only while the selection is one of
+      // the rows kept there. Every selection change that lands elsewhere (another
+      // worktree, a plain folder, a workspace child, Canvas, the archived list)
+      // releases them, whichever action made it.
+      Reduce { state, _ in
+        guard !state.retainedInactiveWorktreeIDs.isEmpty else { return .none }
+        if let selectedID = state.selection?.worktreeID,
+          state.retainedInactiveWorktreeIDs.contains(selectedID)
+        {
+          return .none
+        }
+        state.retainedInactiveWorktreeIDs = []
+        return .none
+      }
       Reduce { state, _ in
         if let prompt = state.groupTitlePrompt, !state.isGroupTitlePromptTargetAvailable(prompt.target) {
           state.groupTitlePrompt = nil
