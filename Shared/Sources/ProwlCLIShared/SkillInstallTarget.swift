@@ -44,6 +44,12 @@ nonisolated public struct SkillInstallTarget: Equatable, Sendable, Identifiable 
       userDirectory: ".gemini/antigravity-cli/skills",
       projectDirectory: ".agents/skills"
     ),
+    SkillInstallTarget(
+      id: "trae",
+      displayName: "TraeCode CLI",
+      userDirectory: ".trae/skills",
+      projectDirectory: ".agents/skills"
+    ),
   ]
 
   public static func target(id: String) -> SkillInstallTarget? {

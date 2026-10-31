@@ -461,9 +461,7 @@ struct GithubRateLimitGateTests {
     let probe = try await gate.admit()
 
     let waiter = Task { try await gate.admit() }
-    while await gate.waitingRequestCount == 0 {
-      await Task.yield()
-    }
+    await waitUntil { await gate.waitingRequestCount > 0 }
     let refusedAgain = await gate.record(probe, signal: GithubRateLimitSignal(isRefusal: true), answered: true)
 
     await #expect(throws: GithubCLIError.rateLimited(retryAt: refusedAgain!)) {
@@ -478,9 +476,7 @@ struct GithubRateLimitGateTests {
     clock.withValue { $0.addTimeInterval(60) }
     let probe = try await gate.admit()
     let waiters = (0..<3).map { _ in Task { try await gate.admit() } }
-    while await gate.waitingRequestCount < 3 {
-      await Task.yield()
-    }
+    await waitUntil { await gate.waitingRequestCount >= 3 }
 
     #expect(await gate.record(probe, signal: nil, answered: false) == nil)
 
@@ -503,9 +499,7 @@ struct GithubRateLimitGateTests {
     clock.withValue { $0.addTimeInterval(60) }
     let probe = try await gate.admit()
     let waiter = Task { try await gate.admit() }
-    while await gate.waitingRequestCount == 0 {
-      await Task.yield()
-    }
+    await waitUntil { await gate.waitingRequestCount > 0 }
 
     waiter.cancel()
     await #expect(throws: CancellationError.self) {
@@ -677,7 +671,6 @@ struct GithubRateLimitedClientTests {
     }
     await #expect(throws: GithubCLIError.rateLimited(retryAt: retryAt)) {
       try await client.mergePullRequest(
-        URL(fileURLWithPath: "/tmp/repo"),
         GithubRemoteInfo(host: "github.com", owner: "octo", repo: "repo"),
         1,
         .squash,
@@ -740,7 +733,7 @@ struct GithubRateLimitedClientTests {
       rateLimitGate: gate
     )
     await #expect(throws: GithubCLIError.self) {
-      _ = try await client.latestRun(URL(fileURLWithPath: "/tmp/repo"), "feature", nil)
+      _ = try await client.latestRun(GithubRemoteInfo(host: "github.com", owner: "octo", repo: "repo"), "feature", nil)
     }
 
     let request = CrossRepoPullRequestRequest(owner: "octo", repo: "repo", branches: ["feature"])

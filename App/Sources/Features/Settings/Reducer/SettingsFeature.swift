@@ -75,6 +75,7 @@ struct SettingsFeature {
     var showNotificationDotOnDock: Bool
     var externalDiffToolID: String
     var ghosttyConfigPath: String?
+    var remoteAgentDetection: RemoteAgentDetectionConsent
     var externalDiffCustomCommand: String
     var detectRepositoryIconsAutomatically: Bool
     var cliInstallStatus: CLIInstallStatus = .notInstalled
@@ -157,6 +158,7 @@ struct SettingsFeature {
       externalDiffCustomCommand = settings.externalDiffCustomCommand
       detectRepositoryIconsAutomatically = settings.detectRepositoryIconsAutomatically
       ghosttyConfigPath = settings.ghosttyConfigPath
+      remoteAgentDetection = settings.remoteAgentDetection
     }
 
     var displayedArchivedAutoDeletePeriod: AutoDeletePeriod? {
@@ -230,6 +232,7 @@ struct SettingsFeature {
       settings.externalDiffCustomCommand = externalDiffCustomCommand
       settings.detectRepositoryIconsAutomatically = detectRepositoryIconsAutomatically
       settings.ghosttyConfigPath = ghosttyConfigPath
+      settings.remoteAgentDetection = remoteAgentDetection
       return settings
     }
   }
@@ -253,6 +256,8 @@ struct SettingsFeature {
     )
     case applyArchivedAutoDeletePeriod(AutoDeletePeriod?, targets: [ArchivedAutoDeleteTarget])
     case setAgentIslandEnabled(Bool)
+    /// The Settings switch and the consent panel both answer here (docs-ai 082, L0 item 12).
+    case setRemoteAgentDetection(RemoteAgentDetectionConsent)
     case setAgentIslandFloatingPosition(displayID: String, normalizedPosition: Double)
     case setAgentIslandSilentOpacity(Double)
     case setAgentIslandDisplayPreference(AgentIslandDisplayPreference)
@@ -388,6 +393,7 @@ struct SettingsFeature {
         state.canvasDefaultLayout = normalizedSettings.canvasDefaultLayout
         state.detectRepositoryIconsAutomatically = normalizedSettings.detectRepositoryIconsAutomatically
         state.ghosttyConfigPath = normalizedSettings.ghosttyConfigPath
+        state.remoteAgentDetection = normalizedSettings.remoteAgentDetection
         state.syncGlobalDefaults(from: normalizedSettings)
         return .send(.delegate(.settingsChanged(normalizedSettings)))
 
@@ -483,6 +489,11 @@ struct SettingsFeature {
       case .setAgentIslandEnabled(let enabled):
         state.agentIslandEnabled = enabled
         state.syncGlobalDefaults(from: state.globalSettings)
+        return persist(state)
+
+      case .setRemoteAgentDetection(let consent):
+        guard state.remoteAgentDetection != consent else { return .none }
+        state.remoteAgentDetection = consent
         return persist(state)
 
       case .setAgentIslandFloatingPosition(let displayID, let normalizedPosition):

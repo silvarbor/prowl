@@ -13,7 +13,8 @@ private struct AgentSignalChannelRecord {
 
 private struct PendingManagedHookSignal {
   let input: AgentNativeHookInput
-  let callerAncestry: [AgentProcessGeneration]
+  let callerAncestry: [LocalProcessGeneration]
+  let receivedAt: Date
 }
 
 private struct ManagedHookRegistrationRecord {
@@ -22,11 +23,11 @@ private struct ManagedHookRegistrationRecord {
   ///
   /// Such a runtime hands the channel over only on that event, so a late event from a
   /// superseded session is simply rejected. A runtime without a start event (Codex, whose
-  /// only native event is a turn edge) can rotate on ordinary events, so its superseded
+  /// only native event is a turn edge) requires detector-confirmed rotation, so its superseded
   /// sessions must be retired explicitly or a late one would silently take the channel back.
   var announcesSessionStarts: Bool { launch.coveredEvents.contains(.sessionStart) }
   var evidenceEpoch: UUID
-  var processGeneration: AgentProcessGeneration?
+  var processGeneration: LocalProcessGeneration?
   var sessionID: String?
   /// Sessions the hook itself rotated away from (an authoritative SessionStart moved on). These
   /// are permanent until a fresh SessionStart resumes one; a lagging detector read of one is
@@ -72,8 +73,11 @@ final class AgentObservationStore {
     var latestCurrentSignal: AgentSignal?
     var latestManagedHookSignal: AgentSignal?
     var activeTerminalSignal: AgentSignal?
-    var processGeneration: AgentProcessGeneration?
+    var processGeneration: LocalProcessGeneration?
     var sessionID: String?
+    // Codex temporary threads share the launch process and notify command. A hook
+    // cannot supply the independent session identity used to qualify itself.
+    var detectedSessionID: String?
     var sessionlessSignalsAllowed = true
     var evidenceEpoch = UUID()
     var awaitingFirstProcessGeneration = false
@@ -82,6 +86,23 @@ final class AgentObservationStore {
     var managedHook: ManagedHookRegistrationRecord?
     var revision: UInt64 = 0
     var subscribers: [UUID: AgentObservationStream.Continuation] = [:]
+
+    mutating func bufferManagedHook(
+      _ input: AgentNativeHookInput,
+      callerAncestry: [LocalProcessGeneration],
+      receivedAt: Date
+    ) {
+      guard var managed = managedHook else { return }
+      if managed.pendingSignals.count == 8 {
+        // Codex has only turn-end hooks. Keep recent evidence while detection lags;
+        // old temporary threads must not permanently occupy every pending slot.
+        guard managed.launch.runtime == .codex else { return }
+        managed.pendingSignals.removeFirst()
+      }
+      managed.pendingSignals.append(
+        PendingManagedHookSignal(input: input, callerAncestry: callerAncestry, receivedAt: receivedAt))
+      managedHook = managed
+    }
 
     mutating func clearCurrentSignals() {
       latestCurrentSignal = nil
@@ -99,6 +120,7 @@ final class AgentObservationStore {
   }
 
   private var records: [UUID: SurfaceRecord] = [:]
+  var onEvidenceInvalidated: (@MainActor (UUID, UUID) -> Void)?
   private let bufferCapacity: Int
   private let now: @MainActor () -> Date
   /// The launched process starts immediately; this spans more than three idle detection polls
@@ -275,12 +297,16 @@ final class AgentObservationStore {
     records[surfaceID]?.managedHook != nil
   }
 
-  func revokeManagedHook(surfaceID: UUID) -> CodexForwardingRecord? {
+  /// Retires the launch's hook channel. The agent going away does not invalidate the
+  /// evidence it already produced; only a replacement (`invalidatingEvidence`) does.
+  func revokeManagedHook(surfaceID: UUID, invalidatingEvidence: Bool = false) -> CodexForwardingRecord? {
     guard var record = records[surfaceID], let managed = record.managedHook else { return nil }
+    if invalidatingEvidence { onEvidenceInvalidated?(surfaceID, record.evidenceEpoch) }
     record.managedHook = nil
     record.evidenceEpoch = UUID()
     record.processGeneration = nil
     record.sessionID = nil
+    record.detectedSessionID = nil
     record.awaitingFirstProcessGeneration = false
     record.firstProcessGenerationStartedBefore = nil
     record.channels.removeAll()
@@ -290,11 +316,26 @@ final class AgentObservationStore {
     return managed.launch.forwardingRecord
   }
 
-  func recordManagedHook(
+  private func deferManagedHook(
     _ input: AgentNativeHookInput,
-    callerAncestry: [AgentProcessGeneration],
+    _ callerAncestry: [LocalProcessGeneration],
+    _ receivedAt: Date,
+    record: SurfaceRecord,
     surfaceID: UUID
   ) -> ManagedHookRecordResult {
+    var record = record
+    record.bufferManagedHook(input, callerAncestry: callerAncestry, receivedAt: receivedAt)
+    records[surfaceID] = record
+    return .pending
+  }
+
+  func recordManagedHook(
+    _ input: AgentNativeHookInput,
+    callerAncestry: [LocalProcessGeneration],
+    surfaceID: UUID,
+    receivedAt: Date? = nil
+  ) -> ManagedHookRecordResult {
+    let receivedAt = receivedAt ?? now()
     guard input.validationErrorMessage == nil,
       var record = records[surfaceID],
       var managed = record.managedHook,
@@ -308,14 +349,7 @@ final class AgentObservationStore {
     }
     guard let generation = managed.processGeneration ?? record.processGeneration else {
       guard record.awaitingFirstProcessGeneration else { return .rejected }
-      if managed.pendingSignals.count < 8 {
-        managed.pendingSignals.append(
-          PendingManagedHookSignal(input: input, callerAncestry: callerAncestry)
-        )
-        record.managedHook = managed
-        records[surfaceID] = record
-      }
-      return .pending
+      return deferManagedHook(input, callerAncestry, receivedAt, record: record, surfaceID: surfaceID)
     }
     guard callerAncestry.contains(generation), managed.processGeneration == generation else {
       observationLogger.debug(
@@ -351,6 +385,12 @@ final class AgentObservationStore {
       return .rejected
     }
 
+    if input.runtime == .codex, record.detectedSessionID != input.signal.sessionID {
+      // The detector may lag a real thread switch. Defer rather than promote a
+      // thread solely because it inherited this launch's notifier and ancestry.
+      return deferManagedHook(input, callerAncestry, receivedAt, record: record, surfaceID: surfaceID)
+    }
+
     if let currentSession = managed.sessionID,
       currentSession != input.signal.sessionID
     {
@@ -364,8 +404,9 @@ final class AgentObservationStore {
       }
       // Retire the superseded session for every runtime so a lagging detector read of it is
       // ignored rather than rolling the channel back to it (announcing runtimes rotate here on
-      // their own SessionStart; Codex rotates on ordinary events).
+      // their own SessionStart; Codex requires independent detector confirmation).
       managed.retiredSessionIDs.insert(currentSession)
+      onEvidenceInvalidated?(surfaceID, record.evidenceEpoch)
       record.evidenceEpoch = UUID()
       record.channels.removeAll()
       record.clearCurrentSignals()
@@ -389,7 +430,7 @@ final class AgentObservationStore {
       kind: signalKind(input.signal.event),
       source: .hook(runtime: runtime, event: input.signal.nativeEvent),
       confidence: .exact,
-      timestamp: now(),
+      timestamp: receivedAt,
       sessionID: input.signal.sessionID,
       detail: input.signal.detail,
       claimedOrigin: nil
@@ -411,9 +452,11 @@ final class AgentObservationStore {
 
   func beginDispatchEpoch(surfaceID: UUID) -> UUID {
     var record = records[surfaceID] ?? SurfaceRecord()
+    onEvidenceInvalidated?(surfaceID, record.evidenceEpoch)
     record.evidenceEpoch = UUID()
     record.processGeneration = nil
     record.sessionID = nil
+    record.detectedSessionID = nil
     record.sessionlessSignalsAllowed = true
     record.awaitingFirstProcessGeneration = true
     record.firstProcessGenerationStartedBefore = now().addingTimeInterval(
@@ -433,8 +476,9 @@ final class AgentObservationStore {
   @discardableResult
   func updateEvidenceEpoch(
     surfaceID: UUID,
-    processGeneration: AgentProcessGeneration?,
-    sessionID: String?
+    processGeneration: LocalProcessGeneration?,
+    sessionID: String?,
+    isRemote: Bool = false
   ) -> AgentEvidenceEpochUpdate {
     var record = records[surfaceID] ?? SurfaceRecord()
     if record.managedHook != nil,
@@ -469,12 +513,20 @@ final class AgentObservationStore {
       && record.sessionID != acceptedSessionID
     var update = AgentEvidenceEpochUpdate()
     if processChanged || sessionChanged {
+      // An exited agent leaves its evidence valid; only a replacement invalidates it.
+      // An agent on another origin replaces the local one even though no local generation remains.
+      if sessionChanged || processGeneration != nil || isRemote {
+        onEvidenceInvalidated?(surfaceID, record.evidenceEpoch)
+      }
       record.evidenceEpoch = UUID()
       record.channels.removeAll()
       record.clearCurrentSignals()
       if record.latestSignal != nil { record.latestSignalBinding = .stale }
       record.sessionlessSignalsAllowed = processChanged
-      if processChanged { record.sessionID = nil }
+      if processChanged {
+        record.sessionID = nil
+        record.detectedSessionID = nil
+      }
       if processChanged, let managed = record.managedHook {
         if let forwardingRecord = managed.launch.forwardingRecord {
           update.revokedForwardingRecords.append(forwardingRecord)
@@ -490,28 +542,33 @@ final class AgentObservationStore {
       record.awaitingFirstProcessGeneration = false
       record.firstProcessGenerationStartedBefore = nil
     }
-    if attachesFirstLaunchGeneration, var managed = record.managedHook {
-      managed.processGeneration = processGeneration
-      let pending = managed.pendingSignals
-      managed.pendingSignals.removeAll()
-      record.managedHook = managed
-      record.processGeneration = processGeneration
-      if let acceptedSessionID { record.sessionID = acceptedSessionID }
-      records[surfaceID] = record
-      for pendingSignal in pending {
-        if case .accepted(let signal, _) = recordManagedHook(
-          pendingSignal.input,
-          callerAncestry: pendingSignal.callerAncestry,
-          surfaceID: surfaceID
-        ) {
-          update.activatedSignals.append(signal)
-        }
-      }
-      return update
-    }
     record.processGeneration = processGeneration
-    if let acceptedSessionID { record.sessionID = acceptedSessionID }
+    if let acceptedSessionID {
+      record.sessionID = acceptedSessionID
+    }
+    record.detectedSessionID = acceptedSessionID
+    var pending: [PendingManagedHookSignal] = []
+    if var managed = record.managedHook {
+      if attachesFirstLaunchGeneration { managed.processGeneration = processGeneration }
+      if managed.processGeneration != nil,
+        managed.launch.runtime != .codex || record.detectedSessionID != nil
+      {
+        pending = managed.pendingSignals
+        managed.pendingSignals.removeAll()
+      }
+      record.managedHook = managed
+    }
     records[surfaceID] = record
+    for pendingSignal in pending {
+      if case .accepted(let signal, _) = recordManagedHook(
+        pendingSignal.input,
+        callerAncestry: pendingSignal.callerAncestry,
+        surfaceID: surfaceID,
+        receivedAt: pendingSignal.receivedAt
+      ) {
+        update.activatedSignals.append(signal)
+      }
+    }
     return update
   }
 
@@ -525,14 +582,15 @@ final class AgentObservationStore {
   ) {
     managed.evidenceEpoch = evidenceEpoch
     managed.verified = false
-    managed.pendingSignals.removeAll()
     guard managed.announcesSessionStarts else {
+      managed.pendingSignals.removeAll { $0.input.signal.sessionID != acceptedSessionID }
       if let managedSessionID = managed.sessionID, managedSessionID != acceptedSessionID {
         managed.retiredSessionIDs.insert(managedSessionID)
       }
       managed.sessionID = nil
       return
     }
+    managed.pendingSignals.removeAll()
     if acceptedSessionID == managed.sessionID {
       // The detector returned to the hook session: clear the reversible supersession.
       managed.detectorSupersededSessionID = nil

@@ -14,7 +14,7 @@ struct ActiveAgentRow: View {
       agentIcon
       VStack(alignment: .leading, spacing: 2) {
         title
-        Text(subtitle)
+        subtitleLine
           .font(.caption)
           .foregroundStyle(.secondary)
           .lineLimit(1)
@@ -44,6 +44,43 @@ struct ActiveAgentRow: View {
     .lineLimit(1)
   }
 
+  /// A remote agent shows its host before the usual subtitle (docs-ai 082, L0 item 10). One
+  /// text truncates as a unit, so the subtitle goes first.
+  @ViewBuilder
+  private var subtitleLine: some View {
+    if let remote = entry.remote {
+      HStack(spacing: 3) {
+        Image(systemName: "network")
+          .imageScale(.small)
+          .accessibilityHidden(true)
+        Text(verbatim: "\(RemoteAgentPresentation.hostLabel(for: remote)) \u{00B7} \(subtitle)")
+      }
+    } else {
+      Text(subtitle)
+    }
+  }
+
+  /// The connection health of a remote agent the host does not confirm, under its state.
+  @ViewBuilder
+  private var healthText: some View {
+    if let remote = entry.remote {
+      switch RemoteAgentHealth(remote) {
+      case .live, .unknownState:
+        // An unknown state is the pill's "Unknown": the connection itself is healthy.
+        EmptyView()
+      case .lastSeen(let date):
+        Text("Last seen \(date, style: .relative) ago")
+      case .unavailable:
+        Text("Status unavailable")
+      }
+    }
+  }
+
+  private var isStateEmphasized: Bool {
+    guard let remote = entry.remote else { return true }
+    return RemoteAgentPresentation.emphasizesState(entry.displayState, remote: remote)
+  }
+
   private var agentIcon: some View {
     Group {
       if let icon = entry.iconSource {
@@ -57,22 +94,25 @@ struct ActiveAgentRow: View {
   }
 
   private var statusPill: some View {
-    HStack(spacing: 4) {
-      if entry.displayState == .working {
-        if reduceMotion {
-          statusText
-        } else {
+    VStack(alignment: .trailing, spacing: 1) {
+      HStack(spacing: 4) {
+        if entry.displayState == .working, !reduceMotion, isStateEmphasized {
           BaguaWorkingIndicator()
+        } else {
+          statusText
         }
-      } else {
-        statusText
       }
+      .foregroundStyle(isStateEmphasized ? entry.displayState.foregroundStyle : Color.secondary)
+      healthText
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
     }
-    .foregroundStyle(entry.displayState.foregroundStyle)
+    .fixedSize()
   }
 
   private var statusText: some View {
-    Text(entry.displayState.label)
+    Text(entry.remote?.isStateKnown == false ? String(localized: "Unknown") : entry.displayState.label)
       .font(.caption2.weight(.semibold))
       .lineLimit(1)
   }

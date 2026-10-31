@@ -19,7 +19,6 @@ struct DebouncerTests {
 
     await advance(clock, by: .milliseconds(1))
     await settle { fired }
-    #expect(fired)
   }
 
   @Test func reschedulingReplacesPendingActionAndRestartsInterval() async {
@@ -67,7 +66,6 @@ struct DebouncerTests {
 
     await advance(clock, by: .milliseconds(100))
     await settle { debouncer.isIdle }
-    #expect(debouncer.isIdle)
 
     debouncer.schedule {}
     debouncer.cancel()
@@ -102,8 +100,6 @@ struct KeyedDebouncerTests {
     debouncer.schedule("a", after: .milliseconds(100)) { fired = true }
     await advance(clock, by: .milliseconds(100))
     await settle { fired }
-
-    #expect(fired)
   }
 
   @Test func cancelOnlyAffectsTheGivenKey() async {
@@ -164,12 +160,11 @@ private func advance(_ clock: TestClock<Duration>, by duration: Duration) async 
 
 // Yields the executor until `condition` holds. Plain `Task.yield()` can keep
 // rescheduling the test ahead of the debouncer task under full-suite load, so
-// use detached mega-yields to break that priority tie. The bound only guards a
-// genuine regression, which then fails the following `#expect` instead of
-// hanging the test.
+// use detached mega-yields to break that priority tie.
 @MainActor
-private func settle(until condition: () -> Bool) async {
-  for _ in 0..<50 where !condition() {
+private func settle(sourceLocation: SourceLocation = #_sourceLocation, until condition: () -> Bool) async {
+  await waitUntil(sourceLocation: sourceLocation) {
     await Task.megaYield()
+    return condition()
   }
 }

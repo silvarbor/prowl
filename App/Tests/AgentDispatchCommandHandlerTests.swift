@@ -308,6 +308,50 @@ struct AgentDispatchCommandHandlerTests {
     #expect(await closed.handle(envelope: dispatch(pane: target.paneID)).error?.code == CLIErrorCode.agentGone)
   }
 
+  @Test func dispatchRefusesARemoteAgentBeforeTypingAnything() async throws {
+    let target = resolvedTarget()
+    var remote = snapshot(target, status: .idle, signal: turnEnded)
+    var entry = try #require(remote.agent)
+    entry.remote = RemoteAgentContext(
+      connection: ConnectionKey(user: "dev", hostname: "box"), correlation: .correlated, confirmedAt: Self.start,
+      now: Self.start)
+    remote = AgentConditionSnapshot(
+      agent: entry, signal: remote.signal, revision: remote.revision, isLive: true, signals: remote.signals)
+    var issued = 0
+    let handler = AgentDispatchCommandHandler(
+      resolveTarget: { _ in .success(target) },
+      // An unverifiable composer must not mask the reason.
+      inputProtection: { _ in "The input area could not be verified." },
+      conditionSnapshot: { _ in remote },
+      issueDispatch: { _ in
+        issued += 1
+        return .failure(.surfacePending)
+      }
+    )
+    let response = await handler.handle(envelope: dispatch(pane: target.paneID))
+    #expect(response.error?.code == CLIErrorCode.remoteAgentUnsupported)
+    #expect(issued == 0)
+
+    // Human input needs no receipt: it reaches the same remote agent as typed text.
+    var delivered: [String] = []
+    let input = AgentDispatchCommandHandler(
+      resolveTarget: { _ in .success(target) },
+      conditionSnapshot: { _ in remote },
+      issueDispatch: { _ in
+        issued += 1
+        return .failure(.surfacePending)
+      },
+      deliverPrompt: { _, text in
+        delivered.append(text)
+        return true
+      }
+    )
+    let sent = await input.handle(envelope: envelope(.agentsInput(.init(pane: target.paneID, prompt: "hello"))))
+    #expect(sent.ok)
+    #expect(delivered == ["hello"])
+    #expect(issued == 0)
+  }
+
   @Test func dispatchRefusesWorkingBlockedAndRuntimeNeedsInputAgents() async throws {
     struct BusyCase {
       let status: AgentDisplayState
@@ -468,11 +512,7 @@ struct AgentDispatchCommandHandlerTests {
       now: { Self.start }
     )
     let task = Task { await handler.handle(envelope: self.dispatch(pane: target.paneID)) }
-    for _ in 0..<3 {
-      await Task.yield()
-      await clock.advance(by: .milliseconds(200))
-    }
-    let response = await task.value
+    let response = await drive(task, clock)
     #expect(response.ok)
     #expect(reads == 4)
     #expect(delivered == 1)
@@ -495,11 +535,7 @@ struct AgentDispatchCommandHandlerTests {
       now: { Self.start }
     )
     let task = Task { await handler.handle(envelope: self.dispatch(pane: target.paneID)) }
-    for _ in 0..<(AgentDispatchCommandHandler.idleGraceMilliseconds / 200) {
-      await Task.yield()
-      await clock.advance(by: .milliseconds(200))
-    }
-    let response = await task.value
+    let response = await drive(task, clock)
     #expect(response.error?.code == CLIErrorCode.dispatchTargetBusy)
     #expect(issued == 0)
     let details = try #require(response.error?.details).decode(as: AgentDispatchErrorDetails.self)
@@ -527,16 +563,10 @@ struct AgentDispatchCommandHandlerTests {
       now: { Self.start }
     )
     let task = Task { await handler.handle(envelope: self.dispatch(pane: target.paneID)) }
-    for _ in 0..<9 {
-      await Task.yield()
-      await clock.advance(by: .milliseconds(200))
-    }
-    #expect(!task.isCancelled)
-    await Task.yield()
-    await clock.advance(by: .milliseconds(200))
-    let response = await task.value
+    let response = await drive(task, clock)
     #expect(response.ok)
-    #expect(reads == 11)
+    // One read for the remote-agent refusal, then the idle wait's.
+    #expect(reads == 12)
   }
 
   @Test func dispatchStabilizationAbortsWhenTheAgentStartsWorking() async throws {
@@ -558,11 +588,7 @@ struct AgentDispatchCommandHandlerTests {
       now: { Self.start }
     )
     let task = Task { await handler.handle(envelope: self.dispatch(pane: target.paneID)) }
-    for _ in 0..<4 {
-      await Task.yield()
-      await clock.advance(by: .milliseconds(200))
-    }
-    let response = await task.value
+    let response = await drive(task, clock)
     #expect(response.error?.code == CLIErrorCode.dispatchTargetBusy)
     #expect(issued == 0)
   }
@@ -586,11 +612,7 @@ struct AgentDispatchCommandHandlerTests {
       now: { Self.start }
     )
     let task = Task { await handler.handle(envelope: self.dispatch(pane: target.paneID)) }
-    for _ in 0..<10 {
-      await Task.yield()
-      await clock.advance(by: .milliseconds(200))
-    }
-    let response = await task.value
+    let response = await drive(task, clock)
     #expect(response.ok)
   }
 
@@ -859,5 +881,11 @@ struct AgentDispatchCommandHandlerTests {
       displayState: status,
       lastChangedAt: Self.start
     )
+  }
+
+  /// The idle wait counts the ticks it waited, so ticks until it returns keep its result.
+  private func drive(_ task: Task<CommandResponse, Never>, _ clock: TestClock<Duration>) async -> CommandResponse {
+    await advance(clock, by: .milliseconds(200), until: task)
+      ?? CommandResponse(ok: false, command: "agents.dispatch", schemaVersion: "")
   }
 }

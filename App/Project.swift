@@ -50,6 +50,13 @@ let verifyEmbeddedToolsScript = """
   done
   """
 
+// Ghostty's shell integration runs `$GHOSTTY_BIN_DIR/ghostty`, and libghostty sets that
+// folder to `Contents/MacOS`. The app executable runs Ghostty CLI actions when it starts
+// under this name (docs-ai 085). The symlink is relative so that the signed bundle can move.
+let linkGhosttyCLIScript = """
+  ln -sfh "$EXECUTABLE_NAME" "$TARGET_BUILD_DIR/$EXECUTABLE_FOLDER_PATH/ghostty"
+  """
+
 let project = Project(
   name: "Prowl",
   options: .options(
@@ -99,6 +106,12 @@ let project = Project(
         .pre(
           script: verifyEmbeddedToolsScript,
           name: "Verify prowl-cli binary",
+          basedOnDependencyAnalysis: false
+        ),
+        .post(
+          script: linkGhosttyCLIScript,
+          name: "Link ghostty CLI entry",
+          outputPaths: ["$(TARGET_BUILD_DIR)/$(EXECUTABLE_FOLDER_PATH)/ghostty"],
           basedOnDependencyAnalysis: false
         ),
       ],
@@ -152,6 +165,10 @@ let project = Project(
       buildAction: .buildAction(targets: ["Prowl"]),
       testAction: .targets(
         [.testableTarget(target: "ProwlTests", parallelization: .enabled)],
+        // Most suites run on the main actor, so wider parallelism only queues tests behind it:
+        // the total time stays the same, but each test's reported duration then holds a minute
+        // of queue time. Eight keeps the total within a few percent and the durations real.
+        arguments: .arguments(environmentVariables: ["SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH": "8"]),
         configuration: .debug,
         // Tests assert on English copy.
         options: .options(language: "en", region: "US")

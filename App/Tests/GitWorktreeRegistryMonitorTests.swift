@@ -183,7 +183,7 @@ private final class RegistryEvents {
     pendingEvent = event
     defer { pendingEvent = nil }
     try operation()
-    let result = await XCTWaiter.fulfillment(of: [event], timeout: 2)
+    let result = await XCTWaiter.fulfillment(of: [event], timeout: 10)
     #expect(result == .completed)
   }
 

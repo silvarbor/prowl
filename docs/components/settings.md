@@ -35,7 +35,7 @@ and opens that section's root.
 | **GitHub** | Enable GitHub integration (uses the `gh` CLI). → [github-pull-requests](github-pull-requests.md) |
 | **Commands** | Global Custom Commands. Enabled commands appear in the window toolbar; each repo can independently hide a Global command. → [custom-actions](custom-actions.md) |
 | **Advanced** | Analytics, crash reports, restore terminal layout on launch (experimental) + clear saved layout. |
-| **Agents → Display** | Active Agents panel auto-show, terminal titles, Shelf status markers, and Agent Island enablement, Monitor, global shortcut, silent opacity, and floating-position reset. → [active-agents](active-agents.md), [agent-island](agent-island.md) |
+| **Agents → Display** | Active Agents panel auto-show, terminal titles, Shelf status markers, and Agent Island enablement, Monitor, global shortcut, silent opacity, and floating-position reset, and **Detect agents in SSH sessions** (Prowl's own SSH connection; asked at the first `ssh`). → [active-agents](active-agents.md), [agent-island](agent-island.md), [agent-detection](agent-detection.md#remote-agents-over-ssh) |
 | **Agents → Profiles** | Named launch presets for supported agent runtimes (model, effort, execution mode, tab/split placement, extra arguments, opt-in dedicated home for a separate account) with a live launch preview. List order is the recommendation fallback. → [agent-profiles](agent-profiles.md) |
 | **Agents → CLI & Skills** | Install/status for the bundled `prowl` CLI, the local socket path it uses to reach the app and whether this app is **listening** on it, and the **Agent Skills** section that links the bundled skills into your agents' skill folders. → [cli](cli.md) |
 | **Agents → Workflows** | Compact Built-in and personal workflow lists. Select a row for Enabled, explicit Run target, role profile preferences, Run Setup, validation, and source-file actions; **New Workflow…**, **Create with Agent…**, the **Run History** summary with **Clear History…**, and the CLI dependency banner remain on the index. → [workflows](workflows.md) |
@@ -46,9 +46,16 @@ and opens that section's root.
 - **Global:** `~/.prowl/settings.json`
 - **Global custom commands + agent profiles + workflow settings:** `~/.prowl/global.user.json`
 - **Your workflow files:** `~/.prowl/workflows/*.pwlworkflow` (per repository: `<repo root>/.prowl/workflows/*.pwlworkflow`)
-- **Per-repo:** `~/.prowl/repo/<repo-name>/prowl.json`
-- **Per-repo custom commands + agent profile default/memory:** `~/.prowl/repo/<repo-name>/prowl.user.json`
+- **Per-repo:** `~/.prowl/repo/<repo-name>-<hash>/prowl.json`
+- **Per-repo custom commands + agent profile default/memory:** `~/.prowl/repo/<repo-name>-<hash>/prowl.user.json`
 - **Dedicated agent profile homes:** `~/.prowl/agent-profiles/<uuid>/`
+
+`<hash>` is the first 8 hex digits of the SHA-256 of the repository path. Earlier
+versions used `~/.prowl/repo/<repo-name>/`, which two repositories with one name
+shared; Prowl copies those files (and reads those icons in place) on first use and
+never deletes them. A symlinked file (for example, from dotfiles) is copied as a link to
+the same target, so repositories that shared it keep sharing it. Settings follow the
+path: a moved repository loads the copy source again, not edits made at its old path.
 
 Legacy `~/.supacode` is migrated to `~/.prowl` on first launch. Old `.onevcat.json`
 user settings migrate without deleting the source. See the
@@ -96,12 +103,13 @@ same status as `prowl skills list`.
   not listed.
 - **Target lines** — one per *detected* target under each skill: `Claude Code`
   (`~/.claude/skills`), `Codex` (`~/.codex/skills`), `Shared agents directory`
-  (`~/.agents/skills`), `Devin` (`~/.config/devin/skills`), and `Antigravity`
-  (`~/.gemini/antigravity-cli/skills`), each showing the link's folder
+  (`~/.agents/skills`), `Devin` (`~/.config/devin/skills`), `Antigravity`
+  (`~/.gemini/antigravity-cli/skills`), and `TraeCode CLI` (`~/.trae/skills`), each
+  showing the link's folder
   (`~/.claude/skills/prowl-cli`), its status, and one action. A target is
   detected when its parent folder exists. With no detected target the section
   says so and points at
-  `prowl skills install --target <claude|codex|agents|devin|antigravity>`,
+  `prowl skills install --target <claude|codex|agents|devin|antigravity|trae>`,
   which creates the folder.
 - **Statuses and actions** — one explicit action per skill × target link:
 

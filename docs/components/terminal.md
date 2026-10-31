@@ -101,6 +101,14 @@ and a profile that sets launch-scoped environment variables runs as
 `env VAR=… claude`, whose first token is `env`. The slot stays claimable, so a
 later recognised command in the same tab still takes it over.
 
+A tab with a pane whose foreground `ssh` reaches a remote host also shows a network glyph
+before its title, and the tooltip names the host. The pane itself shows `user@host` in its
+bottom-trailing corner for five seconds when the label appears or changes. Then only the
+network glyph stays, so the label does not cover the terminal's bottom line (for example a
+tmux status line); put the pointer on the glyph to see the host again. After that `ssh`
+exits, the corner reads "Disconnected from user@host" for five seconds. A yellow warning
+glyph in that label means Prowl cannot read the pane's agents; its tooltip says why. See [agent detection](agent-detection.md#remote-agents-over-ssh).
+
 ## Shell integration & status (OSC sequences)
 
 Ghostty's shell integration drives several Prowl features via terminal escape
@@ -114,9 +122,12 @@ sequences:
   tab's activity indicator and task status. Task status *also* folds in detected
   agent activity (Working/Blocked, incl. background workflows) — see
   [agent-detection](agent-detection.md#worktree-running-indicator).
-- **Program status (OSC 7501)** — Prowl answers the support query, so programs
-  that speak the protocol (Claude Code 2.1.295+, Pi 1.1.0+, Oh My Pi 18.8.7+) report
-  idle/working/blocked/done/error. Prowl keeps one record tree per pane with the
+- **Program status (OSC 7501)** — Prowl answers the support query (protocol
+  revision 0.4: `?` plus the states and kinds it accepts), so programs
+  that speak the protocol (Claude Code 2.1.295+, Pi 1.1.0+, Oh My Pi 18.8.7+,
+  Codex 0.163.0+, and recent Amp, Antigravity, Devin, Droid, and Grok Build)
+  report their state. Codex sends idle/working/blocked; the other verified
+  producers also send done. Reports without a support query are accepted. Prowl keeps one record tree per pane with the
   protocol's lifetime rules (a report replaces its record, `clear` removes a
   subtree, `app` is inherited, at most 256 records) and feeds the root record to
   agent detection — see
@@ -168,6 +179,27 @@ Scrollback, wide/CJK character rendering, and copy/paste are handled by Ghostty
 with its defaults. Customize terminal behavior in the Ghostty config that Prowl
 uses (see [Ghostty config](#ghostty-config)).
 
+**Clipboard confirmations.** Prowl asks before a clipboard action that Ghostty
+holds for confirmation. The Ghostty config decides which actions these are:
+
+| Action | Config (default) | When Prowl asks |
+| --- | --- | --- |
+| Paste (⌘V, **Edit > Paste**) | `clipboard-paste-protection` (`true`), `clipboard-paste-bracketed-safe` (`true`) | The text contains a line break or carriage return and the program has not turned on bracketed paste, or the text contains the bracketed paste end sequence `ESC [ 2 0 1 ~` |
+| A program reads the clipboard (OSC 52, Kitty clipboard protocol) | `clipboard-read` (`ask`) | Every read, while the value is `ask` |
+| A program writes the clipboard (OSC 52, Kitty clipboard protocol) | `clipboard-write` (`allow`) | Every write, while the value is `ask` |
+
+The sheet shows the text that would be pasted, read, or written, with control
+characters shown as `\u{…}`, or the image for an image read. **Cancel** or
+**Deny** is the default button. For a Kitty clipboard request that carries a
+password, **Remember this choice for this session** with **Allow** lets later
+requests with that password in the same pane through without a question. A request from a pane that is not focused
+waits and rings that pane's bell; the sheet opens when you focus the pane. A
+pane has at most one waiting request: a newer request denies the older one,
+and closing the pane denies it. Set `clipboard-paste-protection = false` or
+`clipboard-read = allow` to turn the questions off. Text that Prowl or the
+`prowl` CLI sends to a pane does not go through the clipboard and is never
+held. Dropped text is not checked yet.
+
 **CJK font fallback.** When the active Ghostty config sets neither `font-family`
 nor `font-codepoint-map` (including its `config-file` includes, the active theme
 file, and `--font-family=…` launch arguments), Prowl maps kana, CJK punctuation,
@@ -188,6 +220,21 @@ The font follows the first CJK language in the system language list (a
 
 Set `font-family` or `font-codepoint-map` to take over; Prowl then adds nothing.
 
+**Links.** ⌘-click opens a link from terminal output: an OSC 8 hyperlink or text
+that matches a Ghostty `link` entry (by default, URLs). Any program can print
+such a link, so Prowl checks the target first:
+
+| Target | Result |
+|---|---|
+| `http`/`https` with a host, `mailto` with an address | Opens directly |
+| Local file or folder (`file://` or a plain path such as `~/notes.txt`) that exists and cannot run code | Opens directly |
+| Any other scheme (for example `vscode://`) | Opens after a confirmation that names the app |
+| Application bundles, scripts, executables, installer and shortcut files, missing files, remote `file` hosts, targets with invisible or line-breaking characters, values without a scheme | Blocked with an alert that offers **Copy Link** |
+
+Symlinks and Finder aliases are judged by the file they point to, and that file
+is what opens. A relative path is resolved against Prowl's own working
+directory, not the pane's, so it is usually blocked as missing.
+
 ## Ghostty config
 
 By default Prowl reads the same config files as the standalone Ghostty app
@@ -207,6 +254,33 @@ and a change of source applies to running terminals immediately.
 Prowl-only keys such as `prowl-split-divider-width` are read from the active
 source's file.
 
+**Environment variables.** The Ghostty `env` key (`env = NAME=value`, one line
+per variable) sets variables in every terminal that Prowl starts. It applies
+after the variables that Ghostty sets, so it can also override them.
+
+## Ghostty CLI and SSH integration
+
+The app bundle contains `Contents/MacOS/ghostty`, a link to the app executable.
+Under that name, the executable runs Ghostty CLI actions with the Ghostty
+version that Prowl embeds (`ghostty +version`, `+list-themes`, `+show-config`,
+`+ssh`, `+ssh-cache`, …) and exits; it never opens a window, and without an
+action it prints a hint and exits with status 1. Prowl panes set
+`GHOSTTY_BIN_DIR` to that folder, and the default `path` shell integration
+feature appends it to `PATH`, so `ghostty` resolves to it unless another
+`ghostty` comes earlier in `PATH`. To use it outside Prowl, link it from a
+folder in `PATH` (for example
+`ln -s /Applications/Prowl.app/Contents/MacOS/ghostty ~/.local/bin/ghostty`);
+it still finds the resources in the app bundle.
+
+This makes Ghostty's SSH features work in Prowl panes:
+`shell-integration-features = ssh-env,ssh-terminfo` wraps `ssh` in
+`ghostty +ssh`, which installs the `xterm-ghostty` terminfo on a remote host on
+the first connection and forwards `COLORTERM`, `TERM_PROGRAM`, and
+`TERM_PROGRAM_VERSION`. The install cache (`ghostty +ssh-cache`) is
+`$XDG_STATE_HOME/ghostty/ssh_cache` (default `~/.local/state/ghostty/`), the
+same file that Ghostty.app uses. Remote folders that Prowl opens over ssh run
+`/usr/bin/ssh` directly and do not use this wrapper.
+
 ## Color scheme
 
 The terminal theme automatically follows the macOS light/dark appearance. There's
@@ -216,7 +290,9 @@ no in-app Ghostty theme picker; change Ghostty colors via its config file.
 
 If `restoreTerminalLayoutOnLaunch` is enabled, Prowl saves the tab/split layout
 (which worktrees, tabs, split trees, titles, icons) and restores it on next
-launch. Notification bodies are not persisted. If a repository fails to load at
+launch. It saves when you quit and each time Prowl stops being the active app, so
+a crash loses only the changes made since you last switched away. Notification
+bodies are not persisted. If a repository fails to load at
 launch (for example, its folder is gone), Prowl still restores the layout of the
 other repositories and applies the default view mode; the worktrees of the
 failed repository are skipped.
