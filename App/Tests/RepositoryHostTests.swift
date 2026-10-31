@@ -245,10 +245,10 @@ struct RepositoryHostTests {
     }
     await store.send(.suggestIconTapped)
     await store.receive(\.symbolSuggestionsFailed) {
-      $0.symbolSuggestions = .failed("Suggestions are not available for remote folders yet.")
+      $0.symbolSuggestions = .failed("Suggestions are not available for remote projects yet.")
     }
     await store.send(.importUserImage(URL(fileURLWithPath: "/tmp/icon.png"))) {
-      $0.appearanceImportError = "Images are not available for remote folders yet."
+      $0.appearanceImportError = "Images are not available for remote projects yet."
     }
   }
 
@@ -297,7 +297,7 @@ struct RepositoryHostTests {
     let remote = RemoteRepositoryFixtures.gitRepository()
     let local = Repository(location: .local(URL(fileURLWithPath: "/tmp/local-app/")), name: "local-app", worktrees: [])
     var state = RepositoriesFeature.State()
-    state.repositoryOrderIDs = [remote.id, local.id]
+    state.sidebarLayout = SidebarLayout(repositoryIDs: [remote.id, local.id])
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
     } withDependencies: {
@@ -308,7 +308,7 @@ struct RepositoryHostTests {
     await store.send(.repositorySnapshotLoaded([local, remote]))
 
     #expect(store.state.repositoryRoots == [local.location, remote.location])
-    #expect(store.state.repositoryOrderIDs == [remote.id, local.id])
+    #expect(store.state.sidebarLayout.repositoryIDs == [remote.id, local.id])
     #expect(store.state.orderedRepositoryIDs() == [remote.id, local.id])
   }
 
@@ -358,7 +358,7 @@ struct RepositoryHostTests {
     await store.receive(\.presentAlert) {
       $0.alert = RepositoriesFeature().messageAlert(
         title: "Unable to rename branch",
-        message: "Remote folders are not available yet."
+        message: "Remote projects are not available yet."
       )
     }
   }
