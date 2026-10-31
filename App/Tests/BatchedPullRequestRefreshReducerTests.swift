@@ -147,7 +147,7 @@ struct BatchedPullRequestRefreshReducerTests {
     )
     let repository = Repository(
       id: context.repository.id,
-      rootURL: context.repository.rootURL,
+      rootURL: context.repoRootURL,
       name: context.repository.name,
       worktrees: IdentifiedArrayOf(uniqueElements: [context.mainWorktree, detachedWorktree])
     )
@@ -172,7 +172,7 @@ struct BatchedPullRequestRefreshReducerTests {
     await store.send(
       .worktreeInfoEvent(
         .repositoryPullRequestRefresh(
-          repositoryRootURL: context.repoRootURL,
+          repository: .local(context.repoRootURL),
           worktreeIDs: [context.mainWorktree.id, detachedWorktree.id]
         )
       )
@@ -199,13 +199,13 @@ struct BatchedPullRequestRefreshReducerTests {
       id: context.featureWorktree.id,
       name: "feature",
       detail: "detail",
-      workingDirectory: context.featureWorktree.workingDirectory,
+      workingDirectory: URL(fileURLWithPath: "\(context.repoRoot)/feature"),
       repositoryRootURL: context.repoRootURL,
       isDetached: true
     )
     let repository = Repository(
       id: context.repository.id,
-      rootURL: context.repository.rootURL,
+      rootURL: context.repoRootURL,
       name: context.repository.name,
       worktrees: IdentifiedArrayOf(uniqueElements: [context.mainWorktree, detachedWorktree])
     )
@@ -223,7 +223,6 @@ struct BatchedPullRequestRefreshReducerTests {
 
     let outcome = PullRequestRefreshCoordinator.Outcome.refreshed(
       repositoryID: repository.id,
-      repositoryRootURL: context.repoRootURL,
       worktreeIDs: [detachedWorktree.id],
       prsByBranch: ["feature": makePullRequestFixture(state: "MERGED")],
       confirmedNoPrBranches: []

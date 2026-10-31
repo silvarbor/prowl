@@ -185,7 +185,7 @@ struct RemoteRepositoryPersistenceTests {
       return false
     }
 
-    #expect(payload.version == 3)
+    #expect(payload.version == 4)
     #expect(restored == [remote])
   }
 
