@@ -4,8 +4,6 @@ import ProwlCLIShared
 
 struct TerminalClient {
   var send: @MainActor @Sendable (Command) -> Void
-  /// Creates and selects a tab synchronously so Canvas can target its exact ID.
-  var createTabInDirectory: @MainActor @Sendable (Worktree, URL) -> TerminalTabID?
   /// Launches a compiled profile request synchronously and returns the exact tab
   /// and pane identities. This is the CLI/workflow boundary used by workflow starts.
   var launchAgentProfile:
@@ -13,6 +11,10 @@ struct TerminalClient {
   var events: @MainActor @Sendable () -> AsyncStream<Event>
   /// Per-surface multicast stream. Independent from the single-consumer event stream.
   var observeAgentState: @MainActor @Sendable (UUID) -> AgentObservationStream
+  var canvasFocusedCard: @MainActor @Sendable () -> CanvasCardRef? = { nil }
+  /// The card to focus when Canvas returns to `card`: the card itself while its tab is open,
+  /// else the selected tab of its worktree, else the selected tab of another open worktree.
+  var canvasRestorableCard: @MainActor @Sendable (CanvasCardRef) -> CanvasCardRef? = { $0 }
   var canvasFocusedWorktreeID: @MainActor @Sendable () -> Worktree.ID?
   /// Active surface in the selected tab. Lets the reducer capture the target
   /// synchronously before an async dispatch races against AppKit focus reshuffle
@@ -63,12 +65,18 @@ struct TerminalClient {
     case focusSelectedTab(Worktree)
     case prune(Set<Worktree.ID>)
     case prunePreservingRepositories(keeping: Set<Worktree.ID>, repositoryIDs: Set<Repository.ID>)
+    /// A repository the user removed while it was not loaded: its saved remote layout goes too
+    /// (docs-ai 084 C5).
+    case discardSavedLayout(repositoryID: Repository.ID)
     case setNotificationsEnabled(Bool)
     case setCommandFinishedNotification(enabled: Bool, threshold: Int)
     case setCanvasMode(Bool)
+    case setRemoteAgentDetection(RemoteAgentDetectionConsent)
     case setSelectedWorktreeID(Worktree.ID?)
     case saveLayoutSnapshot
-    case restoreLayoutSnapshot(worktrees: [Worktree])
+    /// `allowsMissingWorktrees` skips the saved worktrees that `worktrees` does not hold
+    /// instead of resetting the whole layout; a failed repository load leaves them out.
+    case restoreLayoutSnapshot(worktrees: [Worktree], allowsMissingWorktrees: Bool = false)
     case presentTabIconPicker(Worktree)
   }
 
@@ -85,6 +93,10 @@ struct TerminalClient {
     case taskStatusChanged(worktreeID: Worktree.ID, status: WorktreeTaskStatus)
     case agentEntryChanged(ActiveAgentEntry)
     case agentEntryRemoved(ActiveAgentEntry.ID)
+    /// A pane's `ssh` waits for the user's answer before Prowl connects (docs-ai 082).
+    case remoteAgentConsentNeeded(worktreeID: Worktree.ID, surfaceID: UUID, destination: String)
+    /// A remote folder's tab did not start, so it closed (docs-ai 084 C3b).
+    case remoteTerminalFailed(worktreeID: Worktree.ID, message: String)
     /// A profile launch created its surface. The reducer records the per-repo
     /// launch memory on this event — not at dispatch — so a failed launch
     /// never shifts the Recommended resolution (docs-ai 053/005).
@@ -103,7 +115,6 @@ struct TerminalClient {
 extension TerminalClient: DependencyKey {
   static let liveValue = TerminalClient(
     send: { _ in fatalError("TerminalClient.send not configured") },
-    createTabInDirectory: { _, _ in fatalError("TerminalClient.createTabInDirectory not configured") },
     launchAgentProfile: { _, _ in fatalError("TerminalClient.launchAgentProfile not configured") },
     events: { fatalError("TerminalClient.events not configured") },
     observeAgentState: { _ in fatalError("TerminalClient.observeAgentState not configured") },
@@ -118,7 +129,6 @@ extension TerminalClient: DependencyKey {
 
   static let testValue = TerminalClient(
     send: { _ in },
-    createTabInDirectory: { _, _ in nil },
     launchAgentProfile: { _, _ in .failure(.tabCreationFailed) },
     events: { AsyncStream { $0.finish() } },
     observeAgentState: { _ in AgentObservationStream { $0.finish() } },

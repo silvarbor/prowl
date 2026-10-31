@@ -66,6 +66,9 @@
     },
     {
       "$ref": "#/$defs/workflowResponse"
+    },
+    {
+      "$ref": "#/$defs/canvasResponse"
     }
   ],
   "$defs": {
@@ -1100,6 +1103,69 @@
         },
         "signals": {
           "$ref": "#/$defs/agentSignals"
+        },
+        "remote": {
+          "$ref": "#/$defs/agentsRemote"
+        }
+      }
+    },
+    "agentsRemote": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "correlation",
+        "confidence",
+        "freshness",
+        "state_known"
+      ],
+      "properties": {
+        "host": {
+          "type": "string",
+          "minLength": 1
+        },
+        "user": {
+          "type": "string"
+        },
+        "hostname": {
+          "type": "string",
+          "minLength": 1
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "correlation": {
+          "enum": [
+            "pending",
+            "correlated",
+            "ambiguous",
+            "unmapped",
+            "probe_unavailable",
+            "unsupported",
+            "tmux_unreachable"
+          ]
+        },
+        "correlation_reason": {
+          "type": "string"
+        },
+        "confidence": {
+          "enum": [
+            "probed",
+            "heuristic"
+          ]
+        },
+        "freshness": {
+          "enum": [
+            "fresh",
+            "stale"
+          ]
+        },
+        "last_confirmed_at": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state_known": {
+          "type": "boolean"
         }
       }
     },
@@ -2690,7 +2756,8 @@
                 "codex",
                 "agents",
                 "devin",
-                "antigravity"
+                "antigravity",
+                "trae"
               ]
             },
             "detected": {
@@ -2724,7 +2791,8 @@
                 "codex",
                 "agents",
                 "devin",
-                "antigravity"
+                "antigravity",
+                "trae"
               ]
             },
             "detected": {
@@ -2760,7 +2828,8 @@
                 "codex",
                 "agents",
                 "devin",
-                "antigravity"
+                "antigravity",
+                "trae"
               ]
             },
             "detected": {
@@ -2860,7 +2929,8 @@
             "codex",
             "agents",
             "devin",
-            "antigravity"
+            "antigravity",
+            "trae"
           ]
         },
         "path": {
@@ -4620,6 +4690,93 @@
           "$ref": "#/$defs/error"
         }
       }
+    },
+    "canvasData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "showing",
+        "card_count"
+      ],
+      "properties": {
+        "action": {
+          "enum": [
+            "show",
+            "hide",
+            "layout",
+            "fit",
+            "status"
+          ]
+        },
+        "showing": {
+          "type": "boolean"
+        },
+        "layout": {
+          "enum": [
+            "arrange",
+            "organize",
+            "tile",
+            "freeform"
+          ]
+        },
+        "card_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "canvasResponse": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ok",
+            "command",
+            "schema_version",
+            "data"
+          ],
+          "properties": {
+            "ok": {
+              "const": true
+            },
+            "command": {
+              "const": "canvas"
+            },
+            "schema_version": {
+              "const": "prowl.cli.canvas.v1"
+            },
+            "data": {
+              "$ref": "#/$defs/canvasData"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ok",
+            "command",
+            "schema_version",
+            "error"
+          ],
+          "properties": {
+            "ok": {
+              "const": false
+            },
+            "command": {
+              "const": "canvas"
+            },
+            "schema_version": {
+              "const": "prowl.cli.canvas.v1"
+            },
+            "error": {
+              "$ref": "#/$defs/error"
+            }
+          }
+        }
+      ]
     }
   }
 }

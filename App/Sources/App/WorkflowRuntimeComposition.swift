@@ -380,8 +380,13 @@ extension ProwlApp {
       }
     }
     if !request.background {
-      selectCLIWorktreeContext(
-        worktreeID: worktree.id, appStore: appStore, terminalManager: terminalManager)
+      if case .tab = request.placement {
+        selectCLIWorktreeContextForNewTab(
+          worktreeID: worktree.id, appStore: appStore, terminalManager: terminalManager)
+      } else {
+        selectCLIWorktreeContext(
+          worktreeID: worktree.id, appStore: appStore, terminalManager: terminalManager)
+      }
       terminalManager.state(for: worktree).selectTab(launched.tabID)
     }
     let snapshot = TargetResolutionSnapshotBuilder.makeSnapshot(
@@ -422,10 +427,14 @@ extension ProwlApp {
         background: request.background
       )
     }
+    // Checked before the cwd below is read; prepareAgentProfileLaunch refuses again.
+    guard worktree.availability(of: .profileLaunch).isAvailable, let workingDirectory = worktree.localURL else {
+      return .failure(.failed("Agent Profiles cannot launch in a remote folder yet."))
+    }
     let launchRequest = AgentProfileLaunchRequest(
       plan: frozenPlan,
       placement: placement,
-      workingDirectoryOverride: worktree.workingDirectory,
+      workingDirectoryOverride: workingDirectory,
       inheritanceAnchor: request.anchorSurfaceID,
       title: request.profile.name
     )
@@ -500,7 +509,8 @@ extension ProwlApp {
             token: entry.agent.rawValue, displayName: entry.agent.displayName,
             sessionIdentity: WorkflowHistorySessionIdentity.resolve(
               agent: entry.agent, detected: entry.session,
-              currentSignal: terminalManager.currentAgentSignalEvidence(surfaceID: surfaceID).latestManagedHook))
+              currentSignal: terminalManager.currentAgentSignalEvidence(surfaceID: surfaceID).latestManagedHook),
+            isRemote: entry.remote != nil)
         }
       },
       pendingDispatchID: { surfaceID in
@@ -513,7 +523,8 @@ extension ProwlApp {
           id: id, repositories: Array(appStore.state.repositories.repositories))
       },
       branchName: { worktree in
-        WorktreeBranchReader.branchName(of: worktree.workingDirectory) ?? worktree.name
+        // Workflows run only in local worktrees (admission refuses remote ones).
+        worktree.localURL.flatMap(WorktreeBranchReader.branchName(of:)) ?? worktree.name
       },
       makeLaunchPlan: { profile in
         try AgentProfileLaunchPlanner.plan(
@@ -588,7 +599,7 @@ nonisolated enum WorktreeBranchReader {
     guard let git = GitExecutableResolver.shared.cachedExecutable else { return nil }
     let process = Process()
     process.executableURL = git.url
-    process.environment = ProcessInfo.processInfo.environment.merging(git.environment) { _, selected in selected }
+    process.environment = git.processEnvironment
     process.arguments = [
       "-C", worktree.path(percentEncoded: false), "symbolic-ref", "--short", "-q", "HEAD",
     ]

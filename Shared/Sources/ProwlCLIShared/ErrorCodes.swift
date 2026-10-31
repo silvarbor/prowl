@@ -49,6 +49,13 @@ nonisolated public enum CLIErrorCode {
   // Profiles
   public static let profilesFailed = "PROFILES_FAILED"
 
+  // Canvas
+  public static let canvasFailed = "CANVAS_FAILED"
+  /// `canvas layout|fit` while Canvas is hidden and `--show` was not given.
+  public static let canvasNotShowing = "CANVAS_NOT_SHOWING"
+  /// Canvas cannot open: there is no open worktree or folder to show.
+  public static let canvasUnavailable = "CANVAS_UNAVAILABLE"
+
   // Skills
   public static let skillsFailed = "SKILLS_FAILED"
   public static let skillNotFound = "SKILL_NOT_FOUND"
@@ -102,6 +109,8 @@ nonisolated public enum CLIErrorCode {
   // Run-time codes of the workflow runner (dsl-spec §9); emitted by `workflow run/deliver` from B3 on.
   public static let runNotFound = "RUN_NOT_FOUND"
   public static let paneBusy = "PANE_BUSY"
+  /// The pane's agent runs on a remote host; it can be observed but not driven by receipts.
+  public static let remoteAgentUnsupported = "REMOTE_AGENT_UNSUPPORTED"
   public static let roleMismatch = "ROLE_MISMATCH"
   public static let stepNotExpecting = "STEP_NOT_EXPECTING"
   public static let tokenRequired = "TOKEN_REQUIRED"

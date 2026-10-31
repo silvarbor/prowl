@@ -125,6 +125,9 @@ extension AppFeature {
     case .newWorkspace:
       return .send(.repositories(.workspaceCreation(.promptRequested)))
 
+    case .addRemoteFolder:
+      return .send(.repositories(.addRemoteFolderRequested))
+
     case .editWorkspace(let repositoryID):
       return .send(
         .repositories(.workspaceEditing(.promptRequested(repositoryID, removingChildID: nil))))
@@ -145,13 +148,13 @@ extension AppFeature {
       return .send(.repositories(.requestCanvasCommand(.toggleExpand)))
 
     case .arrangeCanvasCards:
-      return .send(.repositories(.requestCanvasCommand(.arrange)))
+      return .send(.repositories(.requestCanvasCommand(.layout(.arrange))))
 
     case .organizeCanvasCards:
-      return .send(.repositories(.requestCanvasCommand(.organize)))
+      return .send(.repositories(.requestCanvasCommand(.layout(.organize))))
 
     case .tileCanvasCards:
-      return .send(.repositories(.requestCanvasCommand(.tile)))
+      return .send(.repositories(.requestCanvasCommand(.layout(.tile))))
 
     case .selectAllCanvasCards:
       return .send(.repositories(.requestCanvasCommand(.selectAll)))
@@ -182,7 +185,7 @@ extension AppFeature {
       guard let worktree = state.repositories.selectedTerminalWorktree else {
         return .none
       }
-      let path = worktree.workingDirectory.path
+      let path = worktree.location.displayPath
       return .run { _ in
         await MainActor.run {
           NSPasteboard.general.clearContents()
@@ -191,7 +194,8 @@ extension AppFeature {
       }
 
     case .revealInSidebar:
-      guard state.repositories.selectedWorktreeID != nil else { return .none }
+      guard state.repositories.selectedWorktreeID != nil || state.repositories.selectedRepository != nil
+      else { return .none }
       return .merge(
         .send(.showLeftSidebar),
         .send(.repositories(.revealSelectedWorktreeInSidebar))

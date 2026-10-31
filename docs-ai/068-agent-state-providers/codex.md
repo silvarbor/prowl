@@ -5,6 +5,17 @@ Status: implemented in [#800](https://github.com/onevcat/Prowl/pull/800), merge
 Reference baseline: `e54b1e19`, 2026-09-14. Shared arbitration is in
 [architecture.md](architecture.md).
 
+## OSC authority
+
+Codex 0.163.0+ reports `app=codex` through OSC 7501. An eligible root decides the
+pane state ahead of this log provider and the screen, and sampling is delegated
+while it remains present. `blocked` has no kind; completion and interruption both
+report `idle`, which does not earn a Done badge. OSC carries no session identity or
+completion receipt. Session resolution, semantic transcript reads, and managed
+notifications keep their existing contracts. `clear` restores the log/screen path.
+The contracts below describe that fallback. See
+[079.007](../079-program-status-osc-7501/007-codex-verified.md).
+
 ## Acquisition contract
 
 `App/Sources/Infrastructure/AgentDetection/CodexLogProvider.swift` samples writable

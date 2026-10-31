@@ -14,7 +14,10 @@ final class GithubSettingsViewModel {
   }
 
   var state: State = .loading
-  var rateLimitedUntil: Date?
+  var rateLimitBlocks: [GithubRateLimitBlock] = []
+
+  // The scope of the `gh auth status` call that loads the account list.
+  private static let accountListScope = GithubRateLimitRequest(arguments: ["auth", "status"]).scope
 
   @ObservationIgnored
   @Dependency(GithubIntegrationClient.self) private var githubIntegration
@@ -23,14 +26,25 @@ final class GithubSettingsViewModel {
   @Dependency(GithubCLIClient.self) private var githubCLI
 
   // Follows the account's rate limit while the page is open, and reloads the account list once
-  // GitHub accepts requests again if the limit kept it from loading.
+  // GitHub accepts its requests again if the limit kept it from loading.
   func observeRateLimit() async {
-    for await retryAt in await githubCLI.rateLimitRetryTimes() {
-      rateLimitedUntil = retryAt
-      if retryAt == nil, case .rateLimited = state {
+    for await blocks in await githubCLI.rateLimitBlocks() {
+      rateLimitBlocks = blocks
+      if !Self.holdsBackAccountList(blocks), case .rateLimited = state {
         await load()
       }
     }
+  }
+
+  func retryNow() async {
+    await githubCLI.retryRateLimitedRequests()
+    if case .rateLimited = state {
+      await load()
+    }
+  }
+
+  private static func holdsBackAccountList(_ blocks: [GithubRateLimitBlock]) -> Bool {
+    blocks.contains { $0.scope == accountListScope }
   }
 
   func load() async {
@@ -59,8 +73,8 @@ final class GithubSettingsViewModel {
       case .rateLimited(let retryAt):
         // The gate may have reopened while this load was in flight, after the observer already
         // saw the recovery; its current state decides between reloading and waiting for it.
-        var gateState = await githubCLI.rateLimitRetryTimes().makeAsyncIterator()
-        if case .some(.none) = await gateState.next() {
+        var gateState = await githubCLI.rateLimitBlocks().makeAsyncIterator()
+        if let blocks = await gateState.next(), !Self.holdsBackAccountList(blocks) {
           await load()
           return
         }
@@ -87,8 +101,10 @@ struct GithubSettingsView: View {
           .help("Enable GitHub integration")
         }
         Section("GitHub CLI") {
-          if let retryAt = viewModel.rateLimitedUntil, viewModel.state.isRateLimited == false {
-            GithubRateLimitNotice(retryAt: retryAt)
+          if let retryAt = viewModel.rateLimitBlocks.map(\.retryAt).min(), viewModel.state.isRateLimited == false {
+            GithubRateLimitNotice(retryAt: retryAt, blocks: viewModel.rateLimitBlocks) {
+              Task { await viewModel.retryNow() }
+            }
           }
           switch viewModel.state {
           case .loading:
@@ -154,7 +170,12 @@ struct GithubSettingsView: View {
             }
 
           case .rateLimited(let retryAt):
-            GithubRateLimitNotice(retryAt: viewModel.rateLimitedUntil ?? retryAt)
+            GithubRateLimitNotice(
+              retryAt: viewModel.rateLimitBlocks.map(\.retryAt).min() ?? retryAt,
+              blocks: viewModel.rateLimitBlocks
+            ) {
+              Task { await viewModel.retryNow() }
+            }
 
           case .error(let message):
             VStack(alignment: .leading, spacing: 8) {
@@ -226,6 +247,8 @@ extension GithubSettingsViewModel.State {
 
 private struct GithubRateLimitNotice: View {
   let retryAt: Date
+  let blocks: [GithubRateLimitBlock]
+  let onRetry: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
@@ -236,12 +259,15 @@ private struct GithubRateLimitNotice: View {
       .foregroundStyle(.orange)
       Text(
         """
-        GitHub refused requests for this account's rate limit. Prowl sends none until the retry time, \
-        so other tools on the account keep working.
+        GitHub refused requests for this account's rate limit. Prowl sends nothing more to these hosts \
+        and APIs until the retry time, so other tools on the account keep working.
         """
       )
       .foregroundStyle(.secondary)
       .font(.callout)
+      GithubRateLimitBlockList(blocks: blocks)
+      Button("Retry Now", action: onRetry)
+        .help("Send the next request to GitHub now instead of at the retry time")
     }
   }
 }

@@ -7,13 +7,33 @@ struct CanvasFocusRequest: Equatable, Sendable {
     case tab(TerminalTabID)
   }
 
+  /// How the viewport follows the focused card.
+  enum Viewport: Equatable, Sendable {
+    /// Center and zoom to the card — explicit navigation to it.
+    case center
+    /// Show the card with the least pan (zooming out only if it does not fit),
+    /// keeping the surrounding cards in view — used for newly created cards.
+    case reveal
+  }
+
   let id: Int
   let target: Target
+  var viewport: Viewport = .center
 }
 
-struct CanvasFocusCandidate: Equatable, Sendable {
+/// One card on the canvas: an open tab that has a surface, plus the worktree
+/// that owns it.
+struct CanvasCardRef: Equatable, Sendable {
   let worktreeID: Worktree.ID
   let tabID: TerminalTabID
+
+  var key: String { tabID.canvasCardKey }
+}
+
+extension TerminalTabID {
+  /// Key of this tab's card in `CanvasLayoutStore` (persisted, so it must stay
+  /// the tab UUID string).
+  var canvasCardKey: String { rawValue.uuidString }
 }
 
 /// A reducer-driven request to run one of CanvasView's view-local commands
@@ -23,9 +43,8 @@ struct CanvasFocusCandidate: Equatable, Sendable {
 struct CanvasCommandRequest: Equatable, Sendable {
   enum Command: Equatable, Sendable {
     case toggleExpand
-    case arrange
-    case organize
-    case tile
+    case layout(CanvasLayoutKind)
+    case fit
     case selectAll
     case navigate(CanvasNavigationDirection)
   }
@@ -37,7 +56,7 @@ struct CanvasCommandRequest: Equatable, Sendable {
 enum CanvasFocusResolver {
   static func resolve(
     request: CanvasFocusRequest,
-    candidates: [CanvasFocusCandidate],
+    candidates: [CanvasCardRef],
     currentPrimaryTabID: TerminalTabID?
   ) -> TerminalTabID? {
     switch request.target {
@@ -56,5 +75,19 @@ enum CanvasFocusResolver {
       }
       return matchingTabIDs[(currentIndex + 1) % matchingTabIDs.count]
     }
+  }
+}
+
+/// Which newly placed card Canvas follows.
+enum CanvasNewCardFocus {
+  /// The last new card, in canvas order, whose tab was created in the
+  /// foreground. Background creations, restores, and existing cards that only
+  /// just appeared on the canvas are never followed.
+  static func cardToFollow(
+    newKeys: Set<String>,
+    cards: [CanvasCardRef],
+    foregroundTabIDs: Set<TerminalTabID>
+  ) -> CanvasCardRef? {
+    cards.last { newKeys.contains($0.key) && foregroundTabIDs.contains($0.tabID) }
   }
 }

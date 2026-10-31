@@ -29,7 +29,7 @@ struct AppFeatureSettingsSelectionTests {
     await store.send(.settings(.setSelection(.repository(repository.id)))) {
       $0.settings.selection = .repository(repository.id)
       $0.settings.repositorySettings = RepositorySettingsFeature.State(
-        rootURL: repository.rootURL,
+        location: .local(repository.localURL!),
         repositoryID: repository.id,
         repositoryKind: repository.kind,
         settings: .default,
@@ -74,7 +74,7 @@ struct AppFeatureSettingsSelectionTests {
     await store.send(.settings(.setSelection(.repository(repository.id)))) {
       $0.settings.selection = .repository(repository.id)
       $0.settings.repositorySettings = RepositorySettingsFeature.State(
-        rootURL: repository.rootURL,
+        location: .local(repository.localURL!),
         repositoryID: repository.id,
         repositoryKind: .plain,
         settings: .default,
@@ -88,7 +88,8 @@ struct AppFeatureSettingsSelectionTests {
     // @Shared used to construct a State with `.empty` appearance and
     // load asynchronously via .task. The async hop raced with the
     // user's first click, sometimes wiping previously-saved fields.
-    // The State must now carry the appearance from frame zero.
+    // The State must carry the appearance from frame zero; it now reads
+    // the shared store directly.
     let storage = SettingsTestStorage()
     let appearancesURL = URL(fileURLWithPath: "/tmp/appearances-\(UUID().uuidString).json")
     let savedAppearance = RepositoryAppearance(
@@ -125,14 +126,14 @@ struct AppFeatureSettingsSelectionTests {
       await store.send(.settings(.setSelection(.repository(repository.id)))) {
         $0.settings.selection = .repository(repository.id)
         $0.settings.repositorySettings = RepositorySettingsFeature.State(
-          rootURL: repository.rootURL,
+          location: .local(repository.localURL!),
           repositoryID: repository.id,
           repositoryKind: repository.kind,
           settings: .default,
-          userSettings: .default,
-          appearance: savedAppearance
+          userSettings: .default
         )
       }
+      #expect(store.state.settings.repositorySettings?.appearance == savedAppearance)
     }
   }
 
@@ -149,7 +150,7 @@ struct AppFeatureSettingsSelectionTests {
     )
     state.settings.selection = .repository(repository.id)
     state.settings.repositorySettings = RepositorySettingsFeature.State(
-      rootURL: repository.rootURL,
+      location: .local(repository.localURL!),
       repositoryKind: repository.kind,
       settings: .default,
       userSettings: .default

@@ -24,7 +24,7 @@ struct RepositorySettingsFeatureTests {
     settings.customTitle = "Workflow Repo"
     let store = TestStore(
       initialState: RepositorySettingsFeature.State(
-        rootURL: rootURL,
+        location: .local(rootURL),
         repositoryID: "repo-id",
         repositoryKind: .git,
         settings: settings,
@@ -82,7 +82,7 @@ struct RepositorySettingsFeatureTests {
 
     let store = TestStore(
       initialState: RepositorySettingsFeature.State(
-        rootURL: rootURL,
+        location: .local(rootURL),
         repositoryKind: .plain,
         settings: .default,
         userSettings: .default
@@ -106,14 +106,15 @@ struct RepositorySettingsFeatureTests {
         return "origin/main"
       }
     }
+    store.timeout = .realWorkTestStoreTimeout
 
     await store.send(.task)
-    await store.receive(\.settingsLoaded, timeout: .seconds(5)) {
+    await store.receive(\.settingsLoaded) {
       $0.settings = storedSettings
       $0.userSettings = storedOnevcatSettings
       $0.globalDefaultWorktreeBaseDirectoryPath = expectedDefaultWorktreeBaseDirectoryPath
     }
-    await store.finish(timeout: .seconds(5))
+    await store.finish()
 
     #expect(store.state.isBranchDataLoaded == false)
     #expect(store.state.branchOptions.isEmpty)
@@ -124,7 +125,7 @@ struct RepositorySettingsFeatureTests {
 
   @Test func plainFolderVisibilityHidesGitOnlySections() {
     let state = RepositorySettingsFeature.State(
-      rootURL: URL(fileURLWithPath: "/tmp/folder"),
+      location: .local(URL(fileURLWithPath: "/tmp/folder")),
       repositoryKind: .plain,
       settings: .default,
       userSettings: .default
@@ -146,7 +147,7 @@ struct RepositorySettingsFeatureTests {
 
     let store = TestStore(
       initialState: RepositorySettingsFeature.State(
-        rootURL: rootURL,
+        location: .local(rootURL),
         repositoryKind: .plain,
         settings: .default,
         userSettings: .default
@@ -190,7 +191,7 @@ struct RepositorySettingsFeatureTests {
     let localStorage = RepositoryLocalSettingsTestStorage()
     let store = TestStore(
       initialState: RepositorySettingsFeature.State(
-        rootURL: rootURL,
+        location: .local(rootURL),
         repositoryKind: .plain,
         settings: .default,
         userSettings: .default
@@ -232,7 +233,7 @@ struct RepositorySettingsFeatureTests {
 
     let store = TestStore(
       initialState: RepositorySettingsFeature.State(
-        rootURL: rootURL,
+        location: .local(rootURL),
         repositoryKind: .plain,
         settings: .default,
         userSettings: .default
@@ -267,7 +268,7 @@ struct RepositorySettingsFeatureTests {
 
     let store = TestStore(
       initialState: RepositorySettingsFeature.State(
-        rootURL: rootURL,
+        location: .local(rootURL),
         repositoryKind: .plain,
         settings: .default,
         userSettings: .default
@@ -322,7 +323,7 @@ struct RepositorySettingsFeatureTests {
 
     let store = TestStore(
       initialState: RepositorySettingsFeature.State(
-        rootURL: rootURL,
+        location: .local(rootURL),
         repositoryKind: .git,
         settings: .default,
         userSettings: .default
@@ -342,16 +343,11 @@ struct RepositorySettingsFeatureTests {
       $0.gitClient.branchRefs = { _ in [] }
       $0.gitClient.automaticWorktreeBaseRef = { _ in "origin/main" }
     }
+    store.timeout = .realWorkTestStoreTimeout
 
     await store.send(.task)
 
-    for _ in 0..<50 {
-      if gitProbeGate.value != nil {
-        break
-      }
-      await Task.yield()
-    }
-    #expect(gitProbeGate.value != nil)
+    await waitUntil { gitProbeGate.value != nil }
 
     await store.send(.binding(.set(\.userSettings, updatedUserSettings))) {
       $0.userSettings = updatedUserSettings
@@ -361,7 +357,7 @@ struct RepositorySettingsFeatureTests {
     let continuation = try #require(gitProbeGate.value)
     continuation.resume()
 
-    await store.receive(\.settingsLoaded, timeout: .seconds(5))
+    await store.receive(\.settingsLoaded)
     await store.receive(\.branchDataLoaded) {
       $0.defaultWorktreeBaseRef = "origin/main"
       $0.branchOptions = ["origin/main"]

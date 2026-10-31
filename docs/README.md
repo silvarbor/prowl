@@ -43,6 +43,7 @@ its keyboard shortcuts, detailed behavior, settings, and gotchas.
 | File | What it covers |
 |------|----------------|
 | [`components/repositories-and-worktrees.md`](components/repositories-and-worktrees.md) | The sidebar: adding repositories, creating / opening / archiving / deleting git worktrees, plain (non-git) folders, pinning, ordering, repository icons & colors. |
+| [`components/remote-folders.md`](components/remote-folders.md) | Folders on another machine over SSH: adding them, unreachable hosts, remote tabs and splits, scripts, restore, CLI paths, and what does not work remotely. |
 | [`components/workspaces.md`](components/workspaces.md) | Multi-repo workspaces: one agent terminal rooted at a shared folder, with `.prowl/workspace.json` metadata describing the repositories in scope. |
 | [`components/terminal.md`](components/terminal.md) | Terminal tabs, splits/panes, surfaces, the Ghostty engine, tab titles & icons, shell integration, scrollback, font size. |
 | [`components/canvas.md`](components/canvas.md) | Canvas view — a zoomable board of live terminal cards, multi-select, and **broadcast a command to every agent at once**. |
@@ -59,7 +60,7 @@ its keyboard shortcuts, detailed behavior, settings, and gotchas.
 | [`components/custom-actions.md`](components/custom-actions.md) | Run Script (`⌘R`/`⌘.`), Setup & Archive scripts, and per-repo Custom Commands with their own buttons & hotkeys. Injected env vars. |
 | [`components/settings.md`](components/settings.md) | The Settings window (`⌘,`): every tab and what it controls. |
 | [`components/updates.md`](components/updates.md) | Sparkle auto-updates: auto-check, `⌘⇧U`. |
-| [`components/cli.md`](components/cli.md) | The `prowl` CLI — let an agent inspect and drive panes (`list`, `agents`, `profiles`, `skills`, `workflow`, `focus`, `send`, `key`, `read`, `create`, `close`, `open`). |
+| [`components/cli.md`](components/cli.md) | The `prowl` CLI — let an agent inspect and drive panes (`list`, `agents`, `profiles`, `skills`, `workflow`, `focus`, `canvas`, `send`, `key`, `read`, `create`, `close`, `open`). |
 | [`components/workflows.md`](components/workflows.md) | Agent Workflows: `.pwlworkflow` bundles with agent steps, script actions, typed state and control flow — approval, the start sheet, the run panel, and Settings → Agents → Workflows. |
 | [`components/handoff.md`](components/handoff.md) | Hand a task off between agents with the `prowl.handoff` workflow and durable `.prowl/handoff/` packets. |
 
@@ -76,6 +77,7 @@ its keyboard shortcuts, detailed behavior, settings, and gotchas.
 |------------|------|
 | Run many agents side by side and see them all | [`components/canvas.md`](components/canvas.md), [`components/shelf.md`](components/shelf.md) |
 | Give one agent a task that spans several repos | [`components/workspaces.md`](components/workspaces.md) |
+| Work in a repository on another machine over SSH | [`components/remote-folders.md`](components/remote-folders.md) |
 | Hand a task off between agents | [`components/handoff.md`](components/handoff.md) |
 | Run a multi-agent workflow (e.g. launch a reviewer and loop until clean) | [`components/workflows.md`](components/workflows.md) |
 | Send one command to every agent simultaneously | [`components/canvas.md`](components/canvas.md) (broadcast) |

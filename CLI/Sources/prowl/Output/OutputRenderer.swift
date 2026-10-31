@@ -125,6 +125,14 @@ enum OutputRenderer {
         return
       }
 
+      if response.command == "canvas",
+         let data = response.data,
+         let payload = try? data.decode(as: CanvasCommandPayload.self)
+      {
+        print(renderCanvas(payload))
+        return
+      }
+
       if response.command == "skills",
          let data = response.data,
          let payload = try? data.decode(as: SkillsCommandPayload.self)
@@ -244,7 +252,7 @@ enum OutputRenderer {
       lines.append(
         "\(projectName.cyan.bold)\(":".dim)\(first.worktree.name) (\(statusText))  \(first.worktree.id.dim)"
       )
-      lines.append("  \("path:".dim) \(first.worktree.path)")
+      lines.append("  \("path:".dim) \(first.worktree.displayPath)")
 
       // Group panes by tab within this worktree.
       var tabOrder: [String] = []
@@ -322,7 +330,20 @@ enum OutputRenderer {
       let paneHandle = agent.pane.handle.map { "p\($0)" } ?? agent.pane.id
       let sessionLabel = agent.session.map { "  session=\($0.id) [\($0.confidence)]" } ?? ""
       return "\(statusLabel)  \(agent.name)  \(projectLabel)  \(agent.tab.title)  \(paneHandle)\(sessionLabel)"
+        + (agent.remote.map(remoteLabel) ?? "")
     }.joined(separator: "\n")
+  }
+
+  /// `  remote=alice@box [stale]`: the host plus every qualifier that makes the state weaker
+  /// than a fresh probed observation.
+  static func remoteLabel(_ remote: AgentsCommandRemote) -> String {
+    var qualifiers: [String] = []
+    if remote.confidence != "probed" { qualifiers.append(remote.confidence) }
+    if remote.freshness != "fresh" { qualifiers.append(remote.freshness) }
+    if !remote.stateKnown { qualifiers.append("state unknown") }
+    if remote.correlation != "correlated" { qualifiers.append(remote.correlation) }
+    let suffix = qualifiers.isEmpty ? "" : " [\(qualifiers.joined(separator: ", "))]"
+    return "  remote=\(remote.host ?? "unresolved")\(suffix)"
   }
 
   static func agentSignalWarningLines(_ payload: AgentSignalCommandPayload) -> [String] {
@@ -440,6 +461,14 @@ enum OutputRenderer {
       let reason = profile.availability.reason.map { "  \($0.dim)" } ?? ""
       return "\(profile.name.bold)  \(profile.runtime)  \(enabled)  \(availability)  \(profile.id.dim)\(reason)"
     }.joined(separator: "\n")
+  }
+
+  /// One line, e.g. `Canvas  showing  layout: tile  7 cards`.
+  static func renderCanvas(_ payload: CanvasCommandPayload) -> String {
+    let showing = payload.showing ? "showing".green : "hidden".dim
+    let layout = payload.layout.map { "layout: \($0.bold)" } ?? "layout: \("not set".dim)"
+    let cards = payload.cardCount == 1 ? "1 card" : "\(payload.cardCount) cards"
+    return "\("Canvas".bold)  \(showing)  \(layout)  \(cards)"
   }
 
   private static func renderSkills(_ payload: SkillsCommandPayload) {

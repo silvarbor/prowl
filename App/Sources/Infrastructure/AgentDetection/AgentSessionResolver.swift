@@ -228,7 +228,7 @@ actor AgentSessionResolver {
   /// The immutable inputs of one uncached resolution, grouped so the scan and
   /// match steps take a single subject rather than a long parameter list.
   private struct ResolveRequest {
-    let identified: IdentifiedAgentProcess
+    let identified: LocalAgentProcess
     let processStartedAt: Date
     let workingDirectory: URL?
     let activeText: String
@@ -240,7 +240,7 @@ actor AgentSessionResolver {
   }
 
   private struct ResolveInput {
-    let identified: IdentifiedAgentProcess
+    let identified: LocalAgentProcess
     let workingDirectory: URL?
     let activeText: String
     let configRoot: URL?
@@ -321,7 +321,7 @@ actor AgentSessionResolver {
   private var rootScans: [RootScanKey: RootScan] = [:]
   private let fileManager: FileManager
   private let homeDirectory: URL
-  typealias DaemonBinding = @Sendable (UUID, AgentProcessGeneration, URL?) async -> CodexDaemonBindingLookup
+  typealias DaemonBinding = @Sendable (UUID, LocalProcessGeneration, URL?) async -> CodexDaemonBindingLookup
   private let daemonBinding: DaemonBinding
   private let tuiOpenFilePaths: @Sendable (pid_t) -> [String]?
 
@@ -344,7 +344,7 @@ actor AgentSessionResolver {
   }
 
   func resolve(
-    identified: IdentifiedAgentProcess,
+    identified: LocalAgentProcess,
     workingDirectory: URL?,
     activeText: String,
     configRoot: URL? = nil,
@@ -370,7 +370,7 @@ actor AgentSessionResolver {
   /// of replaying a `PaneAgentState` or pid-result cache entry. File/root parsing
   /// caches remain valid optimizations because they are keyed by file identity.
   func resolveFresh(
-    identified: IdentifiedAgentProcess,
+    identified: LocalAgentProcess,
     workingDirectory: URL?,
     activeText: String,
     configRoot: URL? = nil,
@@ -395,12 +395,12 @@ actor AgentSessionResolver {
   /// A daemon binding is live evidence, not a five-second process-cache entry. Check it
   /// before the fallback cache so a new submit can select another thread immediately.
   private func resolveDaemon(
-    identified: IdentifiedAgentProcess, surfaceID: UUID?, configRoot: URL?
+    identified: LocalAgentProcess, surfaceID: UUID?, configRoot: URL?
   ) async -> AgentSessionResolution? {
     guard identified.agent == .codex, let surfaceID,
-      let startedAt = ProcessDetection.processStartDate(pid: identified.process.pid)
+      let startedAt = ProcessDetection.processStartDate(pid: identified.pid)
     else { return nil }
-    let process = AgentProcessGeneration(pid: identified.process.pid, startedAt: startedAt)
+    let process = LocalProcessGeneration(pid: identified.pid, startedAt: startedAt)
     let home = configRoot ?? CodexLogProvider.codexHome(forTUI: process.pid)
     let parse = Self.pathParser(profile: .profile(for: .codex), configRoot: home)
     // Read selection after the FD scan so a reset during enumeration invalidates the old binding.
@@ -448,11 +448,11 @@ actor AgentSessionResolver {
     let activeText = input.activeText
     let configRoot = input.configRoot
     let now = input.now
-    let process = identified.process
-    guard let startedAt = ProcessDetection.processStartDate(pid: process.pid) else {
+    let pid = identified.pid
+    guard let startedAt = ProcessDetection.processStartDate(pid: pid) else {
       return AgentSessionResolution(session: nil, isFresh: true)
     }
-    let key = CacheKey(pid: process.pid, startedAt: startedAt)
+    let key = CacheKey(pid: pid, startedAt: startedAt)
     let cached = cache[key]
     if !bypassResultCache, let cached {
       let lifetime = Self.cacheLifetime(
@@ -562,7 +562,7 @@ actor AgentSessionResolver {
     let profile = AgentSessionProfile.profile(for: identified.agent)
     let parsePath = Self.pathParser(profile: profile, configRoot: request.configRoot)
 
-    let openSessions = ProcessDetection.openFilePaths(pid: identified.process.pid)
+    let openSessions = ProcessDetection.openFilePaths(pid: identified.pid)
       .compactMap { parsePath($0) }
       .compactMap { session -> AgentSession? in
         guard let path = session.transcriptPath,
@@ -584,13 +584,13 @@ actor AgentSessionResolver {
 
     var pidKeyedMissed = false
     if let configRoot = request.configRoot, let lookup = profile.rootedPIDKeyedSession {
-      if let session = lookup(configRoot, identified.process.pid, request.processStartedAt) {
+      if let session = lookup(configRoot, identified.pid, request.processStartedAt) {
         return UncachedResolution(session: session, usedWideScan: false)
       }
       pidKeyedMissed = true
     }
     if request.configRoot == nil, let lookup = profile.pidKeyedSession {
-      if let session = lookup(homeDirectory, identified.process.pid, request.processStartedAt) {
+      if let session = lookup(homeDirectory, identified.pid, request.processStartedAt) {
         return UncachedResolution(session: session, usedWideScan: false)
       }
       pidKeyedMissed = true
@@ -655,7 +655,7 @@ actor AgentSessionResolver {
     now: Date,
     visitLimit: Int = 20_000
   ) -> (candidates: [AgentSessionCandidate], usedWideScan: Bool) {
-    let cwdVariants = workingDirectoryVariants(workingDirectory)
+    let cwdVariants = Self.workingDirectoryVariants(workingDirectory)
     let threshold = processStartedAt.addingTimeInterval(-2)
     // Under a relocated config root the rooted layout is used exclusively:
     // scanning the default home would misattribute another account's
@@ -711,12 +711,37 @@ actor AgentSessionResolver {
     return (fallback ?? [], true)
   }
 
-  /// The pane reports the shell's logical `$PWD` while agents usually record
-  /// the physical path (`/tmp` vs `/private/tmp`); try both encodings.
-  private func workingDirectoryVariants(_ cwd: URL?) -> [URL?] {
+  /// The pane reports the shell's logical `$PWD`, while most agents key their
+  /// sessions on `getcwd()`, the physical path (`/tmp/x` → `/private/tmp/x`),
+  /// and a few (Go's `os.Getwd`) on `$PWD`; try each encoding once.
+  ///
+  /// `URL.resolvingSymlinksInPath()` cannot produce the physical path: it
+  /// strips `/private` again (fine for `GitClient.canonicalWorktreePath`, which
+  /// only compares two paths normalized the same way), so the
+  /// physical variant comes from `realpath(3)`, which is what Node, Python and
+  /// Rust report. A missing directory keeps the logical path alone.
+  nonisolated static func workingDirectoryVariants(_ cwd: URL?) -> [URL?] {
     guard let cwd else { return [nil] }
-    let resolved = cwd.resolvingSymlinksInPath()
-    return resolved.path == cwd.path ? [cwd] : [cwd, resolved]
+    var variants = [cwd]
+    func append(_ path: String) {
+      guard !variants.contains(where: { $0.path == path }) else { return }
+      variants.append(URL(fileURLWithPath: path, isDirectory: true))
+    }
+    guard let physical = realPath(cwd.path) else { return variants }
+    append(physical)
+    // The `/private`-stripped form only when it names the same directory, so
+    // an unrelated `/foo` is never scanned for `/private/foo`.
+    if physical.hasPrefix("/private/") {
+      let stripped = String(physical.dropFirst("/private".count))
+      if realPath(stripped) == physical { append(stripped) }
+    }
+    return variants
+  }
+
+  nonisolated private static func realPath(_ path: String) -> String? {
+    guard let resolved = realpath(path, nil) else { return nil }
+    defer { free(resolved) }
+    return String(cString: resolved)
   }
 
   /// Scans `roots` for session files modified during the process lifetime.

@@ -4,7 +4,7 @@
 > an agent) can list panes, read their screens, run commands and capture output,
 > send keystrokes, focus, and open/close tabs and panes programmatically.
 
-**Keywords:** prowl cli, command line, prowl list, prowl agents, prowl agents read, prowl agents signal, prowl agents dispatch, prowl agents wait, prowl profiles list, prowl skills, skills install, agent skills, prowl workflow, workflow status center, workflow run panel, workflow attention, prowl read, prowl send, prowl key, prowl focus, prowl create, prowl close, prowl open, pane id, agent, profile, automation, json, capture, socket
+**Keywords:** prowl cli, command line, prowl list, prowl agents, prowl agents read, prowl agents signal, prowl agents dispatch, prowl agents wait, prowl profiles list, prowl skills, skills install, agent skills, prowl workflow, workflow status center, workflow run panel, workflow attention, prowl read, prowl send, prowl key, prowl focus, prowl canvas, canvas layout, tile, prowl create, prowl close, prowl open, pane id, agent, profile, automation, json, capture, socket
 
 **Related:** [terminal](terminal.md) · [concepts](../concepts.md) · [active-agents](active-agents.md) · [agent-detection](agent-detection.md) · the bundled **`prowl-cli`** (`skills/prowl-cli/SKILL.md`) and **`prowl-workflow`** (`skills/prowl-workflow/SKILL.md`) skills
 
@@ -55,6 +55,10 @@ Most commands accept one selector (mutually exclusive):
 - `--worktree <id|name|path>` — a worktree (its selected/first tab → focused/first
   pane). For a Git worktree, `name` is the checked-out branch and stops matching after a
   checkout; automation should pass `id` (the worktree path).
+  A folder on another machine over SSH is `label:path` (its `host.label` and `path`); a
+  bare path matches worktrees on this Mac only, and a name shared with such a folder
+  means the local worktree. Such a folder has no terminals yet, so `create tab` and
+  `workflow run` refuse it with the reason.
 - `-t, --target <value>` — auto-resolve: `pN` as a pane, `tN` as a tab, then
   pane UUID, tab UUID, or worktree id/name/path.
 - **No selector** → the *current* focus (focused worktree → selected tab → focused
@@ -86,6 +90,9 @@ process launched inside it (agents, their tools, scripts):
   `create pane`, and as the guard that keeps automation from acting on itself.
 - `PROWL_WORKTREE_PATH`, `PROWL_ROOT_PATH` — the worktree directory and repository root
   (see [custom-actions](custom-actions.md)).
+- `LC_PROWL_PANE` — the same UUID as `PROWL_PANE_ID`, under a name that `ssh` forwards by
+  default (`SendEnv LC_*` on the client, `AcceptEnv LC_*` on most servers). Prowl uses it
+  to match a remote session to its pane; do not use it as a selector.
 
 Resolve your own pane, tab, and worktree. Inside Codex (`CODEX_THREAD_ID` is set), take the
 pane from `.data.caller` instead of the variable (see below):
@@ -111,12 +118,11 @@ different pane reports the pane its server started in. A value that matches no
 your pane (see [Transport & app launch](#transport--app-launch)). A match proves the pane
 exists, not that you run in it: trust the value only when your process ancestry reaches
 the pane's shell — under tmux/screen or a detached wrapper it names the pane the
-server started in, so identify your pane by other means (`prowl agents --json` for the
-pane hosting your agent session, a unique `pane.cwd`) and pass it explicitly. Keep every
-step that depends on knowing yourself inside the success branch. When it is unset or
-matches nothing, stop rather than guess: `pane.cwd` only narrows the candidates — several panes
-usually share one cwd — and may stand in for you only when the match is unique; never
-assume the *focused* pane is you. Prowl itself never trusts the variable for
+server started in. For commands that accept a target, select the pane independently,
+such as through a user's choice or a controller's recorded pane-creation result, and
+pass it explicitly. Keep every step that depends on knowing yourself inside the success
+branch. A cwd or a heuristic session match can narrow candidates but does not establish
+caller identity, even if unique. Never assume the *focused* pane is you. Prowl itself never trusts the variable for
 attribution; commands that need the calling pane (`agents signal`) resolve it
 from the caller's process ancestry.
 
@@ -130,12 +136,20 @@ and instead maps `CODEX_THREAD_ID` to the pane whose Codex TUI submitted to that
 `CODEX_TUI_RECORD_SESSION=1` and a pane-owned `CODEX_TUI_SESSION_LOG_PATH`. Codex writes
 the submitted prompts there (mode 0600); Prowl deletes the file once the pane's close can no
 longer be undone. A pane whose Codex has not submitted anything yet, or whose shell
-overrides those variables, cannot be mapped, and caller-scoped commands fail with
-`SOURCE_REQUIRED`.
+overrides those variables, cannot be mapped. After the pane that started the daemon closes,
+the daemon holds a revoked terminal that Prowl cannot inspect. Prowl then maps a pane only
+through its newest message. A message that is queued but not yet sent to the thread, or
+another pane that may still drive the same thread, prevents mapping until the next turn.
+Any other daemon file that Prowl cannot read prevents mapping. Caller-scoped commands then
+fail with `SOURCE_REQUIRED`.
 Session logs larger than 64 MiB are not mapped. Restarting Codex in the pane resets its
 session log; its first indexed submit can establish the mapping again.
 Codex launched from an Agent Profile, or with `--no-daemon`, runs commands inside the pane
-and is not affected.
+and is not affected. For Codex 0.156 and later, Prowl adds `--no-daemon` to every
+interactive profile launch, also when it cannot prepare its managed notifier; it skips the
+flag only when the login shell or `codex --version` does not answer within one second.
+`prowl workflow read` and `deliver` accept the step token in place of a mapped pane;
+an explicit source can start the run (see [workflow fallback](#workflow-fallback-when-caller-identity-is-unavailable)).
 
 ## Commands
 
@@ -146,9 +160,14 @@ Snapshot of all worktrees → tabs → panes. No selectors.
 prowl list --json
 ```
 Each item contains:
-- `worktree`: `id`, `name`, `path`, `root_path`, `kind` (`git`|`plain`|`workspace`)
+- `worktree`: `id`, `name`, `path`, `root_path`, `kind` (`git`|`plain`|`workspace`), and
+  `host` (`profile_id`, `label`) for a folder on another machine over SSH. A remote
+  folder's `path` and `root_path` are paths on that host, not on this Mac. Text output
+  shows them as `label:path`.
 - `tab`: `id`, `title`, `selected`
-- `pane`: `id`, `title`, `cwd`, `focused`, `visible`, `agent`
+- `pane`: `id`, `title`, `cwd`, `focused`, `visible`, `agent`. In a remote project,
+  `cwd` is the pane's directory on the host (or absent when Prowl cannot tell), not the
+  local `ssh` process's directory.
 - `task`: `status` (`running` | `idle` | null)
 
 The response also carries `caller` — `{"pane": {"id"}, "worktree": {"id"}}` — the pane
@@ -227,6 +246,26 @@ Each agent contains:
   `store_record`). Ambiguous sessions are omitted instead of guessed. A
   `medium` session id must not be used for automatic resume without
   additional confirmation.
+- `remote`: present only for an agent on a remote host behind the pane's `ssh` (see
+  [agent detection](agent-detection.md#remote-agents-over-ssh)). It contains:
+  - `host` (`user@hostname`, or the host's alias in a tab of a remote project), `user`,
+    `hostname`, `port`: absent while the connection is not resolved.
+  - `correlation`: `pending`, `correlated`, `ambiguous`, `unmapped`,
+    `probe_unavailable`, `unsupported`, or `tmux_unreachable` (the pane shows a tmux
+    client whose server Prowl cannot reach).
+  - `correlation_reason`: why. For `probe_unavailable` it is a code: `authentication`,
+    `host_key`, `unresolvable_host`, `unreachable`, `launch`, `exit`,
+    `unrecognized_output`, or `connection_failed`. For `unsupported` it names the `ssh`
+    option.
+  - `confidence`: `probed` (a host snapshot shows the process) or `heuristic` (OSC 7501
+    reports only).
+  - `freshness`: `fresh`, or `stale` when nothing has confirmed the agent for 10 s.
+    `last_confirmed_at` gives the last confirmation of a stale agent.
+  - `state_known`: `false` when no evidence decides the state.
+
+  A stale or unknown `status` is not evidence: `agents wait --until idle|blocked` keeps
+  waiting until the host confirms the agent again. Text output appends `remote=<host>` with the weaker
+  qualifiers in brackets.
 
 `prowl agents` is read-only. Text output is sorted for triage: `Blocked`,
 `Working`, `Done`, then `Idle`. It prints a pane handle such as `p7`; JSON keeps
@@ -240,8 +279,8 @@ prowl agents read "$pane" --json
 ```
 
 ### `prowl agents read <pN|pane-uuid>`
-Immediate, read-only semantic snapshot for a currently active **Codex** or
-**Claude Code** pane. It requires an explicit `pN` handle or UUID from `agents`;
+Immediate, read-only semantic snapshot for a currently active **Codex**,
+**Claude Code**, or **TraeCode CLI** pane. It requires an explicit `pN` handle or UUID from `agents`;
 it never guesses from focus, accepts no worktree/tab selector, and has no wait or
 timeout mode.
 
@@ -280,6 +319,9 @@ text; `complete` includes trusted `text` and appears only for an idle/done agent
 `unavailable`, `missing`, `incomplete`, and `too_large` retain a successful live snapshot but
 include a reason under `.data.result.error`. Prowl reads a transcript only after a fresh `exact` or `high`
 session resolution — never a `medium` candidate — and never returns partial text.
+TraeCode CLI has no semantic transcript reader, so its panes return the live snapshot
+and blocker text, but `.data.result` never reaches `complete` and `--result-only` always
+fails for them.
 
 `--max-bytes` defaults to 1 MiB and accepts up to 4 MiB. `--result-only` is mutually
 exclusive with `--json`; it writes exactly a complete trusted result to stdout, with
@@ -388,7 +430,8 @@ first. Because a receipt can precede Codex's own `turn-ended` by a second or two
 
 For Codex, observed open main or child work in the selected log keeps this
 precondition busy even if a parent `turn-ended` signal has arrived. Claude native
-Working/Waiting applies the same veto, including assigned children and background shell work.
+Working/Waiting applies the same veto, including assigned children. A Claude pane whose
+turn has ended while background shells still run is `idle` and accepts a dispatch.
 
 The coordinator waits by exact id:
 
@@ -413,6 +456,17 @@ Abandoning a record that already completed, was abandoned, or is gone fails with
 `DISPATCH_ALREADY_TERMINAL`. A closed worker pane turns its pending record into `gone` a
 moment after the close, so a wait issued in that same instant may still report
 `DISPATCH_INCOMPLETE`; re-run it.
+
+Managed Codex turn-end hooks must match the independently detected pane session before
+resolving a dispatch wait. Hooks awaiting that confirmation remain pending in a bounded
+buffer of the eight most recent Codex hooks; newer hooks replace the oldest when full.
+Debug logs identify the hook session and detected session when a hook is deferred. A hook that
+Prowl received before the dispatch was issued cannot resolve it. A replacement session or
+process clears old signal-derived wait evidence; a stale diagnostic signal alone cannot end
+the wait. An agent that exits keeps its evidence, so a turn end or session end just before the
+exit still reports `DISPATCH_INCOMPLETE` or `AGENT_GONE`. A matching completion receipt still
+resolves the original dispatch. While detection cannot identify the Codex session with
+confidence, its hooks stay pending, and a wait without a receipt ends at its timeout.
 
 For state observation rather than task proof, wait on a pane condition:
 
@@ -491,9 +545,10 @@ directory exists:
 |---|---|---|---|
 | `claude` | `~/.claude/skills` | `<repo>/.claude/skills` | Claude Code |
 | `codex` | `~/.codex/skills` | `<repo>/.codex/skills` | Codex |
-| `agents` | `~/.agents/skills` | `<repo>/.agents/skills` | Codex, Gemini CLI, Cursor Agent, OpenCode, Copilot CLI, Kimi CLI, Droid, Amp, Qoder CLI, Pi, Oh My Pi, Grok Build, Devin, Antigravity |
+| `agents` | `~/.agents/skills` | `<repo>/.agents/skills` | Codex, Gemini CLI, Cursor Agent, OpenCode, Copilot CLI, Kimi CLI, Droid, Amp, Qoder CLI, Pi, Oh My Pi, Grok Build, Devin, Antigravity, TraeCode CLI |
 | `devin` | `~/.config/devin/skills` | `<repo>/.devin/skills` | Devin |
 | `antigravity` | `~/.gemini/antigravity-cli/skills` | `<repo>/.agents/skills` | Antigravity |
+| `trae` | `~/.trae/skills` | `<repo>/.agents/skills` | TraeCode CLI |
 
 - A bare `prowl skills install` links every user-installable bundled skill into every
   detected target; repeat `--target` to pick targets explicitly (an explicit target's
@@ -587,7 +642,10 @@ prowl workflow schema [--action] [--json]                          # workflow or
   execution root is closed, moved, or deleted. See [history retention](workflows.md).
 - `read [resource-id] --run <run-uuid> --invocation <number>` retrieves the assigned
   instruction (default) or a resource ID returned with it. Prowl checks the caller pane,
-  run, and invocation against the current task assignment. Reads need no token.
+  run, and invocation against the current task assignment. A resolved assigned pane needs
+  no token. When caller resolution is unavailable, use the supplied `PROWL_WORKFLOW_TOKEN=`
+  prefix (or `--token`) with the exact run and invocation. A token cannot override a
+  resolved conflicting pane.
   Normal completion keeps the last task readable until reassignment, history cleanup,
   or app exit; cancellation, Skip, and activation revocation revoke access. `--json` returns `body`, `encoding`
   (`utf-8` or `base64`), `resources`, `invocation`, `offset`, `next_offset`, and `total_bytes`.
@@ -675,6 +733,37 @@ It uses the same worktree, fixed bundle copy, process limits, cancellation, and 
 as a workflow run. Poll the returned run ID with `workflow status` and inspect its run directory.
 
 `validate` accepts the bundle directory, not its `workflow.yaml`. Loose YAML files are not workflow bundles. See [Workflows](workflows.md#script-actions-and-bundles) for approval and results.
+
+### Workflow fallback when caller identity is unavailable
+
+An absent `.data.caller` does not prevent an explicitly targeted workflow. Select the
+source independently, such as through the user's pane choice or a controller's recorded
+`create tab` result, then pass its UUID:
+
+```bash
+prowl workflow run prowl.review-loop --pane <source-pane-uuid> --role reviewer="Pi Reviewer" --json
+```
+
+Do not infer the source from inherited `PROWL_PANE_ID`, the focused pane, cwd, or a
+heuristic session match in `prowl agents`. If the source is not known, select it first;
+the step token cannot identify an initiating pane before a run exists.
+
+Check `.data.bindings` and `.data.self_initiated` in the response. If `self_initiated`
+is present, follow its task immediately. Otherwise Prowl delivers the first message
+when its target becomes idle. **If the selected source is your own pane, report the
+run ID and end your turn.** Polling or waiting in that turn can prevent the first
+task from arriving. An external observer can use `workflow status <run-id>`.
+
+Use the exact token-prefixed `workflow read` and `workflow deliver` commands in each
+assigned task. They work when the caller is unresolved; `Delivered` (JSON
+`delivery.state == "delivered"`) confirms acceptance. Tokens do not authorize a
+different task or override a known conflicting caller. Do not substitute manual
+`--run --step --force` delivery for this protocol.
+
+Later messages return to the fixed role-to-pane bindings, not to the focused pane.
+This route preserves delivery to the selected source while it remains available;
+it does not prove that source was the invoking agent or repair `.data.caller`.
+Caller-scoped signals and ordinary dispatch completion still need resolved identity.
 
 ### Built-in Review Loop workflow
 
@@ -789,9 +878,35 @@ prowl focus --pane "$pane" --json
 prowl focus --worktree MyApp --json
 ```
 
+### `prowl canvas`
+Switch to Canvas, lay out its cards, and read its state — for example, after creating
+several agent tabs, tile them so all of them are visible at once:
+
+```bash
+for profile in Reviewer Tester; do prowl create tab "$wt" --profile "$profile" --json >/dev/null; done
+prowl canvas layout tile --show
+prowl canvas status --json | jq -r '.data.layout'
+```
+
+| Command | Effect |
+| --- | --- |
+| `prowl canvas show` / `hide` | Switch to Canvas / back to the normal view (no-op when already there). |
+| `prowl canvas layout <arrange\|organize\|tile> [--show]` | Apply an automatic layout and keep it: Canvas re-applies it as cards are added or closed, until a card is moved by hand. The view refits. |
+| `prowl canvas fit [--show]` | Zoom and pan so every card is visible; the layout mode is unchanged. |
+| `prowl canvas status` | Report the state only. |
+
+`layout` and `fit` act on the Canvas view: while Canvas is hidden they fail with
+`CANVAS_NOT_SHOWING` unless `--show` switches to it first. Every action returns the state
+after it ran — `.data.showing`, `.data.layout` (`arrange`, `organize`, `tile`, or `freeform`;
+absent until Canvas has laid out cards), and `.data.card_count`. See
+[canvas](canvas.md) for how the layouts behave.
+
 ### `prowl create tab`
 Create a new terminal tab (deterministic — unlike `open`). A worktree is required,
 either positionally or with `--worktree`; `--path` must remain inside it.
+In a remote project, the tab runs `ssh` to the host and lands in the folder (or in `--path`,
+a path on the host, checked by its text only). Its pane may show no output until Prowl has
+prepared the connection.
 
 ```bash
 pane="$(prowl create tab "$wt" --json | jq -r '.data.target.pane.id')"
@@ -799,7 +914,9 @@ pane="$(prowl create tab "$wt" --json | jq -r '.data.target.pane.id')"
 
 Without `--background`, the new tab takes focus, so keystrokes a person is typing
 at that moment land in the new shell. Use `--background` to preserve the current
-selection and focus for both Shell and Agent Profile tabs.
+selection and focus for both Shell and Agent Profile tabs. While Canvas is showing,
+Prowl stays in Canvas: the new card is placed next to the focused card, takes focus,
+and is scrolled into view.
 
 Add `--profile <name|uuid>` to launch an enabled Agent Profile instead of a shell. An
 optional kickoff prompt uses the sole stdin spelling `--prompt -`:
@@ -834,7 +951,9 @@ receipt semantics.
 
 ### `prowl create pane`
 Create a split beside an explicit pane anchor. The anchor is a pane UUID or current-process
-`pN` handle, supplied positionally or with `--pane`; `--direction` is required.
+`pN` handle, supplied positionally or with `--pane`; `--direction` is required. In a remote
+folder, the split connects to the host on its own and starts where the anchor pane is on the
+host (or in the folder when Prowl cannot tell).
 
 ```bash
 pane="$(prowl create pane "$anchor" --direction right --json | jq -r '.data.target.pane.id')"
@@ -927,7 +1046,7 @@ Follow the returned self-initiated delivery instruction to submit the briefing.
 | `TARGET_NOT_UNIQUE` | Selector matched several — be more specific (use `--pane`). |
 | `PROFILE_NOT_FOUND` | No enabled Profile matches the UUID or exact name — re-run `profiles list`; disabled Profiles cannot launch. |
 | `PROFILE_NOT_UNIQUE` | Several enabled Profiles have the exact name — use the Profile UUID from `profiles list`. |
-| `AGENT_NOT_FOUND` / `AGENT_UNSUPPORTED` | `agents read` target no longer hosts an agent, or it is not Codex/Claude Code; `agents wait <pane> --until …` saw no detected agent within its ten-second appearance grace; `agents dispatch` targeted a pane with no detected agent. Re-run `agents`. |
+| `AGENT_NOT_FOUND` / `AGENT_UNSUPPORTED` | `agents read` target no longer hosts an agent, or it is not Codex/Claude Code/TraeCode CLI; `agents wait <pane> --until …` saw no detected agent within its ten-second appearance grace; `agents dispatch` targeted a pane with no detected agent. Re-run `agents`. |
 | `DISPATCH_NOT_FOUND` | No dispatch record matches `--dispatch`, or `dispatch-complete` ran in a pane that never held one; records are memory-only and reset on app restart. |
 | `DISPATCH_CONTEXT_REQUIRED` | `dispatch-complete` ran from a process outside any Prowl pane (tmux/detached wrapper, another terminal), so no pane could own the receipt. |
 | `DISPATCH_PENDING` | `agents dispatch` refused: the pane already holds a pending dispatch (`.error.details.record`). Wait for it, or `dispatch-abandon` it, before dispatching again. |
@@ -947,12 +1066,15 @@ Follow the returned self-initiated delivery instruction to submit the briefing.
 | `WORKFLOW_NOT_FOUND` / `WORKFLOW_DISABLED` | No workflow definition with that id or unique name is visible to the worktree, or it is switched off — re-run `workflow list`. |
 | `RUN_NOT_FOUND` | No live run with that UUID (`cancel`, manual `deliver`), no record of it in any known worktree (`status`), or the calling pane is not part of an active run (`status` without arguments). |
 | `PANE_BUSY` / `DISPATCH_PENDING` (`workflow run`) | The source pane or a `--role` pane already belongs to another active run, or still holds a pending dispatch record that must be completed or abandoned first. |
+| `REMOTE_AGENT_UNSUPPORTED` (`agents dispatch`, `workflow run`) | The pane's agent runs on a remote host (a manual `ssh` session). It can be observed, but it cannot report a dispatch receipt or deliver workflow steps, because those run `prowl` inside the pane. |
 | `PROFILE_NOT_FOUND` / `PROFILE_NOT_UNIQUE` (`workflow run`) | No enabled Profile satisfies a `launch` role (pass `--role <role>=<profile>`), or the given name matches several. |
 | `STEP_NOT_EXPECTING` / `TOKEN_REQUIRED` / `TOKEN_INVALID` | `workflow deliver`: the calling pane holds no waiting activation (the step moved on, was skipped, or the run ended before the output was saved), the completion command was run without its token, or the token belongs to an earlier step. Re-run the latest completion command Prowl typed. |
 | `ROLE_MISMATCH` | `workflow deliver --run --step` named a step other than the one the calling pane is waiting for; pass `--force` to deliver there anyway. |
 | `OUTPUT_INVALID` / `OUTPUT_TOO_LARGE` / `VERDICT_REQUIRED` | `workflow deliver`: empty body (or, for a `strict` step, missing sections / bad format / bad verdict), body above the step's size cap, or a strict step that declares verdicts got none. Non-strict issues are accepted as `delivery.state = provisional` instead. |
 | `WORKFLOW_DELIVERY_REQUIRED` | `agents dispatch-complete` ran in a pane whose pending dispatch is a workflow activation; the message carries the exact `prowl workflow deliver` command to run instead. |
 | `REQUEST_CANCELLED` | The CLI disconnected before an in-app workflow request completed; the run itself was not affected. |
+| `CANVAS_NOT_SHOWING` | `canvas layout` or `canvas fit` while Canvas is hidden; add `--show`. |
+| `CANVAS_UNAVAILABLE` | Canvas cannot open because no worktree or folder is open; open one first. |
 | `NO_ACTIVE_PANE` | No pane for focused-target; pass an explicit `--pane`. |
 | `EMPTY_INPUT` | `send` got neither argv nor stdin (or both). |
 | `INVALID_ARGUMENT` | Bad flag/combo (e.g. `--capture --no-wait`) or out-of-range value. |
@@ -962,7 +1084,7 @@ Follow the returned self-initiated delivery instruction to submit the briefing.
 | `PATH_NOT_FOUND` / `PATH_NOT_DIRECTORY` / `PATH_NOT_ALLOWED` | Fix the `open`/`create tab` path, or the `skills --scope project` start point (`--path` and the current directory must lie inside a Git repository). |
 | `LAUNCH_FAILED` | App launch or socket wait failed; the message includes the last socket diagnostic when available. |
 | `TRANSPORT_FAILED` | Socket transport failed for a reason other than app availability or permission, such as `ENOTSOCK` or an invalid `PROWL_CLI_SOCKET` path. |
-| `*_FAILED` (`LIST_FAILED`, `AGENTS_FAILED`, `PROFILES_FAILED`, `SKILLS_FAILED`, `FOCUS_FAILED`, `SEND_FAILED`, `READ_FAILED`, `CREATE_FAILED`, `CLOSE_FAILED`, `TAB_FAILED`, `PANE_FAILED`, `OPEN_FAILED`, `WORKFLOW_FAILED`) | The action itself failed. |
+| `*_FAILED` (`LIST_FAILED`, `AGENTS_FAILED`, `PROFILES_FAILED`, `SKILLS_FAILED`, `FOCUS_FAILED`, `SEND_FAILED`, `READ_FAILED`, `CREATE_FAILED`, `CLOSE_FAILED`, `TAB_FAILED`, `PANE_FAILED`, `OPEN_FAILED`, `WORKFLOW_FAILED`, `CANVAS_FAILED`) | The action itself failed. |
 
 ## Safety & self-targeting
 

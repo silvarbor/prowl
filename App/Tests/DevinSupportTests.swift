@@ -28,6 +28,36 @@ struct DevinSupportTests {
     )
   }
 
+  @Test func composerAcceptsSessionTitleInTopRule() {
+    let idle = AgentScreenSnapshot(
+      text: """
+        ⏺ ~/project
+        ─────────────────────── Output the word second ─
+        ❭ Ask Devin to build features, fix bugs, or work on your code
+        ────────────────────────────────────────
+        SWE-1.6 Slow        Context: 18k / 200k tokens (9%)
+        """)
+    #expect(DevinScreenProfile.composerContents(in: idle) == "")
+    #expect(DevinScreenProfile.detect(in: idle).reason == .matched(DevinScreenProfile.RuleID.emptyComposer))
+    let draft = AgentScreenSnapshot(
+      text: """
+        ─────────────────────── Output the word second ─
+        ❭ next prompt
+        ────────────────────────────────────────
+        SWE-1.6 Slow
+        """)
+    #expect(DevinScreenProfile.composerContents(in: draft) == "next prompt")
+    // A transcript line that only resembles the rule does not open a composer.
+    let transcript = AgentScreenSnapshot(
+      text: """
+        A sentence about rules ─
+        ❭ quoted prompt
+        ────────────────────────────────────────
+        SWE-1.6 Slow
+        """)
+    #expect(DevinScreenProfile.composerContents(in: transcript) == nil)
+  }
+
   private func agent() throws -> DetectedAgent {
     try #require(DetectedAgent(rawValue: "devin"))
   }
@@ -42,8 +72,8 @@ struct DevinSupportTests {
       let identified = try #require(
         identifyAgentInJob(ForegroundJob(processGroupID: 100, processes: processes)))
       #expect(identified.agent == expected)
-      #expect(identified.process.pid == 101)
-      #expect(identified.launchProcessID == 100)
+      #expect(identified.process.ref == .local(101))
+      #expect(identified.launchProcess == .local(100))
     }
     #expect(identifyAgent(processName: "devin-model") == nil)
     let unrelated = ForegroundProcess(

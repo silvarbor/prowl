@@ -53,7 +53,7 @@ struct AppFeatureDefaultEditorTests {
     let settingsFileURL = URL(
       fileURLWithPath: "/tmp/prowl-settings-\(UUID().uuidString).json"
     )
-    let repositoryID = worktree.repositoryRootURL.standardizedFileURL.path(percentEncoded: false)
+    let repositoryID = worktree.repositoryLocalURL!.standardizedFileURL.path(percentEncoded: false)
     var globalRepositorySettings = RepositorySettings.default
     globalRepositorySettings.openActionID = OpenWorktreeAction.finder.settingsID
     var localRepositorySettings = RepositorySettings.default
@@ -75,7 +75,7 @@ struct AppFeatureDefaultEditorTests {
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     try localStorage.save(
       encoder.encode(localRepositorySettings),
-      at: ProwlPaths.repositorySettingsURL(for: worktree.repositoryRootURL)
+      at: ProwlPaths.repositorySettingsURL(for: worktree.repositoryLocalURL!)
     )
 
     let store = TestStore(
@@ -106,11 +106,11 @@ struct AppFeatureDefaultEditorTests {
     let worktree = makeWorktree()
     let fileManager = FileManager.default
     try fileManager.createDirectory(
-      at: worktree.workingDirectory,
+      at: worktree.localURL!,
       withIntermediateDirectories: true
     )
-    defer { try? fileManager.removeItem(at: worktree.repositoryRootURL) }
-    try Data().write(to: worktree.workingDirectory.appending(path: "Package.swift"))
+    defer { try? fileManager.removeItem(at: worktree.repositoryLocalURL!) }
+    try Data().write(to: worktree.localURL!.appending(path: "Package.swift"))
     let repositoriesState = makeRepositoriesState(worktree: worktree)
     let storage = SettingsTestStorage()
     let settingsFileURL = URL(
@@ -238,6 +238,111 @@ struct AppFeatureDefaultEditorTests {
     await store.receive(\.openWorktree)
   }
 
+  @Test(.dependencies) func selectingAppSyncsOpenRepositorySettingsPane() async {
+    let worktree = makeWorktree()
+    let repositoriesState = makeRepositoriesState(worktree: worktree)
+    let storage = SettingsTestStorage()
+    let localStorage = RepositoryLocalSettingsTestStorage()
+    let settingsFileURL = URL(
+      fileURLWithPath: "/tmp/prowl-settings-\(UUID().uuidString).json"
+    )
+    var initialState = AppFeature.State(
+      repositories: repositoriesState,
+      settings: SettingsFeature.State()
+    )
+    initialState.settings.repositorySettings = RepositorySettingsFeature.State(
+      location: .local(worktree.repositoryLocalURL!),
+      repositoryKind: .git,
+      settings: .default,
+      userSettings: .default
+    )
+    let store = TestStore(initialState: initialState) {
+      AppFeature()
+    } withDependencies: {
+      $0.settingsFileStorage = storage.storage
+      $0.settingsFileURL = settingsFileURL
+      $0.repositoryLocalSettingsStorage = localStorage.storage
+    }
+    store.exhaustivity = .off
+
+    await store.send(.openActionSelectionChanged(.terminal)) {
+      $0.openActionSelection = .terminal
+      $0.openActionIsAutomatic = false
+      $0.settings.repositorySettings?.settings.openActionID =
+        OpenWorktreeAction.terminal.settingsID
+    }
+    // Editing any field in the still-open pane writes its whole snapshot back.
+    await store.send(
+      .settings(.repositorySettings(.binding(.set(\.settings.customTitle, "Edited")))))
+    await store.skipReceivedActions()
+
+    let storedOpenActionID = withDependencies {
+      $0.settingsFileStorage = storage.storage
+      $0.settingsFileURL = settingsFileURL
+      $0.repositoryLocalSettingsStorage = localStorage.storage
+    } operation: {
+      @Shared(.repositorySettings(worktree.repositoryLocalURL!)) var repositorySettings
+      return repositorySettings.openActionID
+    }
+    #expect(storedOpenActionID == OpenWorktreeAction.terminal.settingsID)
+  }
+
+  @Test(.dependencies) func resetToAutomaticSyncsOpenRepositorySettingsPane() async {
+    let worktree = makeWorktree()
+    let repositoriesState = makeRepositoriesState(worktree: worktree)
+    let storage = SettingsTestStorage()
+    let localStorage = RepositoryLocalSettingsTestStorage()
+    let settingsFileURL = URL(
+      fileURLWithPath: "/tmp/prowl-settings-\(UUID().uuidString).json"
+    )
+    var pinnedSettings = RepositorySettings.default
+    pinnedSettings.openActionID = OpenWorktreeAction.terminal.settingsID
+    let store = withDependencies {
+      $0.settingsFileStorage = storage.storage
+      $0.settingsFileURL = settingsFileURL
+      $0.repositoryLocalSettingsStorage = localStorage.storage
+    } operation: {
+      @Shared(.repositorySettings(worktree.repositoryLocalURL!)) var repositorySettings
+      $repositorySettings.withLock { $0 = pinnedSettings }
+      var initialState = AppFeature.State(
+        repositories: repositoriesState,
+        settings: SettingsFeature.State()
+      )
+      initialState.openActionSelection = .terminal
+      initialState.openActionIsAutomatic = false
+      initialState.settings.repositorySettings = RepositorySettingsFeature.State(
+        location: .local(worktree.repositoryLocalURL!),
+        repositoryKind: .git,
+        settings: pinnedSettings,
+        userSettings: .default
+      )
+      return TestStore(initialState: initialState) {
+        AppFeature()
+      }
+    }
+    store.exhaustivity = .off
+
+    await store.send(.openActionResetToAutomatic) {
+      $0.openActionIsAutomatic = true
+      $0.settings.repositorySettings?.settings.openActionID =
+        OpenWorktreeAction.automaticSettingsID
+    }
+    await store.skipReceivedActions()
+    await store.send(
+      .settings(.repositorySettings(.binding(.set(\.settings.customTitle, "Edited")))))
+    await store.skipReceivedActions()
+
+    let storedOpenActionID = withDependencies {
+      $0.settingsFileStorage = storage.storage
+      $0.settingsFileURL = settingsFileURL
+      $0.repositoryLocalSettingsStorage = localStorage.storage
+    } operation: {
+      @Shared(.repositorySettings(worktree.repositoryLocalURL!)) var repositorySettings
+      return repositorySettings.openActionID
+    }
+    #expect(storedOpenActionID == OpenWorktreeAction.automaticSettingsID)
+  }
+
   private func makeWorktree() -> Worktree {
     let repositoryRootURL = URL(fileURLWithPath: "/tmp/repo-\(UUID().uuidString)")
     let worktreeURL = repositoryRootURL.appending(path: "wt-1")
@@ -252,8 +357,8 @@ struct AppFeatureDefaultEditorTests {
 
   private func makeRepositoriesState(worktree: Worktree) -> RepositoriesFeature.State {
     let repository = Repository(
-      id: worktree.repositoryRootURL.path(percentEncoded: false),
-      rootURL: worktree.repositoryRootURL,
+      id: worktree.repositoryLocalURL!.path(percentEncoded: false),
+      rootURL: worktree.repositoryLocalURL!,
       name: "repo",
       worktrees: [worktree]
     )

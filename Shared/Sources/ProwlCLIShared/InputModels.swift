@@ -547,6 +547,48 @@ public struct CloseInput: Codable, Sendable {
   }
 }
 
+public enum CanvasAction: String, Codable, Sendable, CaseIterable {
+  case show
+  case hide
+  case layout
+  case fit
+  case status
+}
+
+/// An automatic Canvas layout. The raw values are the CLI spelling.
+public enum CanvasLayoutName: String, Codable, Sendable, CaseIterable {
+  case arrange
+  case organize
+  case tile
+}
+
+public struct CanvasInput: Codable, Sendable {
+  public let action: CanvasAction
+  /// Required for `layout`; ignored otherwise.
+  public let layout: CanvasLayoutName?
+  /// For `layout` and `fit`: open Canvas first when it is hidden.
+  public let show: Bool
+
+  enum CodingKeys: String, CodingKey {
+    case action
+    case layout
+    case show
+  }
+
+  public init(action: CanvasAction, layout: CanvasLayoutName? = nil, show: Bool = false) {
+    self.action = action
+    self.layout = layout
+    self.show = show
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.action = try container.decode(CanvasAction.self, forKey: .action)
+    self.layout = try container.decodeIfPresent(CanvasLayoutName.self, forKey: .layout)
+    self.show = try container.decodeIfPresent(Bool.self, forKey: .show) ?? false
+  }
+}
+
 public enum TabAction: String, Codable, Sendable {
   case create
   case close
@@ -647,7 +689,9 @@ nonisolated public struct WorkflowInput: Codable, Sendable {
   /// `deliver`: the delivered output body (already read by the CLI).
   public let body: String?
   public let verdict: String?
-  /// `deliver`: `--token` or `$PROWL_WORKFLOW_TOKEN`; correlation only, never authentication.
+  /// `deliver` / `read`: `--token` or `$PROWL_WORKFLOW_TOKEN`. A resolved caller pane identifies
+  /// the task and the token only correlates it; without a caller pane, the token of the waiting
+  /// activation identifies the task (issue #911).
   public let token: String?
   /// `deliver`: deliver to the explicit target even when the caller pane belongs to another step.
   public let force: Bool

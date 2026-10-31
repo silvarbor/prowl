@@ -328,9 +328,14 @@ struct AgentProfileEditorView: View {
     suggestions: [String]
   ) -> some View {
     let selection = suggestionSelection(for: text, suggestions: suggestions)
-    return LabeledContent(title) {
+    return HStack {
+      Text(title)
+      Spacer()
       HStack(spacing: 4) {
         TextField("", text: optionalTextBinding(for: text), prompt: Text(prompt))
+          .textFieldStyle(.plain)
+          .labelsHidden()
+          .multilineTextAlignment(.trailing)
           .accessibilityLabel(title)
         Picker("", selection: selection) {
           Text("Runtime Default").tag(AgentProfileSuggestionSelection.runtimeDefault)
@@ -341,9 +346,10 @@ struct AgentProfileEditorView: View {
             Text("Custom Value").tag(selection.wrappedValue)
           }
         }
+        .pickerStyle(.menu)
+        .controlSize(.small)
         .labelsHidden()
         .frame(width: 28)
-        .padding(.trailing, 4)
         .accessibilityLabel("\(title) suggestions")
         .help("Pick a known value, or type any value.")
       }

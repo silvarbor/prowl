@@ -13,7 +13,7 @@ struct ProwlCommand: ParsableCommand {
       Prowl bundles agent skills, including prowl-cli, which teaches a coding agent this CLI. \
       Run `prowl skills install` once to link them into your agents' skill folders \
       (~/.claude/skills, ~/.codex/skills, ~/.agents/skills, ~/.config/devin/skills, \
-      ~/.gemini/antigravity-cli/skills); \
+      ~/.gemini/antigravity-cli/skills, ~/.trae/skills); \
       `prowl skills list` shows the status. \
       The skills commands work locally and do not need the app to be running.
       """,
@@ -26,6 +26,7 @@ struct ProwlCommand: ParsableCommand {
       SkillsCommand.self,
       WorkflowCommand.self,
       FocusCommand.self,
+      CanvasCommand.self,
       SendCommand.self,
       KeyCommand.self,
       ReadCommand.self,

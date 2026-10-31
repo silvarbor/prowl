@@ -56,10 +56,14 @@ User-facing behavior is documented in
 
 - Issue #174 sketched a `[Worktree.ID: Date]` dictionary; the implementation used a
   `[ArchivedWorktree]` struct array (decided during #191, reflected in its PR body).
-- Issue #174's confirmation alert for retention-window shortening (warn when a shorter
-  period would immediately delete existing archived worktrees) was not implemented;
-  changing the setting runs the sweep at once. The DEBUG-only "Immediately" option
-  makes this observable in debug builds.
+- The original implementation omitted issue #174's confirmation for retention-window
+  shortening. PR #910 adds it: Settings retains the proposed period and full repository /
+  worktree identity snapshot (the warning displays up to ten names and the total count).
+  Confirmation re-evaluates current expiry and repository state before persistence; any
+  additional identity requires a replacement warning and another confirmation. The accepted
+  snapshot travels with the settings-change event into the first cleanup, which rechecks
+  eligibility before entering the existing confirmed-delete lifecycle. Subsequent automatic
+  sweeps continue to use the configured retention policy.
 
 ## Open questions
 
@@ -67,6 +71,3 @@ User-facing behavior is documented in
   script runs" (upstream #346, `b69ce38e`), reviewed 2026-06-09 and left in the
   "not yet ported — re-evaluate" bucket; the fork still lacks that affordance during
   slow archive-delete scripts.
-- Shortening the retention period silently deletes newly-expired archived worktrees
-  without confirmation (see deviations). Deliberate simplification as far as the
-  sources show, but worth revisiting if auto-delete complaints appear.

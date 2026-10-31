@@ -103,6 +103,14 @@ credential lifecycle. Normal completion keeps the last assigned task readable un
 reassignment, cleanup, or app exit. Cancellation revokes access. The existing `deliver`
 delivery protocol retains its own validation.
 
+Amendment (2026-10-14, issue #911): a caller that Prowl cannot place in a pane — a command
+that Codex's shared daemon runs and the thread mapping cannot resolve — has no task
+identity, so every read failed with `SOURCE_REQUIRED`. Such a caller now proves the task with
+the step's existing delivery token. This adds no credential: the token, its injection
+(typed line prefix, launch environment), and its lifecycle (minted when the step waits,
+revoked by Skip, Cancel, and Relaunch) are the `deliver` protocol's. A resolved pane still
+identifies the task and ignores the token. `deliver` gets the same fallback.
+
 This first release uses fixed retention settings and the existing filesystem/reducer
 abstractions. No database, new authentication subsystem, or default staging is introduced.
 

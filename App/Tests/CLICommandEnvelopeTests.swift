@@ -298,6 +298,7 @@ struct CLICommandEnvelopeTests {
       (.read(ReadInput()), "read"),
       (.tab(TabInput(action: .create)), "tab"),
       (.pane(PaneInput(action: .close)), "pane"),
+      (.canvas(CanvasInput(action: .status)), "canvas"),
     ]
     for (command, expected) in commands {
       #expect(command.name == expected)
@@ -319,6 +320,7 @@ struct CLICommandEnvelopeTests {
       .read(ReadInput()),
       .tab(TabInput(action: .create)),
       .pane(PaneInput(action: .close)),
+      .canvas(CanvasInput(action: .layout, layout: .tile, show: true)),
     ]
     for cmd in commands {
       let envelope = CommandEnvelope(output: .json, command: cmd)
@@ -327,5 +329,23 @@ struct CLICommandEnvelopeTests {
       #expect(json["output"] as? String == "json")
       #expect(json["command"] != nil)
     }
+  }
+
+  @Test func canvasInputRoundTripsAndDefaultsShowToFalse() throws {
+    let envelope = CommandEnvelope(
+      output: .json, command: .canvas(CanvasInput(action: .layout, layout: .organize, show: true)))
+    let decoded = try JSONDecoder().decode(CommandEnvelope.self, from: JSONEncoder().encode(envelope))
+    guard case .canvas(let input) = decoded.command else {
+      Issue.record("Expected canvas command")
+      return
+    }
+    #expect(input.action == .layout)
+    #expect(input.layout == .organize)
+    #expect(input.show)
+
+    let minimal = try JSONDecoder().decode(CanvasInput.self, from: Data(#"{"action":"fit"}"#.utf8))
+    #expect(minimal.action == .fit)
+    #expect(minimal.layout == nil)
+    #expect(minimal.show == false)
   }
 }

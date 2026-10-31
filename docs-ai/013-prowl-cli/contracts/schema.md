@@ -21,6 +21,7 @@ The bundle has one versioned success-or-error response schema for every wire com
 | `agents.dispatch-abandon` | `#/$defs/agentsDispatchAbandonResponse` |
 | `agents.wait` | `#/$defs/agentsWaitResponse` (errors may carry `#/$defs/agentsWaitErrorDetails`) |
 | `profiles` | `#/$defs/profilesResponse` |
+| `canvas` | `#/$defs/canvasResponse` |
 | `skills` (local-only) | `#/$defs/skillsResponse` |
 | `workflow` (`list`, `run`, `status`, `done`, `cancel`, `read` over the socket; `validate`/`schema` local-only) | `#/$defs/workflowResponse` |
 | `focus` | `#/$defs/focusResponse` |

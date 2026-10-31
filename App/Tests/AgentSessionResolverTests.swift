@@ -118,42 +118,42 @@ struct AgentSessionResolverTests {
 
   @Test func staleSessionsExpireAfterConsecutiveMisses() {
     let session = AgentSession(id: "old", transcriptPath: nil, source: .recentFile)
-    var previous = PaneAgentState(agentProcessID: 42, session: session)
+    var previous = PaneAgentState(agentProcess: .local(42), session: session)
     previous.sessionMissStreak = 0
 
     // Same process, FRESH ambiguous resolution: retained for two misses,
     // dropped on the third.
     let miss1 = PaneAgentState.retainedSession(
-      resolution: AgentSessionResolution(session: nil, isFresh: true), previous: previous, identifiedPID: 42)
+      resolution: AgentSessionResolution(session: nil, isFresh: true), previous: previous, identified: .local(42))
     #expect(miss1.session?.id == "old")
     #expect(miss1.missStreak == 1)
     previous.sessionMissStreak = 2
     let miss3 = PaneAgentState.retainedSession(
-      resolution: AgentSessionResolution(session: nil, isFresh: true), previous: previous, identifiedPID: 42)
+      resolution: AgentSessionResolution(session: nil, isFresh: true), previous: previous, identified: .local(42))
     #expect(miss3.session == nil)
 
     // Cached nil replayed during resolver backoff must NOT age the session:
     // only fresh resolutions count as misses.
     previous.sessionMissStreak = 2
     let replay = PaneAgentState.retainedSession(
-      resolution: AgentSessionResolution(session: nil, isFresh: false), previous: previous, identifiedPID: 42)
+      resolution: AgentSessionResolution(session: nil, isFresh: false), previous: previous, identified: .local(42))
     #expect(replay.session?.id == "old")
     #expect(replay.missStreak == 2)
 
     // Presence hold (probe returned no process): keep without aging.
     previous.sessionMissStreak = 2
     let held = PaneAgentState.retainedSession(
-      resolution: AgentSessionResolution(session: nil, isFresh: false), previous: previous, identifiedPID: nil)
+      resolution: AgentSessionResolution(session: nil, isFresh: false), previous: previous, identified: nil)
     #expect(held.session?.id == "old")
     #expect(held.missStreak == 2)
 
     // Fresh resolution resets the streak; new pid drops the session.
     let fresh = PaneAgentState.retainedSession(
-      resolution: AgentSessionResolution(session: session, isFresh: true), previous: previous, identifiedPID: 42)
+      resolution: AgentSessionResolution(session: session, isFresh: true), previous: previous, identified: .local(42))
     #expect(fresh.missStreak == 0)
     #expect(
       PaneAgentState.retainedSession(
-        resolution: AgentSessionResolution(session: nil, isFresh: true), previous: previous, identifiedPID: 43
+        resolution: AgentSessionResolution(session: nil, isFresh: true), previous: previous, identified: .local(43)
       ).session
         == nil
     )
@@ -245,5 +245,150 @@ struct AgentSessionResolverTests {
         candidates: candidates
       ) == nil
     )
+  }
+
+  // MARK: - Physical working directory (#897)
+
+  // Agents key their session folders on `getcwd()`, which macOS reports with the
+  // `/private` prefix under `/tmp`, `/var` and `/etc`, while the pane reports the
+  // logical path. Fixture names stay alphanumeric-and-dash so the expected folder
+  // names below are literal rather than recomputed with the production encoders.
+
+  @Test(arguments: [DetectedAgent.claude, .pi])
+  func scansPhysicalSessionRootForLogicalTmpCwd(agent: DetectedAgent) async throws {
+    let fixture = try PhysicalCwdFixture()
+    defer { fixture.remove() }
+    let cwd = try fixture.makeDirectory("cwd")
+    let id = UUID().uuidString.lowercased()
+    try fixture.writeSession(agent: agent, folderPath: "/private/tmp/\(fixture.name)-cwd", id: id)
+
+    let ids = await fixture.candidateIDs(agent: agent, workingDirectory: URL(fileURLWithPath: "/tmp/\(cwd)"))
+    #expect(ids == [id])
+  }
+
+  @Test(arguments: [DetectedAgent.claude, .pi])
+  func scansPhysicalSessionRootThroughDirectorySymlink(agent: DetectedAgent) async throws {
+    let fixture = try PhysicalCwdFixture()
+    defer { fixture.remove() }
+    let target = try fixture.makeDirectory("real")
+    try FileManager.default.createSymbolicLink(
+      atPath: "/tmp/\(fixture.name)-link",
+      withDestinationPath: "/tmp/\(target)"
+    )
+    let id = UUID().uuidString.lowercased()
+    try fixture.writeSession(agent: agent, folderPath: "/private/tmp/\(fixture.name)-real", id: id)
+
+    let ids = await fixture.candidateIDs(
+      agent: agent,
+      workingDirectory: URL(fileURLWithPath: "/tmp/\(fixture.name)-link")
+    )
+    #expect(ids == [id])
+  }
+
+  /// Runtimes that report `$PWD` (Go's `os.Getwd`) record the logical form even
+  /// when the pane already reports the physical one.
+  @Test func scansLogicalSessionRootForPhysicalCwd() async throws {
+    let fixture = try PhysicalCwdFixture()
+    defer { fixture.remove() }
+    _ = try fixture.makeDirectory("cwd")
+    let id = UUID().uuidString.lowercased()
+    try fixture.writeSession(agent: .claude, folderPath: "/tmp/\(fixture.name)-cwd", id: id)
+
+    let ids = await fixture.candidateIDs(
+      agent: .claude,
+      workingDirectory: URL(fileURLWithPath: "/private/tmp/\(fixture.name)-cwd")
+    )
+    #expect(ids == [id])
+  }
+
+  @Test func workingDirectoryVariantsDeduplicateLogicalAndPhysicalPaths() throws {
+    let fixture = try PhysicalCwdFixture()
+    defer { fixture.remove() }
+    let cwd = try fixture.makeDirectory("cwd")
+    let real = try fixture.makeDirectory("real")
+    try FileManager.default.createSymbolicLink(atPath: "/tmp/\(fixture.name)-link", withDestinationPath: "/tmp/\(real)")
+    func variants(_ path: String?) -> [String?] {
+      AgentSessionResolver.workingDirectoryVariants(path.map { URL(fileURLWithPath: $0) }).map { $0?.path }
+    }
+
+    #expect(variants(nil) == [nil])
+    #expect(variants("/tmp/\(cwd)") == ["/tmp/\(cwd)", "/private/tmp/\(cwd)"])
+    #expect(variants("/private/tmp/\(cwd)") == ["/private/tmp/\(cwd)", "/tmp/\(cwd)"])
+    #expect(
+      variants("/tmp/\(fixture.name)-link")
+        == ["/tmp/\(fixture.name)-link", "/private/tmp/\(real)", "/tmp/\(real)"]
+    )
+    #expect(variants("/tmp/\(fixture.name)-missing") == ["/tmp/\(fixture.name)-missing"])
+    #expect(variants("/usr") == ["/usr"])
+  }
+
+  @Test func keepsLogicalSessionRootWhenCwdIsMissing() async throws {
+    let fixture = try PhysicalCwdFixture()
+    defer { fixture.remove() }
+    let id = UUID().uuidString.lowercased()
+    try fixture.writeSession(agent: .claude, folderPath: "/tmp/\(fixture.name)-missing", id: id)
+
+    let ids = await fixture.candidateIDs(
+      agent: .claude,
+      workingDirectory: URL(fileURLWithPath: "/tmp/\(fixture.name)-missing")
+    )
+    #expect(ids == [id])
+  }
+}
+
+/// A throwaway agent home plus working directories under the literal `/tmp`.
+private struct PhysicalCwdFixture {
+  let name = "prowl897-" + UUID().uuidString.replacing("-", with: "").lowercased()
+  let home: URL
+
+  init() throws {
+    home = FileManager.default.temporaryDirectory
+      .appending(path: "prowl-physical-cwd-\(UUID().uuidString)", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+  }
+
+  /// Creates `/tmp/<name>-<suffix>` and returns its last path component.
+  func makeDirectory(_ suffix: String) throws -> String {
+    let component = "\(name)-\(suffix)"
+    try FileManager.default.createDirectory(atPath: "/tmp/\(component)", withIntermediateDirectories: true)
+    return component
+  }
+
+  /// Writes a transcript in the folder `agent` derives from `folderPath`.
+  func writeSession(agent: DetectedAgent, folderPath: String, id: String) throws {
+    let dashed = folderPath.replacing("/", with: "-")
+    let directory: URL
+    let file: String
+    switch agent {
+    case .claude:
+      directory = home.appending(path: ".claude/projects/\(dashed)", directoryHint: .isDirectory)
+      file = "\(id).jsonl"
+    case .pi:
+      directory = home.appending(path: ".pi/agent/sessions/-\(dashed)--", directoryHint: .isDirectory)
+      file = "session_\(id).jsonl"
+    default:
+      Issue.record("Unsupported fixture agent \(agent)")
+      return
+    }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try "{}".write(to: directory.appending(path: file), atomically: true, encoding: .utf8)
+  }
+
+  func candidateIDs(agent: DetectedAgent, workingDirectory: URL) async -> [String] {
+    let resolver = AgentSessionResolver(homeDirectory: home)
+    let result = await resolver.recentCandidates(
+      profile: AgentSessionProfile.profile(for: agent),
+      processStartedAt: .distantPast,
+      workingDirectory: workingDirectory,
+      now: .now
+    )
+    return result.candidates.map(\.session.id)
+  }
+
+  func remove() {
+    for suffix in ["cwd", "real", "link", "missing"] {
+      try? FileManager.default.removeItem(atPath: "/tmp/\(name)-\(suffix)")
+    }
+    try? FileManager.default.removeItem(at: home)
   }
 }

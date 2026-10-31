@@ -22,6 +22,10 @@ private let knownAgentBinaries: [String: DetectedAgent] = [
   // Bare `antigravity` stays unmapped: the Antigravity IDE ships an
   // `antigravity` launcher (and an `agy` shim) that opens the desktop app.
   "agy": .antigravity, "antigravity-cli": .antigravity, "antigravity_cli": .antigravity,
+  // Bare `trae` stays unmapped: the Trae IDE ships a `trae` launcher that opens
+  // the desktop app. The CLI installs `traecli` with `traex` as the real
+  // executable and `trae-cli`/`trae-agent` shims.
+  "traecli": .trae, "traex": .trae, "trae-cli": .trae, "trae-agent": .trae,
 ]
 
 func identifyAgent(processName: String) -> DetectedAgent? {
@@ -52,16 +56,21 @@ struct IdentifiedAgentProcess: Equatable, Sendable {
   let agent: DetectedAgent
   let name: String
   let process: ForegroundProcess
-  /// The process the shell launched for this agent (`ForegroundJob.launchProcessID(of:)`).
+  /// The process the shell launched for this agent (`ForegroundJob.launchProcess(of:)`).
   /// `process` is what state and sessions are read from; this is what a launch is
   /// identified by, so an engine child taking over `process` is not a replacement.
-  let launchProcessID: pid_t
+  let launchProcess: ProcessRef
 
-  init(agent: DetectedAgent, name: String, process: ForegroundProcess, launchProcessID: pid_t? = nil) {
+  init(agent: DetectedAgent, name: String, process: ForegroundProcess, launchProcess: ProcessRef? = nil) {
     self.agent = agent
     self.name = name
     self.process = process
-    self.launchProcessID = launchProcessID ?? process.pid
+    self.launchProcess = launchProcess ?? process.ref
+  }
+
+  /// The local-only view for local OS readers; nil for a remote process.
+  var local: LocalAgentProcess? {
+    process.ref.localPID.map { LocalAgentProcess(agent: agent, pid: $0) }
   }
 
   /// Icon token for `CommandIconMap`. The shared `agent` entrypoint name maps
@@ -70,6 +79,13 @@ struct IdentifiedAgentProcess: Equatable, Sendable {
   var iconLookupToken: String {
     name == "agent" ? agent.iconLookupToken : name
   }
+}
+
+/// An identified agent process that runs on this Mac. Session resolution and other
+/// readers of local OS state take this type, so a remote process cannot reach them.
+struct LocalAgentProcess: Equatable, Sendable {
+  let agent: DetectedAgent
+  let pid: pid_t
 }
 
 func identifyAgentInJob(_ job: ForegroundJob) -> IdentifiedAgentProcess? {
@@ -89,7 +105,7 @@ func identifyAgentInJob(_ job: ForegroundJob) -> IdentifiedAgentProcess? {
       agent: $0.agent,
       name: $0.name,
       process: $0.process,
-      launchProcessID: job.launchProcessID(of: $0.process.pid)
+      launchProcess: job.launchProcess(of: $0.process.ref)
     )
   }
 }
@@ -110,7 +126,7 @@ private func agentCandidates(for process: ForegroundProcess) -> [(name: String, 
 
   if let argv0 = process.argv0, let name = normalizedProcessName(argv0) {
     // The REPL delegates to `devin acp`, which owns the native session lock.
-    // Keep the shell-launched parent as launchProcessID while resolving that child.
+    // Keep the shell-launched parent as launchProcess while resolving that child.
     let isDevinEngine = name == "devin" && arguments.dropFirst().first == "acp"
     let demoted = isAntigravityUpdater && identifyAgent(processName: name) == .antigravity
     candidates.append((name, isDevinEngine ? 90 : demoted ? 60 : 80))
@@ -145,12 +161,13 @@ private func identifyAgent(candidate: (name: String, score: Int), process: Foreg
     }
     return nil
   }
-  // Grok Build, Devin, and Antigravity are native executables, not wrapped-runtime
-  // scripts. Their names can also appear as model arguments or quoted prompt
-  // tokens in a wrapper's cmdline; require argv0/name evidence.
-  if ["grok", "devin", "agy", "antigravity-cli", "antigravity_cli"].contains(candidate.name),
-    candidate.score == 40
-  {
+  // Grok Build, Devin, Antigravity, and TraeCode CLI are native executables, not
+  // wrapped-runtime scripts. Their names can also appear as model arguments or
+  // quoted prompt tokens in a wrapper's cmdline; require argv0/name evidence.
+  if [
+    "grok", "devin", "agy", "antigravity-cli", "antigravity_cli",
+    "traecli", "traex", "trae-cli", "trae-agent",
+  ].contains(candidate.name), candidate.score == 40 {
     return nil
   }
   return identifyAgent(processName: candidate.name)

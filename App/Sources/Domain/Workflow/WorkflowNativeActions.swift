@@ -211,7 +211,7 @@ nonisolated struct WorkflowNativeActionRunner: WorkflowActionExecuting {
     let result = try await WorkflowScriptExecutor.run(
       .init(
         executable: git.url.path(percentEncoded: false), arguments: arguments,
-        directory: root, environment: git.environment.merging(["GIT_TERMINAL_PROMPT": "0"]) { _, value in value }
+        directory: root, environment: git.processEnvironment.merging(["GIT_TERMINAL_PROMPT": "0"]) { _, value in value }
       ).limits(timeout: 30),
       request: Data(),
       onSpawn: { pid in

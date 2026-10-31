@@ -106,6 +106,12 @@ nonisolated enum AgentDispatchObservation: Equatable, Sendable {
   case changed(AgentDispatchSnapshot)
   case needsInput(AgentDispatchSnapshot)
   case incomplete(AgentDispatchSnapshot)
+
+  var snapshot: AgentDispatchSnapshot {
+    switch self {
+    case .snapshot(let value), .changed(let value), .needsInput(let value), .incomplete(let value): value
+    }
+  }
 }
 
 nonisolated enum AgentDispatchStoreError: Error, Equatable, Sendable {
@@ -134,6 +140,11 @@ final class AgentDispatchStore {
   private enum CandidateKind {
     case incomplete
     case gone(DispatchGoneReason)
+
+    var isSignalEvidence: Bool {
+      if case .gone(.surfaceClosed) = self { return false }
+      return true
+    }
   }
 
   private struct Candidate {
@@ -149,6 +160,7 @@ final class AgentDispatchStore {
   private var entries: [String: Entry] = [:]
   private var issuanceOrder: [String] = []
   private var candidates: [String: Candidate] = [:]
+  var refreshEvidence: @MainActor (UUID) -> Void = { _ in }
 
   init(
     capacity: Int = 256,
@@ -296,6 +308,7 @@ final class AgentDispatchStore {
   }
 
   func observe(dispatchID: String) throws -> AgentDispatchObservationStream {
+    refreshEvidence(dispatchID: dispatchID)
     guard var entry = entries[dispatchID] else { throw AgentDispatchStoreError.notFound }
     let initial = entry.snapshot
     if initial.record.isTerminal {
@@ -331,6 +344,40 @@ final class AgentDispatchStore {
     entries[dispatchID]?.subscribers.count ?? 0
   }
 
+  /// Stream buffers can outlive the evidence that enqueued their events. Re-read
+  /// the authoritative level so invalidation or a receipt wins before wait exits.
+  func revalidate(_ event: AgentDispatchObservation) -> AgentDispatchObservation {
+    let dispatchID = event.snapshot.record.id
+    refreshEvidence(dispatchID: dispatchID)
+    guard let entry = entries[dispatchID] else { return .changed(event.snapshot) }
+    if entry.snapshot.record.isTerminal { return .snapshot(entry.snapshot) }
+    switch entry.activeEvidence {
+    case .needsInput: return .needsInput(entry.snapshot)
+    case .turnEnded: return .incomplete(entry.snapshot)
+    case .sessionEnd, nil: return .snapshot(entry.snapshot)
+    }
+  }
+
+  func invalidateEvidence(surfaceID: UUID, evidenceEpoch: UUID) {
+    let dispatchIDs = entries.compactMap { dispatchID, entry in
+      entry.snapshot.record.state == .pending
+        && entry.snapshot.binding?.surfaceID == surfaceID
+        && entry.snapshot.binding?.evidenceEpoch == evidenceEpoch
+        ? dispatchID : nil
+    }
+    for dispatchID in dispatchIDs {
+      if candidates[dispatchID]?.kind.isSignalEvidence == true { cancelCandidate(dispatchID: dispatchID) }
+      entries[dispatchID]?.activeEvidence = nil
+    }
+  }
+
+  private func refreshEvidence(dispatchID: String) {
+    guard let snapshot = entries[dispatchID]?.snapshot,
+      !snapshot.record.isTerminal, let binding = snapshot.binding
+    else { return }
+    refreshEvidence(binding.surfaceID)
+  }
+
   func noteTerminalEvidence(dispatchID: String, evidence: AgentDispatchTerminalEvidence) {
     guard entries[dispatchID]?.snapshot.record.state == .pending else { return }
     switch evidence {
@@ -364,12 +411,15 @@ final class AgentDispatchStore {
   func noteTerminalEvidence(
     surfaceID: UUID,
     evidenceEpoch: UUID,
-    evidence: AgentDispatchTerminalEvidence
+    evidence: AgentDispatchTerminalEvidence,
+    observedAt: Date? = nil
   ) {
     let dispatchIDs = entries.compactMap { dispatchID, entry in
       entry.snapshot.record.state == .pending
         && entry.snapshot.binding?.surfaceID == surfaceID
         && entry.snapshot.binding?.evidenceEpoch == evidenceEpoch
+        // A replayed hook can predate the dispatch; it cannot settle work issued after it.
+        && observedAt.map { $0 >= entry.snapshot.record.createdAt } ?? true
         ? dispatchID : nil
     }
     for dispatchID in dispatchIDs {
@@ -389,7 +439,10 @@ final class AgentDispatchStore {
 
   private func scheduleCandidate(dispatchID: String, kind: CandidateKind) {
     if var existing = candidates[dispatchID] {
-      if case .incomplete = existing.kind, case .gone = kind {
+      if case .gone(.surfaceClosed) = kind {
+        existing.kind = kind
+        candidates[dispatchID] = existing
+      } else if case .incomplete = existing.kind, case .gone = kind {
         existing.kind = kind
         candidates[dispatchID] = existing
       }
@@ -410,6 +463,9 @@ final class AgentDispatchStore {
   }
 
   private func commitCandidate(dispatchID: String, token: UUID) {
+    if candidates[dispatchID]?.kind.isSignalEvidence == true {
+      refreshEvidence(dispatchID: dispatchID)
+    }
     guard let candidate = candidates[dispatchID], candidate.token == token else { return }
     candidates.removeValue(forKey: dispatchID)
     guard var entry = entries[dispatchID] else { return }

@@ -19,6 +19,7 @@ struct RepositorySectionView: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var isHovering = false
   @Shared(.repositoryAppearances) private var repositoryAppearances
+  @Shared(.hostProfiles) private var hostProfiles
 
   var body: some View {
     let state = store.state
@@ -57,12 +58,13 @@ struct RepositorySectionView: View {
           isRemoving: isRemovingRepository,
           icon: appearance.icon ?? (repository.isWorkspace ? .sfSymbol("folder") : nil),
           iconTint: appearance.color?.color ?? .accentColor,
-          repositoryRootURL: repository.rootURL,
+          repositoryRootURL: repository.localURL,
           nameTooltip: repository.capabilities.supportsWorktrees
             ? (isExpanded ? String(localized: "Collapse") : String(localized: "Expand"))
             : (repository.isWorkspace
               ? String(localized: "Open terminal in workspace")
-              : String(localized: "Open terminal in folder"))
+              : String(localized: "Open terminal in folder")),
+          remoteHost: RemoteProjectHostSummary(location: repository.location, hostProfiles: hostProfiles)
         )
         // Expanded git repos move the count into the worktree rows, so the
         // header stays quiet. Workspaces keep the header badge even when
@@ -73,6 +75,13 @@ struct RepositorySectionView: View {
             repository: repository,
             terminalManager: terminalManager
           )
+        }
+        if let hostStatus = state.remoteHostStatus(for: repository.id) {
+          RemoteHostStatusBadge(status: hostStatus) {
+            if case .needsRebind(let hostProfileID) = hostStatus {
+              store.send(.remoteHostRebindRequested(hostProfileID))
+            }
+          }
         }
       }
       .frame(maxWidth: .infinity, alignment: .leading)
@@ -303,11 +312,16 @@ struct RepositorySectionView: View {
     } else {
       Button("Copy Path") {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(repository.rootURL.path, forType: .string)
+        NSPasteboard.general.setString(repository.location.displayPath, forType: .string)
       }
+      // Finder shows folders on this Mac only (docs-ai 084 A4b).
+      let finderReason = repository.availability(of: .finder).unavailableReason?.message
       Button("Reveal in Finder") {
-        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: repository.rootURL.path)
+        guard let rootURL = repository.localURL else { return }
+        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: rootURL.path)
       }
+      .disabled(finderReason != nil)
+      .help(finderReason ?? String(localized: "Reveal this folder in Finder"))
     }
     Divider()
     if repository.isWorkspace {
@@ -322,11 +336,43 @@ struct RepositorySectionView: View {
     }
     .help("Repo Settings")
     Divider()
+    groupMenuItems
+      .disabled(isRemovingRepository)
+    Divider()
     Button("Remove Repository") {
       store.send(.repositoryManagement(.requestRemoveRepository(repository.id)))
     }
     .help("Remove repository")
     .disabled(isRemovingRepository)
+  }
+
+  /// Sidebar group membership (docs-ai 086).
+  @ViewBuilder
+  private var groupMenuItems: some View {
+    let layout = store.sidebarLayout
+    let currentGroupID = layout.groupID(containing: repository.id)
+    let otherGroups = layout.groups.filter { $0.id != currentGroupID }
+    Button("New Group…") {
+      store.send(.sidebarGroups(.newGroupRequested(containing: repository.id)))
+    }
+    .help("Put this repository into a new group")
+    if !otherGroups.isEmpty {
+      Menu("Move to Group") {
+        ForEach(otherGroups) { group in
+          Button(group.title) {
+            store.send(.sidebarGroups(.moveRepositoryToGroup(repository.id, group.id)))
+          }
+          .help("Move this repository to the end of \(group.title)")
+        }
+      }
+      .help("Move this repository to another group")
+    }
+    if currentGroupID != nil {
+      Button("Remove from Group") {
+        store.send(.sidebarGroups(.removeRepositoryFromGroup(repository.id)))
+      }
+      .help("Move this repository out of its group")
+    }
   }
 
   private var headerCellHeight: CGFloat {

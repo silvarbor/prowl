@@ -253,7 +253,8 @@ struct WorkflowRunHarnessTests {
     #expect(harness.typedLines.count == 1)
     #expect(
       harness.typedLines[0].line.hasPrefix(
-        "[Prowl] Read the assigned task with `prowl workflow read --run \(harness.run.id.uuidString) --invocation 1`"))
+        "[Prowl] Read the assigned task with "
+          + "`PROWL_WORKFLOW_TOKEN=TOKEN-1 prowl workflow read --run \(harness.run.id.uuidString) --invocation 1`"))
     #expect(harness.typedLines[0].line.contains("PROWL_WORKFLOW_TOKEN=TOKEN-1 prowl workflow deliver -"))
     #expect(harness.bridge.opened.map(\.dispatchID) == ["dispatch-1"])
     #expect(harness.run.phase == .waitingForDelivery(ordinal: 1))
@@ -280,7 +281,7 @@ struct WorkflowRunHarnessTests {
     #expect(
       harness.typedLines[1].line
         == "[Prowl] Findings: workflow-resource:resource-1. Fix or rebut each item. "
-        + (harness.run.currentInvocation?.content?.guidance ?? "")
+        + (harness.run.currentInvocation?.content?.guidance(token: "TOKEN-3") ?? "")
         + " — finish with: PROWL_WORKFLOW_TOKEN=TOKEN-3 prowl workflow deliver -")
     _ = try await harness.deliver(token: "TOKEN-3", body: "# Done")
     #expect(harness.typedLines[2].surfaceID == harness.run.bindings["reviewer"]?.pane?.surfaceID)

@@ -238,7 +238,7 @@ struct WorkflowRunMachineTests {
       effects.contains(
         .inject(
           role: "author", surfaceID: Self.authorPane.surfaceID, ordinal: 1,
-          line: "[Prowl] " + (machine.run.invocations[0].content?.guidance ?? "")
+          line: "[Prowl] " + (machine.run.invocations[0].content?.guidance(token: "TOKEN-1") ?? "")
             + " — finish with: PROWL_WORKFLOW_TOKEN=TOKEN-1 prowl workflow deliver -",
           opensActivation: true)))
     #expect(machine.run.phase == .injecting(ordinal: 1))
@@ -564,7 +564,7 @@ struct WorkflowRunMachineTests {
         .inject(
           role: "author", surfaceID: Self.authorPane.surfaceID, ordinal: 3,
           line: "[Prowl] Findings: workflow-resource:resource-1. Fix or rebut each item. "
-            + (machine.run.currentInvocation?.content?.guidance ?? "")
+            + (machine.run.currentInvocation?.content?.guidance(token: "TOKEN-3") ?? "")
             + " — finish with: PROWL_WORKFLOW_TOKEN=TOKEN-3 prowl workflow deliver -",
           opensActivation: true)))
     _ = machine.apply(.injectionSucceeded(ordinal: 3, dispatchID: "d3"))
@@ -1156,9 +1156,11 @@ struct WorkflowRunMachineTests {
     #expect(!effects.contains { if case .inject = $0 { return true } else { return false } })
     #expect(!effects.contains { if case .awaitRoleIdle = $0 { return true } else { return false } })
     let line = try #require(machine.run.selfInitiatedLine)
+    let token = try #require(machine.run.currentInvocation?.activation?.token)
     #expect(
       line.hasPrefix(
-        "[Prowl] Read the assigned task with `prowl workflow read --run \(Self.runID.uuidString) --invocation 1`"))
+        "[Prowl] Read the assigned task with "
+          + "`PROWL_WORKFLOW_TOKEN=\(token) prowl workflow read --run \(Self.runID.uuidString) --invocation 1`"))
     #expect(machine.run.phase == .injecting(ordinal: 1))
     var continued = machine
     _ = continued.apply(.injectionSucceeded(ordinal: 1, dispatchID: "d1"))

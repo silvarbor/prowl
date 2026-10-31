@@ -18,6 +18,22 @@ runs:
       shell: bash
     - run: mise install
       shell: bash
+    # swift-format ships inside the Xcode toolchain, not in a standard bin directory, and the
+    # Makefile calls it unqualified. Taking it from the selected Xcode keeps CI on the same
+    # swift-format as local builds instead of pinning a second copy. Link only swift-format:
+    # adding the toolchain bin directory would also put its swift and clang ahead of the
+    # /usr/bin shims for every later step.
+    - name: Put swift-format on PATH
+      shell: bash
+      run: |
+        set -euo pipefail
+        SWIFT_FORMAT="$(xcrun --find swift-format)"
+        SWIFT_FORMAT_VERSION="$("$SWIFT_FORMAT" --version)"
+        bin_dir="$RUNNER_TEMP/swift-format-bin"
+        mkdir -p "$bin_dir"
+        ln -sf "$SWIFT_FORMAT" "$bin_dir/swift-format"
+        echo "$bin_dir" >> "$GITHUB_PATH"
+        echo "swift-format $SWIFT_FORMAT_VERSION at $SWIFT_FORMAT"
 
     - name: Xcode cache identity
       shell: bash

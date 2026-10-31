@@ -20,6 +20,7 @@ nonisolated enum AgentProfileRuntime: String, Codable, CaseIterable, Identifiabl
   case qwen
   case grok
   case antigravity
+  case trae
   // swiftlint:disable:next identifier_name
   case pi
   case omp
@@ -43,6 +44,7 @@ nonisolated enum AgentProfileRuntime: String, Codable, CaseIterable, Identifiabl
     case .qwen: .qwen
     case .grok: .grok
     case .antigravity: .antigravity
+    case .trae: .trae
     case .pi: .pi
     case .omp: .omp
     }
@@ -76,6 +78,7 @@ nonisolated enum AgentProfileRuntime: String, Codable, CaseIterable, Identifiabl
     case .qwen: ".qwen"
     case .grok: ".grok"
     case .antigravity: ".gemini/antigravity-cli"
+    case .trae: ".trae"
     case .pi: ".pi/agent"
     case .omp: ".omp/agent"
     }
@@ -101,6 +104,7 @@ extension DetectedAgent {
     case .qwen: .qwen
     case .grok: .grok
     case .antigravity: .antigravity
+    case .trae: .trae
     case .pi: .pi
     case .omp: .omp
     }

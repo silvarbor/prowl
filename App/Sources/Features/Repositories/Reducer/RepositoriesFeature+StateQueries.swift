@@ -32,13 +32,7 @@ extension RepositoriesFeature.State {
     if let selectedWorktreeID {
       return worktree(for: selectedWorktreeID)
     }
-    guard let selectedRepository,
-      selectedRepository.capabilities.supportsRunnableFolderActions,
-      !selectedRepository.capabilities.supportsWorktrees
-    else {
-      return nil
-    }
-    return Self.plainFolderWorktree(for: selectedRepository)
+    return selectedRepository?.terminalWorktree
   }
 
   /// The single answer to "which worktree does a worktree-scoped action
@@ -57,38 +51,13 @@ extension RepositoriesFeature.State {
   /// or the synthesized worktree representing a runnable plain-folder
   /// repository (whose repository ID doubles as its terminal target ID).
   func terminalWorktree(for id: Worktree.ID) -> Worktree? {
-    if let worktree = worktree(for: id) {
-      return worktree
-    }
-    guard let repository = repositories[id: id],
-      repository.capabilities.supportsRunnableFolderActions,
-      !repository.capabilities.supportsWorktrees
-    else {
-      return nil
-    }
-    return Self.plainFolderWorktree(for: repository)
-  }
-
-  static func plainFolderWorktree(for repository: Repository) -> Worktree {
-    Worktree(
-      id: repository.id,
-      name: repository.name,
-      detail: repository.rootURL.path(percentEncoded: false),
-      workingDirectory: repository.rootURL,
-      repositoryRootURL: repository.rootURL
-    )
+    worktree(for: id) ?? repositories[id: id]?.terminalWorktree
   }
 
   var terminalStateIDs: Set<Worktree.ID> {
     Set(
       repositories.flatMap { repository -> [Worktree.ID] in
-        if repository.capabilities.supportsWorktrees {
-          repository.worktrees.map(\.id)
-        } else if repository.capabilities.supportsRunnableFolderActions {
-          [repository.id]
-        } else {
-          []
-        }
+        repository.terminalWorktree.map { [$0.id] } ?? repository.worktrees.map(\.id)
       }
     )
   }
@@ -101,7 +70,7 @@ extension RepositoriesFeature.State {
   }
 
   func worktreeID(byOffset offset: Int) -> Worktree.ID? {
-    let rows = orderedWorktreeRows(includingRepositoryIDs: expandedRepositoryIDs)
+    let rows = orderedWorktreeRows(includingRepositoryIDs: visibleExpandedRepositoryIDs)
     guard !rows.isEmpty else { return nil }
     if let currentID = selectedWorktreeID,
       let currentIndex = rows.firstIndex(where: { $0.id == currentID })
@@ -161,6 +130,17 @@ extension RepositoriesFeature.State {
     worktreeInfoByID[worktreeID]
   }
 
+  // The rate limit that keeps the worktree's pull request status from refreshing, if any.
+  func githubRateLimitStatus(forWorktreeID worktreeID: Worktree.ID?) -> GithubRateLimitStatus? {
+    guard let worktreeID, let repositoryID = repositoryID(containing: worktreeID) else {
+      return nil
+    }
+    return GithubRateLimitStatus(
+      blocks: githubRateLimitBlocks,
+      hosts: githubHostsByRepositoryID[repositoryID] ?? []
+    )
+  }
+
   func codeHost(for repositoryID: Repository.ID) -> CodeHost {
     codeHostByRepositoryID[repositoryID] ?? .unknown
   }
@@ -188,18 +168,19 @@ extension RepositoriesFeature.State {
   func plainRepositoryRootsForInfoWatcher() -> [URL] {
     repositories
       .filter { $0.kind == .plain && !$0.isWorkspace }
-      .map { $0.rootURL }
+      .compactMap { $0.location.localURL }
   }
 
   /// Child repositories materialized inside every workspace, resolved to their
   /// on-disk working directory. Used both to refresh their live status and to
   /// render their sidebar rows. Child id is the working-directory path string.
   func resolvedWorkspaceChildren(in repository: Repository) -> [ResolvedWorkspaceChild] {
-    guard let workspace = repository.workspace else {
+    // Workspaces are local folders (docs-ai 084 A4a).
+    guard let workspace = repository.workspace, let rootURL = repository.localURL else {
       return []
     }
     return workspace.repositories.map { entry in
-      let url = entry.resolvedURL(relativeTo: repository.rootURL)
+      let url = entry.resolvedURL(relativeTo: rootURL)
       return ResolvedWorkspaceChild(
         id: url.path(percentEncoded: false),
         workspaceID: repository.id,
@@ -238,9 +219,13 @@ extension RepositoriesFeature.State {
   func diffTarget(for id: DiffTargetID) -> DiffTarget? {
     switch id {
     case .worktree(let worktreeID):
-      return worktree(for: worktreeID).map(DiffTarget.init(worktree:))
+      guard let worktree = worktree(for: worktreeID), worktree.availability(of: .diff).isAvailable else {
+        return nil
+      }
+      return DiffTarget(worktree: worktree)
     case .workspaceChild(let workspaceID, let path):
       guard let workspaceRepository = repositories[id: workspaceID],
+        let terminalHost = workspaceRepository.terminalWorktree,
         let child = resolvedWorkspaceChildren(in: workspaceRepository).first(where: { $0.id == path })
       else {
         return nil
@@ -253,7 +238,7 @@ extension RepositoriesFeature.State {
         workingDirectory: child.workingDirectory,
         branchName: workspaceChildBranchByID[child.id] ?? child.metadataBranch ?? child.repositoryName,
         repositoryRootURL: child.repositoryRootURL,
-        terminalHost: Self.plainFolderWorktree(for: workspaceRepository),
+        terminalHost: terminalHost,
         terminalWorkingDirectory: child.workingDirectory
       )
     }
@@ -263,6 +248,9 @@ extension RepositoriesFeature.State {
   /// the selected worktree, else the selected workspace child.
   var selectedDiffTargetID: DiffTargetID? {
     if let selectedWorktreeID {
+      guard worktree(for: selectedWorktreeID)?.availability(of: .diff).isAvailable != false else {
+        return nil
+      }
       return .worktree(selectedWorktreeID)
     }
     if let selectedWorkspaceChildID,
@@ -303,6 +291,28 @@ extension RepositoriesFeature.State {
     return groups
   }
 
+  struct ExpiredArchivedWorktree: Equatable {
+    var worktree: Worktree
+    var repository: Repository
+  }
+
+  /// Archived worktrees an auto-delete pass with `period` would remove at `now`. Settings uses
+  /// this to warn before a new period applies, so it must stay in sync with the deletion pass.
+  func expiredArchivedWorktrees(for period: AutoDeletePeriod, now: Date) -> [ExpiredArchivedWorktree] {
+    let cutoff = now.addingTimeInterval(-Double(period.rawValue) * secondsPerDay)
+    return archivedWorktrees.compactMap { entry in
+      guard
+        entry.archivedAt <= cutoff,
+        let (worktree, repository) = findWorktreeAndRepository(worktreeID: entry.id, state: self),
+        !isMainWorktree(worktree),
+        !deletingWorktreeIDs.contains(entry.id)
+      else {
+        return nil
+      }
+      return ExpiredArchivedWorktree(worktree: worktree, repository: repository)
+    }
+  }
+
   var canCreateWorktree: Bool {
     if repositories.isEmpty {
       return false
@@ -330,8 +340,7 @@ extension RepositoriesFeature.State {
         .compactMap { worktree(for: $0.id) }
         .first
     }
-    guard repository.capabilities.supportsRunnableFolderActions else { return nil }
-    return Self.plainFolderWorktree(for: repository)
+    return repository.terminalWorktree
   }
 
   func pendingWorktree(for id: Worktree.ID?) -> PendingWorktree? {
@@ -355,6 +364,7 @@ extension RepositoriesFeature.State {
       repositoryID: pending.repositoryID,
       name: pending.progress.titleText,
       detail: pending.progress.detailText,
+      folderName: nil,
       info: worktreeInfo(for: pending.id),
       isPinned: false,
       isMainWorktree: false,
@@ -380,6 +390,7 @@ extension RepositoriesFeature.State {
       repositoryID: repositoryID,
       name: worktree.name,
       detail: worktree.detail,
+      folderName: URL(filePath: worktree.location.path, directoryHint: .isDirectory).lastPathComponent,
       info: worktreeInfo(for: worktree.id),
       isPinned: isPinned,
       isMainWorktree: isMainWorktree,
@@ -415,34 +426,29 @@ extension RepositoriesFeature.State {
     repositories[id: id]?.name
   }
 
-  func orderedRepositoryRoots() -> [URL] {
-    let rootsByID = Dictionary(
-      repositoryRoots.map {
-        ($0.standardizedFileURL.path(percentEncoded: false), $0.standardizedFileURL)
-      },
-      uniquingKeysWith: { first, _ in first }
-    )
-    var ordered: [URL] = []
+  /// The repository roots in sidebar order, standardized once each; the loaded
+  /// repositories, in their own order, when no roots are known.
+  func orderedRepositoryRoots() -> [RepositoryLocation] {
+    let roots = repositoryRoots.map(\.standardized)
+    let rootsByID = Dictionary(roots.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    var ordered: [RepositoryLocation] = []
     var seen: Set<Repository.ID> = []
-    for id in repositoryOrderIDs {
-      if let rootURL = rootsByID[id], seen.insert(id).inserted {
-        ordered.append(rootURL)
+    for id in sidebarLayout.repositoryIDs {
+      if let root = rootsByID[id], seen.insert(id).inserted {
+        ordered.append(root)
       }
     }
-    for rootURL in repositoryRoots {
-      let id = rootURL.standardizedFileURL.path(percentEncoded: false)
-      if seen.insert(id).inserted {
-        ordered.append(rootURL.standardizedFileURL)
-      }
+    for root in roots where seen.insert(root.id).inserted {
+      ordered.append(root)
     }
     if ordered.isEmpty {
-      ordered = repositories.map(\.rootURL)
+      ordered = repositories.map(\.location.standardized)
     }
     return ordered
   }
 
   func orderedRepositoryIDs() -> [Repository.ID] {
-    orderedRepositoryRoots().map { $0.standardizedFileURL.path(percentEncoded: false) }
+    orderedRepositoryRoots().map(\.id)
   }
 
   func repositoryID(for worktreeID: Worktree.ID?) -> Repository.ID? {
@@ -669,4 +675,10 @@ extension RepositoriesFeature.State {
   var canEnterShelf: Bool {
     repositories.contains(where: { $0.kind == .plain }) || !orderedWorktreeRows().isEmpty
   }
+}
+
+/// Identities accepted by the archived-worktree cleanup confirmation.
+struct ArchivedAutoDeleteTarget: Equatable, Hashable, Sendable {
+  var worktreeID: Worktree.ID
+  var repositoryID: Repository.ID
 }

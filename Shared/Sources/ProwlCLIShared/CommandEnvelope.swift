@@ -35,6 +35,7 @@ public enum Command: Codable, Sendable {
   case tab(TabInput)
   case pane(PaneInput)
   case workflow(WorkflowInput)
+  case canvas(CanvasInput)
 
   public var name: String {
     switch self {
@@ -59,6 +60,7 @@ public enum Command: Codable, Sendable {
     case .tab: "tab"
     case .pane: "pane"
     case .workflow: "workflow"
+    case .canvas: "canvas"
     }
   }
 }

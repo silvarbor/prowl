@@ -49,10 +49,13 @@ struct GlobalCustomCommandsFeature {
   }
 
   private func persist(_ settings: UserGlobalSettings) -> Effect<Action> {
-    .run { send in
-      @Shared(.userGlobalSettings) var storedSettings
-      $storedSettings.withLock { $0 = settings }
-      await send(.delegate(.settingsChanged(settings)))
-    }
+    // The write happens synchronously in the reducer: this pane's state is
+    // removed on every Settings sidebar switch, and a persist living inside
+    // `.run` would outlive the pane (or be cancelled with it). Only the
+    // field this pane edits is written, so other writers of the same file
+    // (agent profiles, workflows) keep their changes.
+    @Shared(.userGlobalSettings) var storedSettings
+    $storedSettings.withLock { $0.customCommands = settings.customCommands }
+    return .send(.delegate(.settingsChanged(storedSettings)))
   }
 }

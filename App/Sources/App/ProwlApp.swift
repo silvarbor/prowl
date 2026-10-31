@@ -60,11 +60,15 @@ final class ProwlAppDelegate: NSObject, NSApplicationDelegate {
     AgentProfileSeeder.seedIfNeeded()
     Task { await AgentRuntimeAvailabilityProbe.refresh() }
     agentIslandWindowController?.activate()
+    // A launch in the background never resigns active, so seed the pause before the first
+    // load. A normal launch becomes active right after this and resumes the polls.
+    appStore?.send(.repositories(.setRemoteRefreshActive(NSApplication.shared.isActive)))
     appStore?.send(.appLaunched)
   }
 
   func applicationDidBecomeActive(_ notification: Notification) {
     appStore?.send(.settings(.refreshAppLanguage))
+    appStore?.send(.appActivityChanged(isActive: true))
     let app = NSApplication.shared
     let hasVisibleMainWindow = MainWindowSurface.hasVisibleMainWindow(in: app.windows)
     WindowLifecycleDiagnostics.logWithWindows(
@@ -73,6 +77,10 @@ final class ProwlAppDelegate: NSObject, NSApplicationDelegate {
     guard !hasVisibleMainWindow else { return }
     WindowLifecycleDiagnostics.log("applicationDidBecomeActive -> surfaceMainWindow()")
     app.surfaceMainWindow()
+  }
+
+  func applicationDidResignActive(_ notification: Notification) {
+    appStore?.send(.appActivityChanged(isActive: false))
   }
 
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -106,7 +114,18 @@ final class ProwlAppDelegate: NSObject, NSApplicationDelegate {
 
 }
 
+/// The process entry. The app executable is also Ghostty's CLI through the
+/// `Contents/MacOS/ghostty` symlink (docs-ai 085), so this check runs before any app setup.
 @main
+enum ProwlMain {
+  static func main() {
+    if GhosttyCLIEntry.isGhosttyInvocation(argv0: CommandLine.arguments.first) {
+      GhosttyCLIEntry.run()
+    }
+    ProwlApp.main()
+  }
+}
+
 @MainActor
 struct ProwlApp: App {
   @NSApplicationDelegateAdaptor(ProwlAppDelegate.self) private var appDelegate
@@ -219,9 +238,7 @@ struct ProwlApp: App {
       userOverrides: initialSettings.keybindingUserOverrides
     )
     Self.bootstrapTelemetry(initialSettings: initialSettings)
-    if let resourceURL = Bundle.main.resourceURL?.appendingPathComponent("ghostty") {
-      setenv("GHOSTTY_RESOURCES_DIR", resourceURL.path, 1)
-    }
+    GhosttyBundledResources.export()
     Self.initializeGhostty(resolvedKeybindings: initialResolvedKeybindings)
     let runtime = Self.makeGhosttyRuntime(initialSettings: initialSettings)
     _ghostty = State(initialValue: runtime)
@@ -291,10 +308,9 @@ struct ProwlApp: App {
       workflowReservations: workflowRuntime.reservations
     )
     mirrors.host.commandService = MirrorCommandService(router: cliRouter) {
-      ListRuntimeSnapshotBuilder.orderedWorktreeContexts(from: appStore.state.repositories).map {
-        ListCommandWorktree(
-          id: $0.id, name: $0.name, path: $0.path, rootPath: $0.rootPath, kind: $0.kind)
-      }
+      // A remote folder cannot launch until C3 (docs-ai 084), so the picker lists none.
+      ListRuntimeSnapshotBuilder.orderedWorktreeContexts(from: appStore.state.repositories)
+        .filter { $0.host == nil }.map(\.listWorktree)
     }
 
     _cliSocketServer = State(initialValue: cliServer)
@@ -393,9 +409,6 @@ struct ProwlApp: App {
       send: { command in
         terminalManager.handleCommand(command)
       },
-      createTabInDirectory: { worktree, directory in
-        terminalManager.createTabInDirectory(worktree, directory: directory)
-      },
       launchAgentProfile: { worktree, request in
         switch await terminalManager.prepareAgentProfileLaunch(request, in: worktree) {
         case .success(let preparation):
@@ -409,6 +422,24 @@ struct ProwlApp: App {
       },
       observeAgentState: { surfaceID in
         terminalManager.observeAgentState(surfaceID: surfaceID)
+      },
+      canvasFocusedCard: {
+        guard let worktreeID = terminalManager.canvasFocusedWorktreeID,
+          let tabID = terminalManager.stateIfExists(for: worktreeID)?.tabManager.selectedTabId
+        else { return nil }
+        return CanvasCardRef(worktreeID: worktreeID, tabID: tabID)
+      },
+      canvasRestorableCard: { card in
+        let states = terminalManager.activeWorktreeStates
+        @MainActor func selectedCard(_ state: WorktreeTerminalState) -> CanvasCardRef? {
+          guard let tabID = state.tabManager.selectedTabId, state.hasCanvasCard(tabID) else { return nil }
+          return CanvasCardRef(worktreeID: state.worktreeID, tabID: tabID)
+        }
+        if let state = states.first(where: { $0.worktreeID == card.worktreeID }) {
+          if state.hasCanvasCard(card.tabID) { return card }
+          if let selected = selectedCard(state) { return selected }
+        }
+        return states.lazy.compactMap(selectedCard).first
       },
       canvasFocusedWorktreeID: {
         terminalManager.canvasFocusedWorktreeID
@@ -447,9 +478,9 @@ struct ProwlApp: App {
     terminalManager: WorktreeTerminalManager
   ) -> BranchNameSuggestionClient {
     var client = BranchNameSuggestionClient.liveValue
-    client.gatherContext = { repositoryName, repositoryRootURL, existingBranchNames in
+    client.gatherContext = { repositoryName, repository, existingBranchNames in
       let allStates = terminalManager.activeWorktreeStates
-      let sameRepoStates = allStates.filter { $0.repositoryRootURL == repositoryRootURL }
+      let sameRepoStates = allStates.filter { $0.worktree.repositoryLocation.standardized == repository.standardized }
 
       let selectedID = terminalManager.selectedWorktreeID
       let sorted = sameRepoStates.sorted { lhs, rhs in
@@ -491,7 +522,7 @@ struct ProwlApp: App {
 
       return BranchNameSuggestionContext(
         repositoryName: repositoryName,
-        existingBranchNames: Array(existingBranchNames.prefix(10)),
+        existingBranchNames: existingBranchNames,
         terminalContexts: hints,
         llmAvailable: FoundationModelLLMService().isAvailable
       )
@@ -596,7 +627,7 @@ struct ProwlApp: App {
     else {
       return .failure(.agentNotFound("Pane '\(pane)' does not host an active agent."))
     }
-    guard detectedAgent == .codex || detectedAgent == .claude else {
+    guard detectedAgent == .codex || detectedAgent == .claude || detectedAgent == .trae else {
       return .failure(
         .unsupportedAgent("Agent '\(detectedAgent.rawValue)' is not supported by agents read."))
     }
@@ -610,6 +641,7 @@ struct ProwlApp: App {
       switch detectedAgent {
       case .codex: CodexScreenProfile.blockerText(in: detectorScreen)
       case .claude: ClaudeScreenProfile.blockerText(in: detectorScreen)
+      case .trae: traeBlockerText(in: detectorScreen)
       default: nil
       }
     if detection.state == .blocked, blockerText == nil {
@@ -620,7 +652,7 @@ struct ProwlApp: App {
       processGroupID: surface.bridge.foregroundProcessGroupID(),
       childPID: surface.bridge.childPID()
     )
-    guard let identified = job.flatMap(identifyAgentInJob), identified.agent == detectedAgent else {
+    guard let identified = job.flatMap(identifyAgentInJob)?.local, identified.agent == detectedAgent else {
       return .failure(.agentNotFound("Pane '\(pane)' no longer hosts the selected agent."))
     }
 
@@ -935,6 +967,7 @@ struct ProwlApp: App {
           return .failure(.notFound)
         }
       },
+      revalidateDispatch: { terminalManager.revalidateAgentDispatch($0) },
       observeCondition: { surfaceID in
         terminalManager.observeAgentState(surfaceID: surfaceID)
       },
@@ -1005,7 +1038,7 @@ struct ProwlApp: App {
         return nil
       }
       if focus {
-        selectCLIWorktreeContext(
+        selectCLIWorktreeContextForNewTab(
           worktreeID: target.worktreeID,
           appStore: appStore,
           terminalManager: terminalManager
@@ -1170,7 +1203,66 @@ struct ProwlApp: App {
       closeHandler: lifecycleHandler,
       tabHandler: tabHandler,
       paneHandler: paneHandler,
-      workflowHandler: workflowHandler
+      workflowHandler: workflowHandler,
+      canvasHandler: makeCanvasHandler(appStore: appStore, terminalManager: terminalManager)
+    )
+  }
+
+  /// Poll `condition` until it holds or `timeout` passes. Canvas takes a
+  /// request on its next render; a few seconds covers a view switch on a busy
+  /// app. Returns false at once when the task is cancelled (the CLI hung up),
+  /// so a cancelled wait never spins the main actor.
+  @MainActor
+  static func pollUntil<C: Clock<Duration>>(
+    _ condition: @MainActor () -> Bool,
+    timeout: Duration = .seconds(3),
+    interval: Duration = .milliseconds(50),
+    clock: C
+  ) async -> Bool {
+    let deadline = clock.now.advanced(by: timeout)
+    while !condition() {
+      guard clock.now < deadline else { return false }
+      do {
+        try await clock.sleep(for: interval)
+      } catch {
+        return false
+      }
+    }
+    return true
+  }
+
+  @MainActor
+  static func makeCanvasHandler(
+    appStore: StoreOf<AppFeature>,
+    terminalManager: WorktreeTerminalManager
+  ) -> CanvasCommandHandler {
+    CanvasCommandHandler(
+      snapshot: {
+        let repositories = appStore.state.repositories
+        let cardCount = terminalManager.activeWorktreeStates.reduce(0) { count, state in
+          count + state.tabManager.tabs.count { state.hasCanvasCard($0.id) }
+        }
+        return CanvasCLISnapshot(
+          isShowing: repositories.isShowingCanvas,
+          layoutMode: CanvasLayoutStore.storedMode(),
+          cardCount: cardCount,
+          pendingCommandRequestID: repositories.pendingCanvasCommandRequest?.id,
+          lastPerformedCommandRequestID: repositories.lastPerformedCanvasCommandRequestID
+        )
+      },
+      perform: { operation in
+        switch operation {
+        case .show, .hide:
+          appStore.send(.repositories(.toggleCanvas))
+          return nil
+        case .command(let command):
+          appStore.send(.repositories(.requestCanvasCommand(command)))
+          return appStore.state.repositories.pendingCanvasCommandRequest?.id
+        }
+      },
+      waitUntil: { condition in
+        await pollUntil(condition, clock: ContinuousClock())
+      }
     )
   }
 
@@ -1325,60 +1417,63 @@ struct ProwlApp: App {
     let normalized = URL(fileURLWithPath: path, isDirectory: true)
       .standardizedFileURL.path(percentEncoded: false)
     // Exact match: worktree working directory or repository root
+    // A local path never resolves to a worktree on another host.
     for repository in repositories.repositories {
+      guard let repositoryRootURL = repository.localURL else { continue }
       let kind = repository.kind.rawValue
       for worktree in repository.worktrees {
-        let wtPath = worktree.workingDirectory
+        guard let worktreeURL = worktree.localURL else { continue }
+        let wtPath = worktreeURL
           .standardizedFileURL.path(percentEncoded: false)
         if wtPath == normalized {
           return OpenResolverResult(
             resolution: .exactRoot, worktreeID: worktree.id,
             worktreeName: worktree.name, worktreePath: wtPath,
-            rootPath: repository.rootURL.standardizedFileURL.path(percentEncoded: false),
+            rootPath: repositoryRootURL.standardizedFileURL.path(percentEncoded: false),
             worktreeKind: kind, resolvedPath: normalized
           )
         }
       }
-      let repoRoot = repository.rootURL
-        .standardizedFileURL.path(percentEncoded: false)
-      if repoRoot == normalized,
-        !repository.capabilities.supportsWorktrees,
-        repository.capabilities.supportsRunnableFolderActions
-      {
-        return OpenResolverResult(
-          resolution: .exactRoot, worktreeID: repository.id,
-          worktreeName: repository.name, worktreePath: repoRoot,
-          rootPath: repoRoot, worktreeKind: kind, resolvedPath: normalized
-        )
+      if let terminalWorktree = repository.terminalWorktree, let terminalURL = terminalWorktree.localURL {
+        let repoRoot = terminalURL
+          .standardizedFileURL.path(percentEncoded: false)
+        if repoRoot == normalized {
+          return OpenResolverResult(
+            resolution: .exactRoot, worktreeID: terminalWorktree.id,
+            worktreeName: terminalWorktree.name, worktreePath: repoRoot,
+            rootPath: repoRoot, worktreeKind: kind, resolvedPath: normalized
+          )
+        }
       }
     }
     // Inside-root: path is inside an existing worktree/repo root
     let normalizedSlash = normalized.hasSuffix("/") ? normalized : normalized + "/"
+    // A local path never resolves to a worktree on another host.
     for repository in repositories.repositories {
+      guard let repositoryRootURL = repository.localURL else { continue }
       let kind = repository.kind.rawValue
       for worktree in repository.worktrees {
-        let wtPath = worktree.workingDirectory
+        guard let worktreeURL = worktree.localURL else { continue }
+        let wtPath = worktreeURL
           .standardizedFileURL.path(percentEncoded: false)
         let wtSlash = wtPath.hasSuffix("/") ? wtPath : wtPath + "/"
         if normalizedSlash.hasPrefix(wtSlash) {
           return OpenResolverResult(
             resolution: .insideRoot, worktreeID: worktree.id,
             worktreeName: worktree.name, worktreePath: wtPath,
-            rootPath: repository.rootURL.standardizedFileURL.path(percentEncoded: false),
+            rootPath: repositoryRootURL.standardizedFileURL.path(percentEncoded: false),
             worktreeKind: kind, resolvedPath: normalized
           )
         }
       }
-      if !repository.capabilities.supportsWorktrees,
-        repository.capabilities.supportsRunnableFolderActions
-      {
-        let repoRoot = repository.rootURL
+      if let terminalWorktree = repository.terminalWorktree, let terminalURL = terminalWorktree.localURL {
+        let repoRoot = terminalURL
           .standardizedFileURL.path(percentEncoded: false)
         let repoSlash = repoRoot.hasSuffix("/") ? repoRoot : repoRoot + "/"
         if normalizedSlash.hasPrefix(repoSlash) {
           return OpenResolverResult(
-            resolution: .insideRoot, worktreeID: repository.id,
-            worktreeName: repository.name, worktreePath: repoRoot,
+            resolution: .insideRoot, worktreeID: terminalWorktree.id,
+            worktreeName: terminalWorktree.name, worktreePath: repoRoot,
             rootPath: repoRoot, worktreeKind: kind, resolvedPath: normalized
           )
         }
@@ -1394,7 +1489,10 @@ struct ProwlApp: App {
   static func resolveCLITabCreationTarget(
     _ value: String, worktrees: [ListRuntimeSnapshotBuilder.WorktreeContext]
   ) -> Result<TabResolvedTarget, TargetResolverError> {
-    let matches = worktrees.filter { $0.id == value || $0.name == value || $0.path == value }
+    // A name shared with a remote folder means the local worktree, which can open a tab.
+    let candidates = worktrees.filter { $0.matches(value) }
+    let local = candidates.filter { $0.host == nil }
+    let matches = local.isEmpty ? candidates : local
     guard let worktree = matches.first else {
       return .failure(.notFound("Worktree '\(value)' not found."))
     }
@@ -1419,17 +1517,8 @@ struct ProwlApp: App {
       if let worktree = repository.worktrees[id: id] {
         return worktree
       }
-      if repository.id == id,
-        repository.capabilities.supportsRunnableFolderActions,
-        !repository.capabilities.supportsWorktrees
-      {
-        return Worktree(
-          id: repository.id,
-          name: repository.name,
-          detail: repository.rootURL.path(percentEncoded: false),
-          workingDirectory: repository.rootURL,
-          repositoryRootURL: repository.rootURL
-        )
+      if repository.id == id, let terminalWorktree = repository.terminalWorktree {
+        return terminalWorktree
       }
     }
     return nil
@@ -1552,11 +1641,19 @@ struct ProwlApp: App {
     }
 
     if !request.background {
-      selectCLIWorktreeContext(
-        worktreeID: request.target.worktreeID,
-        appStore: appStore,
-        terminalManager: terminalManager
-      )
+      if case .tab = preparation.context.request.placement {
+        selectCLIWorktreeContextForNewTab(
+          worktreeID: request.target.worktreeID,
+          appStore: appStore,
+          terminalManager: terminalManager
+        )
+      } else {
+        selectCLIWorktreeContext(
+          worktreeID: request.target.worktreeID,
+          appStore: appStore,
+          terminalManager: terminalManager
+        )
+      }
       terminalManager.state(for: worktree).selectTab(launched.tabID)
     }
     let resolver = makeTargetResolver(appStore: appStore, terminalManager: terminalManager)
@@ -1633,6 +1730,19 @@ struct ProwlApp: App {
       appStore.send(.repositories(.selectRepository(worktreeID)))
     }
     terminalManager.handleCommand(.setSelectedWorktreeID(worktreeID))
+  }
+
+  /// Context for a tab the CLI creates in the foreground. Outside Canvas the
+  /// worktree is selected so the tab shows. In Canvas the new card takes focus
+  /// and is revealed on its own (`CanvasView.followNewCard`); selecting the
+  /// worktree would leave Canvas.
+  static func selectCLIWorktreeContextForNewTab(
+    worktreeID: Worktree.ID,
+    appStore: StoreOf<AppFeature>,
+    terminalManager: WorktreeTerminalManager
+  ) {
+    guard !appStore.state.repositories.isShowingCanvas else { return }
+    selectCLIWorktreeContext(worktreeID: worktreeID, appStore: appStore, terminalManager: terminalManager)
   }
 
   private static func bringMainWindowToFront() -> Bool {

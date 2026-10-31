@@ -15,11 +15,12 @@ final class SkillsCommandExecutorTests: XCTestCase {
       XCTAssertEqual(list.skills.map(\.id), ["prowl-cli", "reviewer"])
       XCTAssertEqual(list.skills.map(\.audience), [.user, .workflow])
       XCTAssertEqual(list.skills[0].path, fixture.skillDirectory("prowl-cli"))
-      XCTAssertEqual(list.skills[0].targets.map(\.id), ["claude", "codex", "agents", "devin", "antigravity"])
-      XCTAssertEqual(list.skills[0].targets.map(\.detected), [true, false, true, false, false])
+      XCTAssertEqual(
+        list.skills[0].targets.map(\.id), ["claude", "codex", "agents", "devin", "antigravity", "trae"])
+      XCTAssertEqual(list.skills[0].targets.map(\.detected), [true, false, true, false, false, false])
       XCTAssertEqual(
         list.skills[0].targets.map(\.status),
-        [.notInstalled, .notInstalled, .notInstalled, .notInstalled, .notInstalled])
+        [.notInstalled, .notInstalled, .notInstalled, .notInstalled, .notInstalled, .notInstalled])
       XCTAssertEqual(list.skills[0].targets[0].path, fixture.linkPath(target: ".claude", skill: "prowl-cli"))
     }
   }
@@ -35,16 +36,16 @@ final class SkillsCommandExecutorTests: XCTestCase {
 
       XCTAssertEqual(
         list.skills[0].targets.map(\.status),
-        [.installed, .installedDifferentSource, .broken, .notInstalled, .notInstalled]
+        [.installed, .installedDifferentSource, .broken, .notInstalled, .notInstalled, .notInstalled]
       )
       XCTAssertEqual(
         list.skills[0].targets.map(\.destination),
-        [nil, nil, fixture.root.appending(path: "gone").path(percentEncoded: false), nil, nil],
+        [nil, nil, fixture.root.appending(path: "gone").path(percentEncoded: false), nil, nil, nil],
         "A real directory has no destination; a dangling link names where the app used to be"
       )
       XCTAssertEqual(
         list.skills[1].targets.map(\.status),
-        [.notInstalled, .notInstalled, .notInstalled, .notInstalled, .notInstalled])
+        [.notInstalled, .notInstalled, .notInstalled, .notInstalled, .notInstalled, .notInstalled])
     }
   }
 

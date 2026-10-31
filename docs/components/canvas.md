@@ -74,6 +74,30 @@ These also appear as toolbar buttons. There's a `?` help popover (bottom-left)
 explaining pan/zoom/expand — hover the button to reveal it, move away to dismiss,
 or click to pin it open.
 
+### The board remembers your layout
+
+Arrange, Organize, and Tile are **modes**, not one-shot commands. The active one
+is highlighted in the toolbar (its tooltip says so), and Canvas keeps applying it:
+
+- **Adding or closing a card** lays every card out again, so a tiled board stays
+  tiled and an organized board stays a grid. New cards appear in place while the
+  others glide to their new spots. If the view showed the whole board, it fits
+  the board again; if you had zoomed or panned, your zoom is kept and the view
+  follows the focused card.
+- **Resizing the window** (or toggling the sidebar) lays the cards out again
+  once the size settles.
+- **While a card is expanded or being resized**, nothing moves; the layout
+  catches up afterwards.
+
+**Dragging or resizing a card** switches the board to **freeform**: no layout
+button is highlighted, every card stays where you put it, and a new card goes
+to a free spot next to the focused card. Press any layout button to go back to
+an automatic layout. The mode is saved with the card positions.
+
+Automation can do the same from the command line: `prowl canvas layout tile --show`
+switches to Canvas and tiles every card, and `prowl canvas status --json` reports the
+current layout (see [cli](cli.md#prowl-canvas)).
+
 ## Toolbar actions
 
 The main toolbar tracks the focused card. Its center status area shows the same
@@ -108,9 +132,22 @@ and splits are not acknowledged merely because they are selected or receive broa
 
 - Default card size adapts to screen width (roughly 800×550 on a 14", larger on a
   27"). Cards have generous min/max bounds and snap-animate on resize.
-- On first entry, cards auto-arrange into a balanced grid. Positions, sizes, and
-  z-order are persisted across launches (in `UserDefaults`) and restored when you
-  return to Canvas.
+- On first entry, cards are laid out with the `canvasDefaultLayout` setting.
+  Positions, sizes, z-order, and the layout mode are persisted across launches
+  (in `UserDefaults`) and restored when you return to Canvas.
+- **New cards never cover existing ones.** In an automatic layout every card is
+  laid out again (see above). In freeform, a tab created while Canvas is showing
+  (`⌘T`, New Terminal in the palette, the sidebar, or `prowl create tab`) gets a
+  free spot next to the focused card — to its right, else below it, else the
+  nearest free spot — without moving any other card. Creating several tabs in a
+  row lines them up next to each other, however fast you press `⌘T`.
+- **The new card takes focus and comes into view.** The canvas pans just enough to
+  show it, zooming out only if the card does not fit in the visible canvas. An
+  expanded card is restored first. Tabs created with
+  `prowl create tab --background` never take focus; in freeform they also leave
+  the view alone, while an automatic layout still re-lays the board out.
+- **A card brought back with undo** returns to its old spot unless another card
+  now sits there; then it gets a free spot like a new card.
 - Closing a card's last tab prunes it; focus advances to a neighbor.
 
 ## Many agents at once
@@ -123,10 +160,10 @@ performance.
 ## Settings that affect Canvas
 
 - `defaultViewMode` — launch directly into Canvas.
-- `canvasDefaultLayout` — how cards are first laid out when you open Canvas:
-  `uniform` (same-size cards packed to fit) or `tile` (resize cards to fill the
-  screen, the default). Only the initial auto-layout is affected; saved card
-  positions are always restored.
+- `canvasDefaultLayout` — the layout a fresh Canvas starts in: `uniform`
+  (Arrange: same-size cards packed to fit) or `tile` (resize cards to fill the
+  screen, the default). After that, Canvas keeps the layout you last chose, or
+  freeform once you move a card.
 - `windowTintMode` / repository colors — card and nav tinting.
 - `showRunButtonInToolbar` — whether the Run button appears in the Canvas toolbar.
 

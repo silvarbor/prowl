@@ -38,6 +38,13 @@ collection literals with trailing commas landed on `main` and made the full-tree
 because the workflow only runs `make lint` (SwiftLint), not `make format-lint`. The PR
 fixed the two violations; the CI gap itself was left open.
 
+**Issue #575 (2026-10-13)** — closes the CI gap: the parallel `checks` task in
+`.github/workflows/test.yml` runs `make format-lint` beside `make lint`, and
+`.github/actions/setup-macos` links the selected Xcode's `swift-format` into a directory on
+`PATH`, so CI uses the swift-format bundled with its pinned Xcode, the same one local
+builds on that Xcode use. The checks task runs with `make -k`, so a SwiftLint failure no
+longer hides format-lint results.
+
 ## Refs
 
 - PRs #248, #503; upstream commit `6dec82f2` (provenance).
@@ -48,5 +55,5 @@ fixed the two violations; the CI gap itself was left open.
 
 As of 2026-07-12: `.swiftlint.yml` lists `trailing_comma` under `disabled_rules`; the
 `Makefile` `lint` target is `swiftlint lint --quiet` (no `--fix`), `check` chains
-`format-changed format-lint lint`, and `.github/workflows/test.yml` still runs only
-`make lint` — the format-lint-in-CI gap noted in [001-action.md](001-action.md) remains.
+`format-changed format-lint lint`, and `.github/workflows/test.yml` still ran only
+`make lint`. Since #575 (2026-10-13) it runs both `make lint` and `make format-lint`.

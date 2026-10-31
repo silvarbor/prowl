@@ -75,6 +75,7 @@ extension DetectedAgent {
     case .qwen: .qwen
     case .grok: .grok
     case .antigravity: .antigravity
+    case .trae: .trae
     }
   }
 }
@@ -98,6 +99,41 @@ nonisolated extension AgentSessionProfile {
     },
     fallbackRoots: { home, _ in
       [home.appending(path: ".codex/sessions")]
+    },
+    rootedCandidateRoots: { configRoot, _, processStartedAt, now in
+      dayDirectories(
+        root: configRoot.appending(path: "sessions"),
+        from: processStartedAt,
+        to: now
+      )
+    },
+    rootedFallbackRoots: { configRoot, _ in
+      [configRoot.appending(path: "sessions")]
+    },
+    rootedParsePath: { path, configRoot in
+      uuidJSONL(path: path, underRoot: configRoot.appending(path: "sessions"))
+    }
+  )
+
+  /// TraeCode CLI (`traecli`/`traex`, verified 0.201.7): a Codex-CLI fork, so it
+  /// reuses Codex's session store shape under its own home —
+  /// `~/.trae/cli/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl`, held open for
+  /// the whole interactive session. New sessions land in day directories within
+  /// the process lifetime; resumed rollouts stay in their original day, hence
+  /// the full fallback root. `TRAE_HOME` relocates the whole `~/.trae` tree
+  /// (verified: an isolated run wrote sessions under the relocated
+  /// `cli/sessions`), so the rooted layout drops the `.trae` component.
+  fileprivate static let trae = AgentSessionProfile(
+    parsePath: { uuidJSONL(path: $0, marker: "/.trae/cli/sessions/") },
+    candidateRoots: { home, _, processStartedAt, now in
+      dayDirectories(
+        root: home.appending(path: ".trae/cli/sessions"),
+        from: processStartedAt,
+        to: now
+      )
+    },
+    fallbackRoots: { home, _ in
+      [home.appending(path: ".trae/cli/sessions")]
     },
     rootedCandidateRoots: { configRoot, _, processStartedAt, now in
       dayDirectories(

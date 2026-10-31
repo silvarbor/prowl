@@ -118,6 +118,40 @@ struct WorkflowRuntimeCoordinatorTests {
     #expect(await fixture.coordinator.read(request, callerPane: Self.authorCaller).ok == false)
   }
 
+  @Test func aCallerWithoutAPaneReadsWithTheStepsToken() async throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanUp() }
+    var session = try fixture.waitingSession()
+    fixture.sessions = [session]
+    try session.store.ensureLayout(runID: session.run.id)
+    let grant = try #require(session.run.currentInvocation?.content)
+    func read(token: String?, invocation: Int? = nil) async -> CommandResponse {
+      await fixture.coordinator.read(
+        WorkflowInput(
+          action: .read, invocation: invocation ?? grant.invocation, runID: grant.runID.uuidString, token: token),
+        callerPane: nil)
+    }
+
+    #expect(await read(token: nil).error?.code == CLIErrorCode.sourceRequired)
+    #expect(await read(token: "TOKEN-1").ok)
+    #expect(await read(token: "TOKEN-2").error?.code == CLIErrorCode.tokenInvalid)
+    #expect(await read(token: "TOKEN-1", invocation: grant.invocation + 1).error?.code == CLIErrorCode.tokenInvalid)
+    // A pane ignores a stale environment token; a stranger pane gains nothing from a valid one.
+    #expect(
+      await fixture.coordinator.read(
+        WorkflowInput(action: .read, invocation: grant.invocation, runID: grant.runID.uuidString, token: "stale"),
+        callerPane: Self.authorCaller
+      ).ok)
+    #expect(
+      await fixture.coordinator.read(
+        WorkflowInput(action: .read, invocation: grant.invocation, runID: grant.runID.uuidString, token: "TOKEN-1"),
+        callerPane: Self.strangerCaller
+      ).ok == false)
+    session.run.invocations[0].activation?.state = .revoked
+    fixture.sessions = [session]
+    #expect(await read(token: "TOKEN-1").error?.code == CLIErrorCode.tokenInvalid)
+  }
+
   @Test func skippedAndRevokedTasksCannotBeRead() async throws {
     let fixture = try Fixture()
     defer { fixture.cleanUp() }
@@ -130,6 +164,54 @@ struct WorkflowRuntimeCoordinatorTests {
     session.run.invocations[0].activation?.state = .revoked
     fixture.sessions = [session]
     #expect(await fixture.coordinator.read(request, callerPane: Self.authorCaller).ok == false)
+  }
+
+  @Test func tokenFallbackReturnsToTheBoundPaneAndRejectsThePreviousTaskToken() async throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanUp() }
+    var session = try fixture.waitingSession()
+    try session.store.ensureLayout(runID: session.run.id)
+    let counter = WorkflowRunMachineTests.TokenCounter()
+    _ = counter.next()  // The first activation already owns TOKEN-1.
+    var machine = session.machine(now: { Self.now }, makeToken: { counter.next() })
+    let (brief, _) = machine.deliver(
+      ordinal: nil, selector: .token("TOKEN-1"), body: "## Scope\nx\n## Claims\ny", verdict: nil)
+    _ = try brief.get()
+    try session.store.writeDelivery(
+      runID: session.run.id, name: "brief", ordinal: 1, body: "## Scope\nx\n## Claims\ny")
+    _ = machine.apply(.deliveryPersisted(ordinal: 1))
+    _ = machine.apply(.launched(ordinal: 2, pane: WorkflowRunMachineTests.reviewerPane, dispatchID: "dispatch-2"))
+    let (findings, _) = machine.deliver(
+      ordinal: nil, selector: .token("TOKEN-2"), body: "## Findings\nx\n## Verdict\nissues", verdict: "issues")
+    _ = try findings.get()
+    try session.store.writeDelivery(
+      runID: session.run.id, name: "findings", ordinal: 2, body: "## Findings\nx\n## Verdict\nissues")
+    _ = machine.apply(.deliveryPersisted(ordinal: 2))
+    let effects = machine.apply(.roleIdle(ordinal: 3))
+    #expect(
+      effects.contains {
+        if case .inject(_, let surfaceID, 3, let line, _) = $0 {
+          return surfaceID == WorkflowRunMachineTests.authorPane.surfaceID && line.contains("TOKEN-3")
+        }
+        return false
+      })
+    _ = machine.apply(.injectionSucceeded(ordinal: 3, dispatchID: "dispatch-3"))
+    session.run = machine.run
+    fixture.sessions = [session]
+
+    let oldRead = await fixture.coordinator.read(
+      .init(action: .read, invocation: 1, runID: session.run.id.uuidString, token: "TOKEN-1"), callerPane: nil)
+    #expect(oldRead.error?.code == CLIErrorCode.tokenInvalid)
+    let currentRead = await fixture.coordinator.read(
+      .init(action: .read, invocation: 3, runID: session.run.id.uuidString, token: "TOKEN-3"), callerPane: nil)
+    #expect(currentRead.ok)
+    let staleDelivery = await fixture.coordinator.deliver(
+      .init(action: .deliver, body: "late brief", token: "TOKEN-1"), callerPane: nil)
+    #expect(staleDelivery.error?.code == CLIErrorCode.tokenInvalid)
+    let wrongPane = await fixture.coordinator.deliver(
+      .init(action: .deliver, body: "wrong pane", token: "TOKEN-3"), callerPane: Self.strangerCaller)
+    #expect(wrongPane.error?.code == CLIErrorCode.stepNotExpecting)
+    #expect(fixture.sent.isEmpty)
   }
 
   @Test func completedTaskRemainsReadableUntilReassignmentOrHistoryRemoval() async throws {
@@ -289,6 +371,31 @@ struct WorkflowRuntimeCoordinatorTests {
     let unknown = await fixture.coordinator.deliver(
       WorkflowInput(action: .deliver, runID: UUID().uuidString, stepID: "brief", body: "x"), callerPane: nil)
     #expect(unknown.error?.code == CLIErrorCode.runNotFound)
+  }
+
+  @Test func deliverOutsideAnyPaneIsAttributedByTheWaitingActivationsToken() async throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanUp() }
+    let session = try fixture.waitingSession()
+    fixture.sessions = [session]
+    fixture.answer = try delivered(session)
+
+    let wrong = await fixture.coordinator.deliver(
+      WorkflowInput(action: .deliver, body: "x", token: "TOKEN-2"), callerPane: nil)
+    #expect(wrong.error?.code == CLIErrorCode.tokenInvalid)
+    #expect(fixture.sent.isEmpty)
+
+    let response = await fixture.coordinator.deliver(
+      WorkflowInput(action: .deliver, body: "## Scope\nx\n## Claims\ny", token: "TOKEN-1"), callerPane: nil)
+    #expect(response.ok, "\(response.error?.message ?? "")")
+    guard case .deliver(let request) = fixture.sent.first else {
+      Issue.record("expected a deliver action")
+      return
+    }
+    #expect(request.runID == session.run.id)
+    #expect(request.ordinal == 1)
+    #expect(request.selector == .token("TOKEN-1"))
+    #expect(request.source == "token")
   }
 
   @Test func aPaneWithoutAnActivationCanStillDeliverManuallyButNotImplicitly() async throws {
