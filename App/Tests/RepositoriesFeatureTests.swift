@@ -7189,6 +7189,7 @@ struct RepositoriesFeatureTests {
     let wt2 = makeWorktree(id: "/tmp/wt2", name: "beta")
     let repository = makeRepository(id: "/tmp/repo", worktrees: [wt1, wt2])
     var state = makeState(repositories: [repository])
+    state.openedWorktreeIDs = Set(state.repositories.flatMap(\.worktrees).map(\.id))
     state.selection = .worktree(wt2.id)
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
@@ -7198,7 +7199,6 @@ struct RepositoriesFeatureTests {
     await store.receive(\.selectWorktree) {
       $0.selection = .worktree(wt1.id)
       $0.sidebarSelectedWorktreeIDs = [wt1.id]
-      $0.openedWorktreeIDs = [wt1.id]
       $0.worktreeHistoryBackStack = [wt2.id]
       $0.pendingTerminalFocusWorktreeIDs = [wt1.id]
     }
@@ -7210,6 +7210,7 @@ struct RepositoriesFeatureTests {
     let wt2 = makeWorktree(id: "/tmp/wt2", name: "beta")
     let repository = makeRepository(id: "/tmp/repo", worktrees: [wt1, wt2])
     var state = makeState(repositories: [repository])
+    state.openedWorktreeIDs = Set(state.repositories.flatMap(\.worktrees).map(\.id))
     state.selection = .worktree(wt1.id)
     let store = TestStore(initialState: state) {
       RepositoriesFeature()
@@ -7219,7 +7220,6 @@ struct RepositoriesFeatureTests {
     await store.receive(\.selectWorktree) {
       $0.selection = .worktree(wt2.id)
       $0.sidebarSelectedWorktreeIDs = [wt2.id]
-      $0.openedWorktreeIDs = [wt2.id]
       $0.worktreeHistoryBackStack = [wt1.id]
       $0.pendingTerminalFocusWorktreeIDs = [wt2.id]
     }
@@ -7230,7 +7230,9 @@ struct RepositoriesFeatureTests {
     let wt1 = makeWorktree(id: "/tmp/wt1", name: "alpha")
     let wt2 = makeWorktree(id: "/tmp/wt2", name: "beta")
     let repository = makeRepository(id: "/tmp/repo", worktrees: [wt1, wt2])
-    let store = TestStore(initialState: makeState(repositories: [repository])) {
+    var state = makeState(repositories: [repository])
+    state.openedWorktreeIDs = Set(state.repositories.flatMap(\.worktrees).map(\.id))
+    let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
 
@@ -7238,7 +7240,6 @@ struct RepositoriesFeatureTests {
     await store.receive(\.selectWorktree) {
       $0.selection = .worktree(wt1.id)
       $0.sidebarSelectedWorktreeIDs = [wt1.id]
-      $0.openedWorktreeIDs = [wt1.id]
       $0.pendingTerminalFocusWorktreeIDs = [wt1.id]
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
@@ -7250,6 +7251,7 @@ struct RepositoriesFeatureTests {
     let wt3 = makeWorktree(id: "/tmp/wt3", name: "gamma")
     let repository = makeRepository(id: "/tmp/repo", worktrees: [wt1, wt2, wt3])
     var state = makeState(repositories: [repository])
+    state.openedWorktreeIDs = Set(state.repositories.flatMap(\.worktrees).map(\.id))
     state.selection = .worktree(wt1.id)
     state.sidebarSelectedWorktreeIDs = [wt1.id, wt3.id]
     let store = TestStore(initialState: state) {
@@ -7260,7 +7262,6 @@ struct RepositoriesFeatureTests {
     await store.receive(\.selectWorktree) {
       $0.selection = .worktree(wt2.id)
       $0.sidebarSelectedWorktreeIDs = [wt2.id]
-      $0.openedWorktreeIDs = [wt2.id]
       $0.worktreeHistoryBackStack = [wt1.id]
       $0.pendingTerminalFocusWorktreeIDs = [wt2.id]
     }
@@ -7271,7 +7272,9 @@ struct RepositoriesFeatureTests {
     let wt1 = makeWorktree(id: "/tmp/wt1", name: "alpha")
     let wt2 = makeWorktree(id: "/tmp/wt2", name: "beta")
     let repository = makeRepository(id: "/tmp/repo", worktrees: [wt1, wt2])
-    let store = TestStore(initialState: makeState(repositories: [repository])) {
+    var state = makeState(repositories: [repository])
+    state.openedWorktreeIDs = Set(state.repositories.flatMap(\.worktrees).map(\.id))
+    let store = TestStore(initialState: state) {
       RepositoriesFeature()
     }
 
@@ -7279,7 +7282,6 @@ struct RepositoriesFeatureTests {
     await store.receive(\.selectWorktree) {
       $0.selection = .worktree(wt2.id)
       $0.sidebarSelectedWorktreeIDs = [wt2.id]
-      $0.openedWorktreeIDs = [wt2.id]
       $0.pendingTerminalFocusWorktreeIDs = [wt2.id]
     }
     await store.receive(\.delegate.selectedWorktreeChanged)
@@ -7320,6 +7322,7 @@ struct RepositoriesFeatureTests {
     let repo2 = makeRepository(id: "/tmp/repo2", worktrees: [wt2])
     let repo3 = makeRepository(id: "/tmp/repo3", worktrees: [wt3])
     var state = makeState(repositories: [repo1, repo2, repo3])
+    state.openedWorktreeIDs = Set(state.repositories.flatMap(\.worktrees).map(\.id))
     state.selection = .worktree(wt1.id)
     state.$collapsedRepositoryIDs.withLock { $0 = [repo2.id] }
     let store = TestStore(initialState: state) {
@@ -7330,7 +7333,6 @@ struct RepositoriesFeatureTests {
     await store.receive(\.selectWorktree) {
       $0.selection = .worktree(wt3.id)
       $0.sidebarSelectedWorktreeIDs = [wt3.id]
-      $0.openedWorktreeIDs = [wt3.id]
       $0.worktreeHistoryBackStack = [wt1.id]
       $0.pendingTerminalFocusWorktreeIDs = [wt3.id]
     }
@@ -7345,6 +7347,7 @@ struct RepositoriesFeatureTests {
     let repo2 = makeRepository(id: "/tmp/repo2", worktrees: [wt2])
     let repo3 = makeRepository(id: "/tmp/repo3", worktrees: [wt3])
     var state = makeState(repositories: [repo1, repo2, repo3])
+    state.openedWorktreeIDs = Set(state.repositories.flatMap(\.worktrees).map(\.id))
     state.selection = .worktree(wt3.id)
     state.$collapsedRepositoryIDs.withLock { $0 = [repo2.id] }
     let store = TestStore(initialState: state) {
@@ -7355,7 +7358,6 @@ struct RepositoriesFeatureTests {
     await store.receive(\.selectWorktree) {
       $0.selection = .worktree(wt1.id)
       $0.sidebarSelectedWorktreeIDs = [wt1.id]
-      $0.openedWorktreeIDs = [wt1.id]
       $0.worktreeHistoryBackStack = [wt3.id]
       $0.pendingTerminalFocusWorktreeIDs = [wt1.id]
     }
@@ -7396,6 +7398,7 @@ struct RepositoriesFeatureTests {
     let repo2 = makeRepository(id: "/tmp/repo2", worktrees: [wt2])
     let repo3 = makeRepository(id: "/tmp/repo3", worktrees: [wt3])
     var state = makeState(repositories: [repo1, repo2, repo3])
+    state.openedWorktreeIDs = Set(state.repositories.flatMap(\.worktrees).map(\.id))
     state.selection = .worktree(wt3.id)
     state.$collapsedRepositoryIDs.withLock { $0 = [repo2.id] }
     let store = TestStore(initialState: state) {
@@ -7406,7 +7409,6 @@ struct RepositoriesFeatureTests {
     await store.receive(\.selectWorktree) {
       $0.selection = .worktree(wt1.id)
       $0.sidebarSelectedWorktreeIDs = [wt1.id]
-      $0.openedWorktreeIDs = [wt1.id]
       $0.worktreeHistoryBackStack = [wt3.id]
       $0.pendingTerminalFocusWorktreeIDs = [wt1.id]
     }
