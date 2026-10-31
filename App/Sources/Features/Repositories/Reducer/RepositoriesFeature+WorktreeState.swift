@@ -228,7 +228,10 @@ func updateWorktreeName(
       continue
     }
     let worktree = repository.worktrees[worktreeIndex]
-    guard worktree.name != name else {
+    // `branchName(for:)` reports a detached HEAD as "HEAD", a name Git refuses for a branch.
+    let isDetached = name == "HEAD"
+    // A detached worktree is named after its directory, which can equal the branch it switches to.
+    guard worktree.name != name || worktree.isDetached != isDetached else {
       return
     }
     var worktrees = repository.worktrees
@@ -238,7 +241,8 @@ func updateWorktreeName(
       detail: worktree.detail,
       location: worktree.location,
       repositoryLocation: worktree.repositoryLocation,
-      createdAt: worktree.createdAt
+      createdAt: worktree.createdAt,
+      isDetached: isDetached
     )
     repository = Repository(
       id: repository.id,

@@ -21,6 +21,12 @@ PRs without changing `origin` or restarting the app. A returned PR's head
 repository must match one of the repository's configured GitHub remotes; PRs
 from unrelated forks that happen to use the same branch name are ignored.
 
+A worktree with a detached HEAD has no branch, so Prowl shows no PR for it. The
+sidebar names such a worktree after its directory, and Prowl never uses that
+name to look up a PR: GitHub keeps a closed PR's head branch name after the
+branch is deleted, so a directory named after an old branch would otherwise show
+that PR.
+
 Prowl also watches the repository's git config while the app is running. When
 remote URLs are added, removed, or changed, it refreshes the repository's PR
 state and code-host label automatically; if the repository no longer has a

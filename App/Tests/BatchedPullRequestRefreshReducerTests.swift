@@ -134,6 +134,114 @@ struct BatchedPullRequestRefreshReducerTests {
     #expect(enqueued.value.map(\.worktreeIDs) == [[context.mainWorktree.id]])
   }
 
+  @Test func refreshNeverAsksAboutADetachedWorktreeAndClearsItsPullRequest() async {
+    let context = makeContext()
+    // A detached worktree is named after its directory, here the head branch of an old pull request.
+    let detachedWorktree = Worktree(
+      id: "\(context.repoRoot)/review-3",
+      name: "review-3",
+      detail: "detail",
+      workingDirectory: URL(fileURLWithPath: "\(context.repoRoot)/review-3"),
+      repositoryRootURL: context.repoRootURL,
+      isDetached: true
+    )
+    let repository = Repository(
+      id: context.repository.id,
+      rootURL: context.repoRootURL,
+      name: context.repository.name,
+      worktrees: IdentifiedArrayOf(uniqueElements: [context.mainWorktree, detachedWorktree])
+    )
+    var initialState = context.state
+    initialState.repositories = [repository]
+    var staleEntry = WorktreeInfoEntry()
+    staleEntry.pullRequest = makePullRequestFixture(state: "CLOSED")
+    initialState.worktreeInfoByID[detachedWorktree.id] = staleEntry
+    let enqueued = LockIsolated<[PullRequestRefreshCoordinator.Request]>([])
+
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.gitClient.githubRemoteInfos = { _ in [context.remoteInfo] }
+      $0.pullRequestRefreshCoordinator = PullRequestRefreshCoordinatorClient(
+        enqueue: { request in enqueued.withValue { $0.append(request) } },
+        cancelHost: { _ in },
+        reset: {}
+      )
+    }
+
+    await store.send(
+      .worktreeInfoEvent(
+        .repositoryPullRequestRefresh(
+          repository: .local(context.repoRootURL),
+          worktreeIDs: [context.mainWorktree.id, detachedWorktree.id]
+        )
+      )
+    )
+    await store.receive(\.githubIntegration.repositoryPullRequestRefreshRequested) {
+      $0.worktreeInfoByID.removeValue(forKey: detachedWorktree.id)
+      $0.inFlightPullRequestRefreshRepositoryIDs = [repository.id]
+    }
+    await store.receive(\.githubIntegration.pullRequestRefreshBatchCountResolved) {
+      $0.githubHostsByRepositoryID[repository.id] = ["github.com"]
+      $0.prRefreshBatchCountsByRepositoryID[repository.id] = 1
+      $0.prRefreshRemotePrioritiesByRepositoryID[repository.id] = ["github.com/khoi/alpha": 0]
+    }
+    await store.finish()
+
+    #expect(enqueued.value.map(\.branches) == [["main"]])
+    #expect(enqueued.value.map(\.worktreeIDs) == [[context.mainWorktree.id]])
+  }
+
+  @Test func answerArrivingAfterDetachingShowsNoPullRequestAndCleansNothing() async {
+    let context = makeContext()
+    // The refresh asked about branch `feature`; the worktree then detached in a directory of that name.
+    let detachedWorktree = Worktree(
+      id: context.featureWorktree.id,
+      name: "feature",
+      detail: "detail",
+      workingDirectory: URL(fileURLWithPath: "\(context.repoRoot)/feature"),
+      repositoryRootURL: context.repoRootURL,
+      isDetached: true
+    )
+    let repository = Repository(
+      id: context.repository.id,
+      rootURL: context.repoRootURL,
+      name: context.repository.name,
+      worktrees: IdentifiedArrayOf(uniqueElements: [context.mainWorktree, detachedWorktree])
+    )
+    var initialState = context.state
+    initialState.repositories = [repository]
+    initialState.inFlightPullRequestRefreshRepositoryIDs = [repository.id]
+    initialState.mergedWorktreeAction = .archive
+
+    let store = TestStore(initialState: initialState) {
+      RepositoriesFeature()
+    } withDependencies: {
+      $0.date.now = refreshDate
+      $0.pullRequestRefreshCoordinator = .unimplemented
+    }
+
+    let outcome = PullRequestRefreshCoordinator.Outcome.refreshed(
+      repositoryID: repository.id,
+      worktreeIDs: [detachedWorktree.id],
+      prsByBranch: ["feature": makePullRequestFixture(state: "MERGED")],
+      confirmedNoPrBranches: []
+    )
+
+    await store.send(.githubIntegration(.pullRequestRefreshBatchOutcome(outcome))) {
+      $0.pullRequestRefreshCheckpointByWorktreeID[detachedWorktree.id] = makeCheckpoint(
+        branch: "feature", pullRequest: makePullRequestFixture(state: "MERGED"), answeredAt: refreshDate
+      )
+    }
+    await store.receive(\.githubIntegration.repositoryPullRequestsLoaded)
+    await store.receive(\.githubIntegration.repositoryPullRequestRefreshCompleted) {
+      $0.inFlightPullRequestRefreshRepositoryIDs = []
+    }
+    await store.finish()
+
+    #expect(store.state.worktreeInfoByID[detachedWorktree.id] == nil)
+  }
+
   @Test func periodicRefreshWithNothingDueSendsNoQuery() async {
     let context = makeContext()
     let now = Date(timeIntervalSince1970: 1_000_000)
