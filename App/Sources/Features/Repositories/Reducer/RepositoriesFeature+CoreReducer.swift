@@ -10,7 +10,7 @@ extension RepositoriesFeature {
     action: Action
   ) -> Effect<Action> {
     switch action {
-    case .worktreeCreation, .worktreeLifecycle, .worktreeOrdering, .githubIntegration,
+    case .worktreeCreation, .worktreeLifecycle, .worktreeOrdering, .sidebarGroups, .githubIntegration,
       .repositoryManagement,
       .workspaceCreation,
       .workspaceEditing:
@@ -67,13 +67,13 @@ extension RepositoriesFeature {
           let pinned = await repositoryPersistence.loadPinnedWorktreeIDs()
           let archived = await repositoryPersistence.loadArchivedWorktrees()
           let lastFocused = await repositoryPersistence.loadLastFocusedWorktreeID()
-          let repositoryOrderIDs = await repositoryPersistence.loadRepositoryOrderIDs()
+          let sidebarLayout = await repositoryPersistence.loadSidebarLayout()
           let worktreeOrderByRepository =
             await repositoryPersistence.loadWorktreeOrderByRepository()
           let repositorySnapshot = await repositoryPersistence.loadRepositorySnapshot()
           await send(.pinnedWorktreeIDsLoaded(pinned))
           await send(.archivedWorktreesLoaded(archived))
-          await send(.repositoryOrderIDsLoaded(repositoryOrderIDs))
+          await send(.sidebarLayoutLoaded(sidebarLayout))
           await send(.worktreeOrderByRepositoryLoaded(worktreeOrderByRepository))
           await send(.lastFocusedWorktreeIDLoaded(lastFocused))
           await send(.repositorySnapshotLoaded(repositorySnapshot))
@@ -163,8 +163,8 @@ extension RepositoriesFeature {
           target.worktreeID, target.repositoryID, deleteBranch: shouldDeleteBranch
         ))
 
-    case .repositoryOrderIDsLoaded(let repositoryOrderIDs):
-      state.repositoryOrderIDs = repositoryOrderIDs
+    case .sidebarLayoutLoaded(let sidebarLayout):
+      state.sidebarLayout = sidebarLayout
       return .none
 
     case .worktreeOrderByRepositoryLoaded(let worktreeOrderByRepository):
@@ -236,6 +236,14 @@ extension RepositoriesFeature {
       state.repositoryRoots = roots
       state.isInitialLoadComplete = true
       pruneExpandedInactiveRepositoryIDs(state: &state)
+      // A remote repository that this load did not keep as it was came through its host.
+      let failedIDs = Set(failures.map(\.rootID))
+      state.answeredRemoteRepositoryIDs = state.answeredRemoteRepositoryIDs
+        .intersection(state.repositories.ids)
+        .union(
+          repositories.lazy
+            .filter { $0.location.hostProfileID != nil && !reusedIDs.contains($0.id) && !failedIDs.contains($0.id) }
+            .map(\.id))
       let rebindChange = recordLoadFailures(failures, state: &state)
       let selectedWorktree = state.worktree(for: state.selectedWorktreeID)
       let selectionChanged = selectionDidChange(
@@ -259,10 +267,10 @@ extension RepositoriesFeature {
           })
       }
       if applyResult.didPruneRepositoryOrder {
-        let repositoryOrderIDs = state.repositoryOrderIDs
+        let sidebarLayout = state.sidebarLayout
         allEffects.append(
           .run { _ in
-            await repositoryPersistence.saveRepositoryOrderIDs(repositoryOrderIDs)
+            await repositoryPersistence.saveSidebarLayout(sidebarLayout)
           })
       }
       if applyResult.didPruneWorktreeOrder {
@@ -365,25 +373,71 @@ extension RepositoriesFeature {
       return .none
 
     case .selectArchivedWorktrees:
-      state.isShelfActive = false
-      // Toggle: if already showing archived, return to the previous worktree.
+      // Toggle: if already showing archived, return to the previous layout and worktree.
       if state.isShowingArchivedWorktrees {
-        defer { state.preArchivedWorktreeID = nil }
-        if let previousID = state.preArchivedWorktreeID,
+        let previousSegment = state.preArchivedTopSegment ?? .tabbed
+        defer {
+          state.preArchivedSelection = nil
+          state.preArchivedWorkspaceChildID = nil
+          state.preArchivedCanvasCard = nil
+          state.preArchivedTopSegment = nil
+        }
+        if previousSegment == .canvas, state.canEnterShelf {
+          // `preCanvasWorktreeID` / `preCanvasTerminalTargetID` still describe the
+          // Canvas session, so re-enter it directly instead of via `.selectCanvas`,
+          // which would overwrite them with the archived list's empty selection.
+          state.selection = .canvas
+          // The saved tab can close while the list is open; a request for it would never resolve.
+          if let card = state.preArchivedCanvasCard.flatMap(terminalClient.canvasRestorableCard),
+            state.terminalWorktree(for: card.worktreeID) != nil
+          {
+            requestCanvasFocus(.tab(card.tabID), viewport: .reveal, openedWorktreeID: card.worktreeID, state: &state)
+          }
+          return .run { _ in
+            await terminalClient.send(.setCanvasMode(true))
+          }
+        }
+        if case .worktree(let previousID) = state.preArchivedSelection,
           isSelectionValid(previousID, state: state)
         {
           setSingleWorktreeSelection(previousID, state: &state, recordHistory: false)
           state.openedWorktreeIDs.insert(previousID)
           state.pendingTerminalFocusWorktreeIDs.insert(previousID)
+          if previousSegment == .shelf {
+            state.isShelfActive = true
+          }
           return .send(.delegate(.selectedWorktreeChanged(state.worktree(for: previousID))))
+        }
+        if case .repository(let repositoryID) = state.preArchivedSelection,
+          let repository = state.repositories[id: repositoryID]
+        {
+          state.selection = .repository(repositoryID)
+          state.selectedWorkspaceChildID =
+            state.resolvedWorkspaceChildren(in: repository)
+            .first { $0.id == state.preArchivedWorkspaceChildID }?.id
+          state.sidebarSelectedWorktreeIDs = []
+          if let worktree = repository.terminalWorktree {
+            state.openedWorktreeIDs.insert(worktree.id)
+            state.pendingTerminalFocusWorktreeIDs.insert(worktree.id)
+            state.isShelfActive = previousSegment == .shelf
+          }
+          return .send(.delegate(.selectedWorktreeChanged(state.selectedTerminalWorktree)))
         }
         state.selection = nil
         state.selectedWorkspaceChildID = nil
         state.sidebarSelectedWorktreeIDs = []
+        if previousSegment == .shelf, state.canEnterShelf {
+          // The previous book is gone; let Shelf pick its usual fallback book.
+          return .send(.toggleShelf)
+        }
         return .send(.delegate(.selectedWorktreeChanged(nil)))
       }
-      // Entering archived view — remember current worktree for later restore.
-      state.preArchivedWorktreeID = state.selectedWorktreeID
+      // Entering archived view — remember the current layout and worktree for later restore.
+      state.preArchivedTopSegment = state.topSegment
+      state.isShelfActive = false
+      state.preArchivedSelection = state.selection
+      state.preArchivedWorkspaceChildID = state.selectedWorkspaceChildID
+      state.preArchivedCanvasCard = state.isShowingCanvas ? terminalClient.canvasFocusedCard() : nil
       recordWorktreeHistoryTransition(from: state.selectedWorktreeID, to: nil, state: &state)
       state.selection = .archivedWorktrees
       state.selectedWorkspaceChildID = nil
@@ -590,6 +644,9 @@ extension RepositoriesFeature {
       let selectRepoToken = repositoriesLogger.beginInterval("reducer.selectRepository")
       defer { repositoriesLogger.endInterval(selectRepoToken) }
       guard let repositoryID, state.repositories[id: repositoryID] != nil else { return .none }
+      if state.repositories[id: repositoryID]?.kind == .plain {
+        restoreShelfWhenLeavingArchivedList(state: &state)
+      }
       recordWorktreeHistoryTransition(from: state.selectedWorktreeID, to: nil, state: &state)
       state.selection = .repository(repositoryID)
       state.selectedWorkspaceChildID = nil
@@ -606,6 +663,7 @@ extension RepositoriesFeature {
       else {
         return .none
       }
+      restoreShelfWhenLeavingArchivedList(state: &state)
       recordWorktreeHistoryTransition(from: state.selectedWorktreeID, to: nil, state: &state)
       state.selection = .repository(child.workspaceID)
       state.selectedWorkspaceChildID = child.id
@@ -627,6 +685,9 @@ extension RepositoriesFeature {
     case .selectWorktree(let worktreeID, let focusTerminal, let recordHistory):
       let selectWtToken = repositoriesLogger.beginInterval("reducer.selectWorktree")
       defer { repositoriesLogger.endInterval(selectWtToken) }
+      if worktreeID != nil {
+        restoreShelfWhenLeavingArchivedList(state: &state)
+      }
       setSingleWorktreeSelection(worktreeID, state: &state, recordHistory: recordHistory)
       if focusTerminal, let worktreeID {
         state.pendingTerminalFocusWorktreeIDs.insert(worktreeID)
@@ -750,16 +811,33 @@ extension RepositoriesFeature {
       return navigateWorktreeHistory(direction: .forward, state: &state)
 
     case .revealSelectedWorktreeInSidebar:
-      guard let worktreeID = state.selectedWorktreeID,
-        let repositoryID = state.repositoryID(containing: worktreeID)
-      else { return .none }
-      state.$collapsedRepositoryIDs.withLock {
-        $0.removeAll { $0 == repositoryID }
+      let repositoryID: Repository.ID
+      let target: SidebarScrollID
+      if let worktreeID = state.selectedWorktreeID,
+        let containingRepositoryID = state.repositoryID(containing: worktreeID)
+      {
+        repositoryID = containingRepositoryID
+        target = .worktree(worktreeID)
+        state.$collapsedRepositoryIDs.withLock {
+          $0.removeAll { $0 == repositoryID }
+        }
+      } else if let selectedRepositoryID = state.selectedRepositoryID,
+        state.repositories[id: selectedRepositoryID] != nil
+      {
+        repositoryID = selectedRepositoryID
+        target = .repository(selectedRepositoryID)
+      } else {
+        return .none
+      }
+      if let groupID = state.sidebarLayout.groupID(containing: repositoryID) {
+        state.$collapsedGroupIDs.withLock {
+          $0.removeAll { $0 == groupID.uuidString }
+        }
       }
       state.nextPendingSidebarRevealID += 1
       state.pendingSidebarReveal = .init(
         id: state.nextPendingSidebarRevealID,
-        worktreeID: worktreeID
+        target: target
       )
       return .none
 

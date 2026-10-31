@@ -1,5 +1,41 @@
 # Changelog
 
+## [2026.10.31](https://github.com/onevcat/Prowl/releases/tag/v2026.10.31)
+
+Organize projects with sidebar groups and get more control over terminal clipboard access and links.
+
+### New
+
+- Create named, collapsible sidebar groups: right-click an empty sidebar area and choose **New Group**, or choose **Add Project Group** in the add panel. Customize groups with colors, symbols, or images.
+- Drag projects into or out of groups, reorder members, and move entire groups by their headers. Press ⌘⇧L to reveal the selected project, folder, or workspace inside a collapsed group.
+- Right-click an empty sidebar area to add projects, expand or collapse the list, and show or hide Active Agents.
+- Updated the terminal engine to Ghostty 1.4.0.
+
+### Fixed
+
+- Clipboard confirmation settings now work: Prowl asks before potentially unsafe pastes and program clipboard access when configured to do so. Requests from background panes wait until you focus them; Return and Escape cancel or deny.
+- ⌘-clicked terminal links now receive safety checks. Web and email links open directly, other URL schemes require confirmation, and unsafe file targets—including apps and executables—are blocked with an option to copy the link.
+- Fixed SSH failing when Ghostty’s `ssh-env` or `ssh-terminfo` shell integration is enabled.
+- Fixed styled terminal cells without text appearing blank in remote mirror views.
+
+## [2026.10.29](https://github.com/onevcat/Prowl/releases/tag/v2026.10.29)
+
+This release brings SSH remote projects to Prowl and improves Canvas, worktree management, and session reliability.
+
+### New
+
+- Work with projects over SSH, including remote terminals, splits, scripts, and worktree creation. Choose **Add Remote Project** in the add panel, enter a host with key-based authentication, then type a path or use **Browse…** to select a folder on the host. Hosts that ask for a password or a verification code are not supported yet.
+- Remote projects show connection status and refresh Git and pull request information automatically. Saved terminal layouts reconnect when you open the project, without rerunning scripts, and remain saved while the host is unavailable.
+
+### Fixed
+
+- Fixed blank terminal cards when entering Canvas and a Canvas crash on macOS versions before 26.4. Leaving Archived Worktrees now restores your previous view, selection, and Canvas pane focus; unarchiving keeps the list open for further restores.
+- Git operations now use your login shell’s PATH, fixing worktree creation failures involving tools such as `mise` and `git-lfs`. Failure alerts stay open and show clearer errors.
+- Repositories with the same folder name now keep separate settings, with existing settings copied automatically. Repository load failures no longer erase pins, archived entries, or Prowl-created worktree markers.
+- Returning to Prowl now refreshes repositories and change counts reliably. Switching away saves the terminal layout and pauses remote polling, which resumes on return.
+- Fixed Codex workflow commands failing with `SOURCE_REQUIRED` and transcript binding stopping after the pane that started its shared daemon was closed.
+- Git operations and file transfers over SSH no longer trigger remote-agent detection prompts for their transport connections.
+
 ## [2026.10.21](https://github.com/onevcat/Prowl/releases/tag/v2026.10.21)
 
 Prowl now detects coding agents that run on another machine over SSH, including inside remote tmux. This release also adds TraeCode CLI support and makes agent status and dispatch waits more reliable.

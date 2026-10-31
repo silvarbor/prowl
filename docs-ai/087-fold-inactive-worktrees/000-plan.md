@@ -1,11 +1,11 @@
-# 085 — Fold Inactive Worktrees: Plan
+# 087 — Fold Inactive Worktrees: Plan
 
 |                 |                                                                                                                                                                                                                                     |
 | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Status**      | Implemented                                                                                                                                                                                                                         |
 | **Anchor date** | 2026-10-27                                                                                                                                                                                                                          |
 | **Primary PRs** | (fill in as they merge); discussed in #939                                                                                                                                                                                          |
-| **Related**     | [018-archived-worktrees](../018-archived-worktrees/000-plan.md), [050-sidebar-expand-active-and-worktree-tab-badges](../050-sidebar-expand-active-and-worktree-tab-badges/000-plan.md), `docs/components/repositories-and-worktrees.md` |
+| **Related**     | [018-archived-worktrees](../018-archived-worktrees/000-plan.md), [050-sidebar-expand-active-and-worktree-tab-badges](../050-sidebar-expand-active-and-worktree-tab-badges/000-plan.md), [086-sidebar-repository-groups](../086-sidebar-repository-groups/000-plan.md), `docs/components/repositories-and-worktrees.md` |
 
 ## Background
 
@@ -71,6 +71,13 @@ holds while the group is walked. The set clears when the selection moves to a ro
 outside the group (the rows opened from the group then leave it) and when the group
 folds. `setSingleWorktreeSelection` maintains it, which covers every path that selects
 one worktree: the next/previous commands, the numbered shortcuts, history, and clicks.
+
+**Repository groups.** The Inactive row is part of a repository's rows
+(`WorktreeRowsView` inside `RepositorySectionView`), so a repository in a sidebar group
+(086) shows its Inactive row inside that group, and a collapsed group hides it with the
+rest. Navigation reads `navigableWorktreeRows` over the repositories that 086's
+`visibleRepositoryIDs` / `visibleExpandedRepositoryIDs` leave visible, so a collapsed
+group and a folded Inactive row both drop out of ⌘⌃↑/↓ and ⌃1–9.
 
 **Fold state.** `@Shared(.appStorage("sidebarExpandedInactiveRepositoryIDs"))` holds the
 repositories whose inactive group is expanded, next to `collapsedRepositoryIDs`. Default:

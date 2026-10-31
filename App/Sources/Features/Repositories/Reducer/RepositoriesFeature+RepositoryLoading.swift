@@ -49,19 +49,6 @@ extension RepositoriesFeature {
     return { hidesRemoteFolders && RepositoryLocation.hasRemoteForm($0) }
   }
 
-  /// `visibleOrder` with the hidden IDs of `storedOrder` put back at their places, so a
-  /// reorder while remote folders are off keeps the hidden folders' places.
-  nonisolated static func mergingHiddenRepositoryIDs(
-    _ visibleOrder: [Repository.ID], into storedOrder: [Repository.ID], isHidden: (Repository.ID) -> Bool
-  ) -> [Repository.ID] {
-    let visible = Set(visibleOrder)
-    var merged = visibleOrder
-    for (index, id) in storedOrder.enumerated() where isHidden(id) && !visible.contains(id) {
-      merged.insert(id, at: min(index, merged.count))
-    }
-    return merged
-  }
-
   func loadPersistedRepositoryEntries(
     fallbackRoots: [RepositoryLocation] = []
   ) async -> [PersistedRepositoryEntry] {
@@ -429,7 +416,7 @@ extension RepositoriesFeature {
     }
     let didPrunePinned = prunePinnedWorktreeIDs(where: isRemoved, state: &state)
     let prunesOrder = origin != .snapshot
-    let didPruneRepositoryOrder = prunesOrder && pruneRepositoryOrderIDs(roots: roots, state: &state, keeping: isKept)
+    let didPruneRepositoryOrder = prunesOrder && pruneSidebarLayout(roots: roots, state: &state, keeping: isKept)
     let didPruneWorktreeOrder =
       prunesOrder && pruneWorktreeOrderByRepository(roots: roots, state: &state, keeping: isKept)
     let didPruneArchivedWorktrees = pruneArchivedWorktrees(where: isRemoved, state: &state)
@@ -528,11 +515,11 @@ extension RepositoriesFeature {
     @Shared(.hostProfiles) var hostProfiles: [HostProfile]
     guard let alias = hostProfiles.first(where: { $0.id == hostProfileID })?.alias else {
       return String(
-        localized: "This removes the folder from Prowl. Its worktrees and files on its host stay as they are.")
+        localized: "This removes the project from Prowl. Its worktrees and files on its host stay as they are.")
     }
     return String(
       localized: """
-        This removes the folder from Prowl. Its worktrees and files on \(alias) stay as they are, and \
+        This removes the project from Prowl. Its worktrees and files on \(alias) stay as they are, and \
         Prowl stops connecting to \(alias) for it. \(alias) stays in the host list.
         """)
   }

@@ -1,13 +1,14 @@
-# 085 — Fold Inactive Worktrees: Action Log
+# 087 — Fold Inactive Worktrees: Action Log
 
 ## Timeline
 
 | Date | Change | Ref |
 | --- | --- | --- |
 | 2026-10-18 | First version: fold worktrees with no open tab into a per-repository "Inactive (N)" group behind a `foldInactiveWorktrees` setting | fork review PR |
-| 2026-10-27 | Reworked per the maintainer's request on #939: always on, no setting, no Sidebar settings section; renumbered to 085 after 083 and 084 were taken | PR (see Primary PRs) |
+| 2026-10-27 | Reworked per the maintainer's request on #939: always on, no setting, no Sidebar settings section; renumbered after 083 and 084 were taken | PR (see Primary PRs) |
+| 2026-10-31 | Merged upstream with repository groups (086) and renumbered to 087 after 085 and 086 were taken | PR (see Primary PRs) |
 
-## Outcome & current state (as of 2026-10-27)
+## Outcome & current state (as of 2026-10-31)
 
 - `worktreeRowSections(in:)` splits the unpinned worktrees into `unpinned` and
   `inactive`. A worktree is inactive when it is not in `openedWorktreeIDs`, is not the
@@ -28,6 +29,9 @@
   that group, so ⌘⌃↑/↓ and ⌃1–9 walk it in row order. `setSingleWorktreeSelection`
   adds to it, clears it when the selection moves outside the group, and
   `toggleInactiveWorktreesExpanded` releases the repository's rows.
+- With repository groups (086), the Inactive row stays per repository inside the
+  group that holds it. Hotkey rows and offset navigation read `navigableWorktreeRows`
+  over 086's visible repositories, so collapsed groups and folded rows both drop out.
 - `sidebarExpandedInactiveRepositoryIDs` (app storage) holds the repositories whose
   group is expanded. `toggleInactiveWorktreesExpanded` flips it, and
   `repositoriesLoaded` prunes IDs of repositories that no longer exist, keeping those
@@ -47,8 +51,9 @@
   always-active exception, plain and remote folders producing no rows, a worktree
   moving between groups on its first tab and its last tab closing, ⌘⌃↑/↓ and offset
   navigation skipping folded rows and including them when expanded, palette rows
-  unchanged, drag mapping in each group, and the fold-state toggle and its pruning
-  (including a failed load).
+  unchanged, drag mapping in each group, the fold-state toggle and its pruning
+  (including a failed load), Next and Previous walking an expanded group in row
+  order, and folding inside an open and a collapsed sidebar group.
 - `make check`, `make lint`, `make check-localization`, `make test-scripts`, and
   `make test` passed before the push; the PR records the counts.
 

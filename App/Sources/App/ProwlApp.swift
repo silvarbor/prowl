@@ -114,7 +114,18 @@ final class ProwlAppDelegate: NSObject, NSApplicationDelegate {
 
 }
 
+/// The process entry. The app executable is also Ghostty's CLI through the
+/// `Contents/MacOS/ghostty` symlink (docs-ai 085), so this check runs before any app setup.
 @main
+enum ProwlMain {
+  static func main() {
+    if GhosttyCLIEntry.isGhosttyInvocation(argv0: CommandLine.arguments.first) {
+      GhosttyCLIEntry.run()
+    }
+    ProwlApp.main()
+  }
+}
+
 @MainActor
 struct ProwlApp: App {
   @NSApplicationDelegateAdaptor(ProwlAppDelegate.self) private var appDelegate
@@ -227,9 +238,7 @@ struct ProwlApp: App {
       userOverrides: initialSettings.keybindingUserOverrides
     )
     Self.bootstrapTelemetry(initialSettings: initialSettings)
-    if let resourceURL = Bundle.main.resourceURL?.appendingPathComponent("ghostty") {
-      setenv("GHOSTTY_RESOURCES_DIR", resourceURL.path, 1)
-    }
+    GhosttyBundledResources.export()
     Self.initializeGhostty(resolvedKeybindings: initialResolvedKeybindings)
     let runtime = Self.makeGhosttyRuntime(initialSettings: initialSettings)
     _ghostty = State(initialValue: runtime)
@@ -413,6 +422,24 @@ struct ProwlApp: App {
       },
       observeAgentState: { surfaceID in
         terminalManager.observeAgentState(surfaceID: surfaceID)
+      },
+      canvasFocusedCard: {
+        guard let worktreeID = terminalManager.canvasFocusedWorktreeID,
+          let tabID = terminalManager.stateIfExists(for: worktreeID)?.tabManager.selectedTabId
+        else { return nil }
+        return CanvasCardRef(worktreeID: worktreeID, tabID: tabID)
+      },
+      canvasRestorableCard: { card in
+        let states = terminalManager.activeWorktreeStates
+        @MainActor func selectedCard(_ state: WorktreeTerminalState) -> CanvasCardRef? {
+          guard let tabID = state.tabManager.selectedTabId, state.hasCanvasCard(tabID) else { return nil }
+          return CanvasCardRef(worktreeID: state.worktreeID, tabID: tabID)
+        }
+        if let state = states.first(where: { $0.worktreeID == card.worktreeID }) {
+          if state.hasCanvasCard(card.tabID) { return card }
+          if let selected = selectedCard(state) { return selected }
+        }
+        return states.lazy.compactMap(selectedCard).first
       },
       canvasFocusedWorktreeID: {
         terminalManager.canvasFocusedWorktreeID

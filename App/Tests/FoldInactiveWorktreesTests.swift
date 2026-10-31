@@ -253,6 +253,28 @@ struct FoldInactiveWorktreesTests {
     #expect(sections.inactive.map(\.id) == [fixture.alpha.id])
   }
 
+  @Test func foldingComposesWithASidebarGroup() {
+    var fixture = makeFixture()
+    let groupID = UUID()
+    fixture.state.sidebarLayout = SidebarLayout(items: [
+      .group(RepositoryGroup(id: groupID, title: "Product", repositoryIDs: [fixture.repository.id]))
+    ])
+    fixture.state.openedWorktreeIDs = [fixture.main.id, fixture.bravo.id]
+    fixture.state.selection = .worktree(fixture.main.id)
+    fixture.state.$collapsedGroupIDs.withLock { $0 = [] }
+
+    // In an open group, the repository folds as it does at the top level.
+    let sections = fixture.state.worktreeRowSections(in: fixture.repository)
+    #expect(sections.inactive.map(\.id) == [fixture.alpha.id, fixture.charlie.id])
+    #expect(fixture.state.worktreeID(byOffset: 1) == fixture.bravo.id)
+    #expect(fixture.state.worktreeID(byOffset: 2) == fixture.main.id)
+
+    // A collapsed group hides every row of the repository, the Inactive group included.
+    fixture.state.$expandedInactiveRepositoryIDs.withLock { $0 = [fixture.repository.id] }
+    fixture.state.$collapsedGroupIDs.withLock { $0 = [groupID.uuidString] }
+    #expect(fixture.state.worktreeID(byOffset: 1) == nil)
+  }
+
   @Test func paletteRowsStillListEveryWorktree() {
     var fixture = makeFixture()
     let allIDs = Set(fixture.state.orderedWorktreeRows().map(\.id))

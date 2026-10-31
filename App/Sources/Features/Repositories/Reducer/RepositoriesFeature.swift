@@ -48,7 +48,29 @@ nonisolated struct WorktreeCreationProgressUpdateThrottle {
 
 struct PendingSidebarReveal: Equatable, Sendable {
   let id: Int
-  let worktreeID: Worktree.ID
+  let target: SidebarScrollID
+}
+
+/// The title prompt for a new or renamed sidebar group (docs-ai 086).
+struct GroupTitlePrompt: Equatable, Identifiable, Sendable {
+  enum Target: Equatable, Hashable, Sendable {
+    case newGroup(containing: Repository.ID)
+    case newEmptyGroup
+    case rename(RepositoryGroup.ID)
+  }
+
+  let target: Target
+  let currentTitle: String
+
+  var id: Target { target }
+}
+
+/// The SF Symbol picker for a sidebar group icon (docs-ai 086).
+struct GroupSymbolPicker: Equatable, Identifiable, Sendable {
+  let groupID: RepositoryGroup.ID
+  let currentSymbol: String?
+
+  var id: RepositoryGroup.ID { groupID }
 }
 
 struct PendingRenameBranchRequest: Equatable, Identifiable, Sendable {
@@ -218,7 +240,8 @@ struct RepositoriesFeature {
 
   @CasePathable
   enum WorktreeOrderingAction: Equatable {
-    case repositoriesMoved(IndexSet, Int)
+    /// A sidebar drag of a repository or a group (docs-ai 086 S2).
+    case sidebarItemMoved(SidebarDragItem, SidebarDropDestination)
     case pinnedWorktreesMoved(repositoryID: Repository.ID, IndexSet, Int)
     case unpinnedWorktreesMoved(repositoryID: Repository.ID, IndexSet, Int)
     case pinWorktree(Worktree.ID)
@@ -226,6 +249,26 @@ struct RepositoriesFeature {
     case worktreeNotificationReceived(Worktree.ID)
     case setSidebarDragActive(Bool)
     case setMoveNotifiedWorktreeToTop(Bool)
+  }
+
+  @CasePathable
+  enum SidebarGroupAction: Equatable {
+    case newGroupRequested(containing: Repository.ID)
+    case newEmptyGroupRequested
+    case renameGroupRequested(RepositoryGroup.ID)
+    case titlePromptSubmitted(String)
+    case titlePromptCanceled
+    case moveRepositoryToGroup(Repository.ID, RepositoryGroup.ID)
+    case removeRepositoryFromGroup(Repository.ID)
+    case setGroupColor(RepositoryGroup.ID, RepositoryColorChoice?)
+    case setGroupIcon(RepositoryGroup.ID, RepositoryIconSource?)
+    case chooseGroupSymbolRequested(RepositoryGroup.ID)
+    case symbolPickerApplied(String?)
+    case symbolPickerCanceled
+    case importGroupImage(RepositoryGroup.ID, URL)
+    case groupImageImported(RepositoryGroup.ID, importID: UUID, filename: String)
+    case groupImageImportFailed(RepositoryGroup.ID, importID: UUID, message: String)
+    case ungroup(RepositoryGroup.ID)
   }
 
   @CasePathable
@@ -316,7 +359,7 @@ struct RepositoriesFeature {
   struct State: Equatable {
     var repositories: IdentifiedArrayOf<Repository> = []
     var repositoryRoots: [RepositoryLocation] = []
-    var repositoryOrderIDs: [Repository.ID] = []
+    var sidebarLayout = SidebarLayout()
     var loadFailuresByID: [Repository.ID: String] = [:]
     var gitUnavailableRepositoryIDs: Set<Repository.ID> = []
     /// Remote folders whose host did not answer at the last load (docs-ai 084 B3e).
@@ -328,6 +371,10 @@ struct RepositoriesFeature {
     /// the user must fix (a refused login, a changed host key, the kill switch), with that
     /// reason (docs-ai 084 C1).
     var pollConnectionFailures: [Repository.ID: String] = [:]
+    /// Remote repositories whose host answered since Prowl started: a live load read them
+    /// through the host, or a poll reached it. Until then a folder shows from the snapshot
+    /// or as a reload kept it, and the toolbar says that Prowl is connecting.
+    var answeredRemoteRepositoryIDs: Set<Repository.ID> = []
     /// Remote folders whose host could not be reached, at the last load or poll.
     var unreachableRepositoryIDs: Set<Repository.ID> {
       loadUnreachableRepositoryIDs.union(pollUnreachableRepositoryIDs)
@@ -380,7 +427,12 @@ struct RepositoriesFeature {
     var lastFocusedWorktreeID: Worktree.ID?
     var preCanvasWorktreeID: Worktree.ID?
     var preCanvasTerminalTargetID: Worktree.ID?
-    var preArchivedWorktreeID: Worktree.ID?
+    var preArchivedSelection: SidebarSelection?
+    var preArchivedWorkspaceChildID: String?
+    var preArchivedCanvasCard: CanvasCardRef?
+    /// Layout (Normal / Canvas / Shelf) that was showing when the archived
+    /// list was opened, so leaving the list can return to it.
+    var preArchivedTopSegment: TopSegment?
     var isShelfActive: Bool = false
     var worktreeHistoryBackStack: [Worktree.ID] = []
     var worktreeHistoryForwardStack: [Worktree.ID] = []
@@ -466,6 +518,12 @@ struct RepositoriesFeature {
     /// ⌘⌃↑/↓ and ⌃1–9 when a selection opens a tab. Cleared when the group folds or the
     /// selection moves outside it.
     var retainedInactiveWorktreeIDs: Set<Worktree.ID> = []
+    /// Collapsed sidebar groups, as UUID strings (docs-ai 086).
+    @Shared(.appStorage("sidebarCollapsedGroupIDs")) var collapsedGroupIDs: [String] = []
+    var groupTitlePrompt: GroupTitlePrompt?
+    var groupSymbolPicker: GroupSymbolPicker?
+    /// The latest image import of each group. A completion with another ID is stale.
+    var pendingGroupImageImports: [RepositoryGroup.ID: UUID] = [:]
     @Presents var worktreeCreationPrompt: WorktreeCreationPromptFeature.State?
     @Presents var workspaceEditor: WorkspaceEditorFeature.State?
     /// The Add Remote Folder sheet (docs-ai 084 C1), unless `PROWL_REMOTE_FOLDERS=0`.
@@ -500,6 +558,7 @@ struct RepositoriesFeature {
     case worktreeCreation(WorktreeCreationAction)
     case worktreeLifecycle(WorktreeLifecycleAction)
     case worktreeOrdering(WorktreeOrderingAction)
+    case sidebarGroups(SidebarGroupAction)
     case githubIntegration(GithubIntegrationAction)
     case repositoryManagement(RepositoryManagementAction)
     case workspaceCreation(WorkspaceCreationAction)
@@ -514,7 +573,7 @@ struct RepositoriesFeature {
     case setArchivedAutoDeletePeriod(AutoDeletePeriod?, initialTargets: [ArchivedAutoDeleteTarget]? = nil)
     case autoDeleteExpiredArchivedWorktrees
     case deleteExpiredArchivedWorktree(ArchivedAutoDeleteTarget, period: AutoDeletePeriod)
-    case repositoryOrderIDsLoaded([Repository.ID])
+    case sidebarLayoutLoaded(SidebarLayout)
     case worktreeOrderByRepositoryLoaded([Repository.ID: [Worktree.ID]])
     case lastFocusedWorktreeIDLoaded(Worktree.ID?)
     case refreshWorktrees
@@ -713,6 +772,7 @@ struct RepositoriesFeature {
   @Dependency(\.uuid) var uuid
   @Dependency(\.repositoryIconDetector) var repositoryIconDetector
   @Dependency(\.repositoryIconAssetStore) var repositoryIconAssetStore
+  @Dependency(\.groupIconAssetStore) var groupIconAssetStore
 
   var body: some Reducer<State, Action> {
     CombineReducers {
@@ -723,6 +783,7 @@ struct RepositoriesFeature {
       worktreeCreationReducer
       worktreeLifecycleReducer
       worktreeOrderingReducer
+      sidebarGroupsReducer
       githubIntegrationReducer
       repositoryManagementReducer
       workspaceCreationReducer
@@ -742,6 +803,15 @@ struct RepositoriesFeature {
           return .none
         }
         state.pendingRenameBranchRequest = nil
+        return .none
+      }
+      Reduce { state, _ in
+        if let prompt = state.groupTitlePrompt, !state.isGroupTitlePromptTargetAvailable(prompt.target) {
+          state.groupTitlePrompt = nil
+        }
+        if let picker = state.groupSymbolPicker, state.sidebarLayout.group(id: picker.groupID) == nil {
+          state.groupSymbolPicker = nil
+        }
         return .none
       }
     }

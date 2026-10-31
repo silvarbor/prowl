@@ -95,6 +95,35 @@ struct ContentView: View {
       promptStore in
       WorkspaceEditorView(store: promptStore)
     }
+    .sheet(item: groupTitlePrompt) { prompt in
+      GroupTitlePromptView(
+        prompt: prompt,
+        onCancel: {
+          repositoriesStore.send(.sidebarGroups(.titlePromptCanceled))
+        },
+        onSubmit: { title in
+          repositoriesStore.send(.sidebarGroups(.titlePromptSubmitted(title)))
+        }
+      )
+      .id(prompt.id)
+    }
+    .sheet(item: groupSymbolPicker) { picker in
+      TabIconPickerView(
+        initialIcon: picker.currentSymbol,
+        defaultIcon: TabIconSource(systemSymbol: "folder"),
+        title: "Group Icon",
+        subtitle: "Pick a preset or enter any SF Symbol name. The default folder opens with the group.",
+        resetHelp: "Use the default folder icon",
+        presets: RepositoryIconPresets.presets,
+        onApply: { symbolName in
+          repositoriesStore.send(.sidebarGroups(.symbolPickerApplied(symbolName)))
+        },
+        onCancel: {
+          repositoriesStore.send(.sidebarGroups(.symbolPickerCanceled))
+        }
+      )
+      .id(picker.id)
+    }
     .sheet(item: renameBranchPromptRequest) { request in
       RenameBranchPromptView(
         currentName: request.currentName,
@@ -191,6 +220,26 @@ struct ContentView: View {
     return WindowTabbingDisabler(dispatchUndoRedoKey: { manager.performAppUndoRedoKey($0) })
   }
 
+  private var groupTitlePrompt: Binding<GroupTitlePrompt?> {
+    Binding(
+      get: { repositoriesStore.groupTitlePrompt },
+      set: { newPrompt in
+        guard newPrompt == nil, repositoriesStore.groupTitlePrompt != nil else { return }
+        repositoriesStore.send(.sidebarGroups(.titlePromptCanceled))
+      }
+    )
+  }
+
+  private var groupSymbolPicker: Binding<GroupSymbolPicker?> {
+    Binding(
+      get: { repositoriesStore.groupSymbolPicker },
+      set: { newPicker in
+        guard newPicker == nil, repositoriesStore.groupSymbolPicker != nil else { return }
+        repositoriesStore.send(.sidebarGroups(.symbolPickerCanceled))
+      }
+    )
+  }
+
   private var renameBranchPromptRequest: Binding<PendingRenameBranchRequest?> {
     Binding(
       get: { repositoriesStore.pendingRenameBranchRequest },
@@ -239,7 +288,8 @@ struct ContentView: View {
   }
 
   private var revealInSidebarAction: (() -> Void)? {
-    guard store.repositories.selectedWorktreeID != nil else { return nil }
+    guard store.repositories.selectedWorktreeID != nil || store.repositories.selectedRepository != nil
+    else { return nil }
     return {
       store.send(.showLeftSidebar)
       store.send(.repositories(.revealSelectedWorktreeInSidebar))

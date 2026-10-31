@@ -8,15 +8,8 @@ extension RepositoriesFeature {
     action: WorktreeOrderingAction
   ) -> Effect<Action> {
     switch action {
-    case .repositoriesMoved(let source, let destination):
-      var orderedRepositoryIDs = state.orderedRepositoryIDs()
-      orderedRepositoryIDs.move(fromOffsets: source, toOffset: destination)
-      state.repositoryOrderIDs = Self.mergingHiddenRepositoryIDs(
-        orderedRepositoryIDs, into: state.repositoryOrderIDs, isHidden: keepsHiddenRemoteID)
-      let repositoryOrderIDs = state.repositoryOrderIDs
-      return .run { _ in
-        await repositoryPersistence.saveRepositoryOrderIDs(repositoryOrderIDs)
-      }
+    case .sidebarItemMoved(let item, let destination):
+      return editSidebarLayout(state: &state) { $0.move(item, to: destination) }
 
     case .pinnedWorktreesMoved(let repositoryID, let source, let destination):
       guard let repository = state.repositories[id: repositoryID] else {
