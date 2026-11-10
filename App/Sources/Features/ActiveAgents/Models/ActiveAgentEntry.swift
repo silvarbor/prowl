@@ -21,6 +21,9 @@ struct ActiveAgentEntry: Identifiable, Equatable, Sendable {
   var paneTitle: String
   let surfaceID: UUID
   let paneIndex: Int
+  /// The tab's position in `tabManager.tabs` at publish time. Orders agents of one worktree,
+  /// together with `paneIndex`; defaults to 0 for entries built outside a tab strip.
+  var tabIndex = 0
   /// Command/process token used for row icon lookup. This can be more specific than
   /// `agent` for aliases or wrappers, e.g. `oh-my-pi` vs `omp`.
   let iconLookupToken: String

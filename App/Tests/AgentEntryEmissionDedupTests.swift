@@ -67,6 +67,93 @@ struct AgentEntryEmissionDedupTests {
     #expect(removed == [fixture.pane.id])
   }
 
+  @Test func entryCarriesItsTabPosition() {
+    let fixture = makeFixture()
+    var received: [ActiveAgentEntry] = []
+    fixture.state.onAgentEntryChanged = { received.append($0) }
+    _ = fixture.state.tabManager.createTab(title: "worktree 2", icon: "terminal")
+
+    fixture.state.emitAgentEntry(
+      surfaceID: fixture.pane.id,
+      tabId: fixture.tabId,
+      state: PaneAgentState(detectedAgent: .claude, state: .working)
+    )
+
+    #expect(received.map(\.tabIndex) == [0])
+  }
+
+  @Test func reorderingTabsRepublishesTheAgentsWhosePositionChanged() {
+    let fixture = makeFixture()
+    let otherTab = fixture.state.tabManager.createTab(title: "worktree 2", icon: "terminal")
+    var received: [ActiveAgentEntry] = []
+    fixture.state.surfaceAgentStates[fixture.pane.id] = PaneAgentState(detectedAgent: .claude, state: .working)
+    fixture.state.emitAgentEntry(
+      surfaceID: fixture.pane.id,
+      tabId: fixture.tabId,
+      state: PaneAgentState(detectedAgent: .claude, state: .working)
+    )
+    fixture.state.onAgentEntryChanged = { received.append($0) }
+
+    fixture.state.tabManager.reorderTabs([otherTab, fixture.tabId])
+    #expect(received.map(\.tabIndex) == [1])
+
+    // A write to one tab's fields does not move any tab and republishes nothing.
+    fixture.state.tabManager.updateDirty(fixture.tabId, isDirty: true)
+    #expect(received.count == 1)
+  }
+
+  @Test func closingAnEarlierTabRepublishesTheAgentsOfLaterTabs() {
+    let fixture = makeFixture()
+    let earlier = fixture.state.tabManager.createTab(title: "earlier", icon: nil)
+    fixture.state.tabManager.reorderTabs([earlier, fixture.tabId])
+    fixture.state.surfaceAgentStates[fixture.pane.id] = PaneAgentState(detectedAgent: .claude, state: .working)
+    fixture.state.emitAgentEntry(
+      surfaceID: fixture.pane.id,
+      tabId: fixture.tabId,
+      state: PaneAgentState(detectedAgent: .claude, state: .working)
+    )
+    var received: [ActiveAgentEntry] = []
+    fixture.state.onAgentEntryChanged = { received.append($0) }
+
+    fixture.state.tabManager.closeTab(earlier)
+
+    #expect(received.map(\.tabIndex) == [0])
+  }
+
+  @Test func movingAPaneRepublishesTheAgentsWhosePositionChanged() throws {
+    let fixture = makeFixture()
+    let other = GhosttySurfaceView(
+      runtime: fixture.state.runtime,
+      workingDirectory: URL(fileURLWithPath: "/tmp/repo/worktree", isDirectory: true),
+      fontSize: nil,
+      context: GHOSTTY_SURFACE_CONTEXT_SPLIT,
+      skipsSurfaceCreationForTesting: true
+    )
+    fixture.state.surfaces[other.id] = other
+    let paneState = PaneAgentState(detectedAgent: .claude, state: .working)
+    let original = try SplitTree<GhosttySurfaceView>(view: fixture.pane)
+      .inserting(view: other, at: fixture.pane, direction: .right)
+    fixture.state.updateTree(original, for: fixture.tabId)
+    fixture.state.surfaceAgentStates[fixture.pane.id] = paneState
+    fixture.state.surfaceAgentStates[other.id] = paneState
+    fixture.state.emitAgentEntry(surfaceID: fixture.pane.id, tabId: fixture.tabId, state: paneState)
+    fixture.state.emitAgentEntry(surfaceID: other.id, tabId: fixture.tabId, state: paneState)
+    var received: [ActiveAgentEntry] = []
+    fixture.state.onAgentEntryChanged = { received.append($0) }
+
+    // A resize keeps the pane order and republishes nothing.
+    fixture.state.updateTree(original.equalized(), for: fixture.tabId)
+    #expect(received.isEmpty)
+
+    let swapped = try SplitTree<GhosttySurfaceView>(view: other)
+      .inserting(view: fixture.pane, at: other, direction: .right)
+    fixture.state.updateTree(swapped, for: fixture.tabId)
+
+    #expect(Set(received.map(\.surfaceID)) == [fixture.pane.id, other.id])
+    #expect(received.first { $0.surfaceID == fixture.pane.id }?.paneIndex == 2)
+    #expect(received.first { $0.surfaceID == other.id }?.paneIndex == 1)
+  }
+
   /// `equalsIgnoringRawState` normalizes one field and compares the rest through
   /// the synthesized `==`. Nothing structural stops a later edit from
   /// normalizing a second field, and the damage would be silent: the helper
@@ -88,6 +175,8 @@ struct AgentEntryEmissionDedupTests {
       ("paneTitle", Self.entry(paneTitle: "other title")),
       ("surfaceID", Self.entry(surfaceID: Self.otherID)),
       ("paneIndex", Self.entry(paneIndex: 2)),
+      // Orders the agent in the Active Agents panel, so a tab that moved must republish it.
+      ("tabIndex", Self.entry(tabIndex: 1)),
       ("iconLookupToken", Self.entry(iconLookupToken: "codex")),
       ("agent", Self.entry(agent: .codex)),
       ("launchProfileName", Self.entry(launchProfileName: "Review Profile")),
@@ -163,6 +252,7 @@ struct AgentEntryEmissionDedupTests {
     paneTitle: String = "spx-h",
     surfaceID: UUID = baseID,
     paneIndex: Int = 1,
+    tabIndex: Int = 0,
     iconLookupToken: String = "claude",
     agent: DetectedAgent = .claude,
     launchProfileName: String? = nil,
@@ -180,6 +270,7 @@ struct AgentEntryEmissionDedupTests {
       paneTitle: paneTitle,
       surfaceID: surfaceID,
       paneIndex: paneIndex,
+      tabIndex: tabIndex,
       iconLookupToken: iconLookupToken,
       agent: agent,
       session: session,
