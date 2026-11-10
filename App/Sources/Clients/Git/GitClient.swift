@@ -236,9 +236,10 @@ struct GitClient {
   }
 
   /// The repository's default branch: the branch `refs/remotes/origin/HEAD` names, else
-  /// `main`, else `master` when that local branch exists. Nil when none applies.
+  /// `main`, else `master` when that local branch exists. Nil when none applies. Unlike
+  /// `defaultRemoteBranchRef`, an unset `origin/HEAD` never falls back to `origin/main`.
   nonisolated func defaultBranchName(for repoRoot: URL) async -> String? {
-    let originHead = (try? await defaultRemoteBranchRef(for: repoRoot)).flatMap { $0 }
+    let originHead = await originHeadTarget(for: repoRoot)
     var localBranches: Set<String> = []
     if originHead == nil {
       for candidate in Self.defaultBranchFallbacks {
@@ -250,6 +251,18 @@ struct GitClient {
   }
 
   nonisolated static let defaultBranchFallbacks = ["main", "master"]
+
+  /// The target of `refs/remotes/origin/HEAD`, such as `origin/main`; nil when it is not set.
+  nonisolated private func originHeadTarget(for repoRoot: URL) async -> String? {
+    let path = repoRoot.path(percentEncoded: false)
+    guard
+      let output = try? await runGit(
+        operation: .defaultRemoteBranchRef,
+        arguments: ["-C", path, "symbolic-ref", "-q", "refs/remotes/origin/HEAD"]
+      )
+    else { return nil }
+    return normalizeRemoteRef(output)
+  }
 
   /// `originHeadRef` is the resolved `origin/HEAD` target, such as `origin/main`.
   nonisolated static func defaultBranchName(originHeadRef: String?, localBranches: Set<String>) -> String? {

@@ -744,6 +744,72 @@ struct RemoteRepositoryHostTests {
     #expect(loaded.first?.bareDefaultBranch == nil)
   }
 
+  /// Without `origin/HEAD`, an `origin/main` ref does not make `main` the default branch:
+  /// the local fallbacks decide, so the worktree on a local `master` stays out of the
+  /// Inactive group.
+  @Test(.dependencies) func aBareRepositoryWithoutOriginHeadFallsBackToItsLocalBranches() async throws {
+    let fixture = try await GitFixture()
+    defer { fixture.remove() }
+    let bare = try await fixture.makeUpstream()
+    let worktree = fixture.root.appending(path: "pool/master", directoryHint: .isDirectory)
+    try await fixture.git(["branch", "master", "trunk"], in: bare)
+    try await fixture.git(["update-ref", "refs/remotes/origin/main", "trunk"], in: bare)
+    try await fixture.git(["worktree", "add", "-q", worktree.path, "master"], in: bare)
+    let bareID = bare.path(percentEncoded: false).trimmingSuffix("/")
+    let remote = RemoteRepositoryFixtures.location(bareID)
+    let feature = withDependencies {
+      $0[RemoteRepositoryHostClient.self] = fixture.remoteClient
+      $0.continuousClock = TestClock()
+    } operation: {
+      RepositoriesFeature()
+    }
+
+    let (loaded, failures) = await feature.loadRepositoriesData([
+      PersistedRepositoryEntry(path: bareID, kind: .git),
+      PersistedRepositoryEntry(path: remote.id, kind: .git),
+    ])
+
+    #expect(failures.isEmpty)
+    #expect(loaded.map(\.bareDefaultBranch) == ["master", "master"])
+    for repository in loaded {
+      var state = RepositoriesFeature.State()
+      state.repositories = [repository]
+      let onFallback = try #require(repository.worktrees.first { $0.name == "master" })
+      let sections = state.worktreeRowSections(in: repository)
+      #expect(sections.unpinned.map(\.id) == [onFallback.id])
+      #expect(!sections.inactive.contains { $0.id == onFallback.id })
+    }
+  }
+
+  /// A remote repository restored from a snapshot written without the default branch gets
+  /// it on the next live load, which otherwise reuses the restored repository.
+  @Test(.dependencies) func aRestoredRemoteBareRepositoryResolvesItsDefaultBranchOnTheNextLoad() async throws {
+    let fixture = try await GitFixture()
+    defer { fixture.remove() }
+    let bare = try await fixture.makeUpstream()
+    let worktree = fixture.root.appending(path: "pool/main", directoryHint: .isDirectory)
+    try await fixture.git(["branch", "main", "trunk"], in: bare)
+    try await fixture.git(["worktree", "add", "-q", worktree.path, "main"], in: bare)
+    let remote = RemoteRepositoryFixtures.location(bare.path(percentEncoded: false).trimmingSuffix("/"))
+    let entry = PersistedRepositoryEntry(path: remote.id, kind: .git)
+    let feature = withDependencies {
+      $0[RemoteRepositoryHostClient.self] = fixture.remoteClient
+      $0.continuousClock = TestClock()
+    } operation: {
+      RepositoriesFeature()
+    }
+    let live = try #require(await feature.loadRepositoriesData([entry]).0.first)
+    let restored = Repository(
+      location: live.location, name: live.name, kind: live.kind, worktrees: live.worktrees)
+    #expect(restored.bareDefaultBranch == nil)
+
+    let (loaded, failures) = await feature.loadRepositoriesData([entry], knownRemoteRepositories: [restored])
+
+    #expect(failures.isEmpty)
+    #expect(loaded.first?.worktrees == live.worktrees)
+    #expect(loaded.first?.bareDefaultBranch == "main")
+  }
+
   @Test(.dependencies) func remoteFoldersLoadTheirWorktreesThroughTheHost() async throws {
     let fixture = try await GitFixture()
     defer { fixture.remove() }

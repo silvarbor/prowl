@@ -53,7 +53,10 @@ repository does not. The default branch is the branch `refs/remotes/origin/HEAD`
 else a local `main`, else a local `master` (`GitClient.defaultBranchName`, through
 `RepositoryHost.defaultBranchName` for local and remote repositories). The repository load
 resolves it only when the listed worktrees have no main worktree and stores it as
-`Repository.bareDefaultBranch`, so the sidebar never runs git. `worktreeRowSections`
+`Repository.bareDefaultBranch`, so the sidebar never runs git. An unset `origin/HEAD` goes
+straight to the local fallbacks; an `origin/main` ref alone does not name the default
+branch. A remote repository reused from the snapshot cache without the branch gets it on
+the next live load, within the remote load deadline; polls do not resolve it again. `worktreeRowSections`
 exempts the unpinned worktree whose name (its branch) equals it, only while the repository
 has no main worktree. `Worktree.isMain` does not change: it also guards deleting the main
 worktree and drives the merged-PR archive. When no worktree is on the default branch,

@@ -202,7 +202,19 @@ extension RepositoriesFeature {
             return await Self.loadRepository(entry, host: repositoryHost)
           }
           if let repository = known[entry.location.standardized.id] {
-            return WorktreesFetchResult(entry: entry, repository: repository, errorMessage: nil)
+            let reused = WorktreesFetchResult(entry: entry, repository: repository, errorMessage: nil)
+            // A repository restored from a snapshot written before the default branch was
+            // stored lacks it; resolve it once, within the same deadline (docs-ai 087).
+            guard repository.kind == .git, repository.bareDefaultBranch == nil,
+              !repository.worktrees.contains(where: \.isMain)
+            else { return reused }
+            return await Self.withDeadline(Self.remoteLoadDeadline, clock: clock) {
+              let branch = await repositoryHost.defaultBranchName(in: repository.location)
+              return WorktreesFetchResult(
+                entry: entry, repository: repository.withBareDefaultBranch(branch), errorMessage: nil)
+            } onTimeout: {
+              reused
+            }
           }
           return await Self.withDeadline(Self.remoteLoadDeadline, clock: clock) {
             await Self.loadRepository(entry, host: repositoryHost)

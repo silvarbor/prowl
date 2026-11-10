@@ -7,7 +7,7 @@
 | 2026-10-18 | First version: fold worktrees with no open tab into a per-repository "Inactive (N)" group behind a `foldInactiveWorktrees` setting | fork review PR |
 | 2026-10-27 | Reworked per the maintainer's request on #939: always on, no setting, no Sidebar settings section; renumbered after 083 and 084 were taken | PR (see Primary PRs) |
 | 2026-10-31 | Merged upstream with repository groups (086) and renumbered to 087 after 085 and 086 were taken; walking an expanded group keeps its order, and any selection outside the group releases the rows kept there | PR (see Primary PRs) |
-| 2026-11-10 | In a bare repository, the worktree on the default branch never folds | PR (see Primary PRs) |
+| 2026-11-10 | In a bare repository, the worktree on the default branch never folds; an unset `origin/HEAD` uses the local fallbacks, and a restored remote repository resolves the branch on its next load | PR (see Primary PRs) |
 
 ## Outcome & current state (as of 2026-11-10)
 
@@ -33,9 +33,11 @@
   child, Canvas, the archived list), and `toggleInactiveWorktreesExpanded` releases the
   repository's rows.
 - A bare repository lists no main worktree. When the load finds none, it resolves the
-  default branch (`RepositoryHost.defaultBranchName`: `origin/HEAD`, else `main`, else
-  `master`) and stores it as `Repository.bareDefaultBranch`; the snapshot cache and the
-  worktree list updates carry it. `worktreeRowSections` keeps the unpinned worktree on
+  default branch (`RepositoryHost.defaultBranchName`: the target of `origin/HEAD`, else a
+  local `main`, else a local `master`; an unset `origin/HEAD` never resolves to
+  `origin/main`) and stores it as `Repository.bareDefaultBranch`; the snapshot cache and
+  the worktree list updates carry it. A remote repository that a live load reuses from
+  the snapshot without the branch resolves it once, within the remote load deadline. `worktreeRowSections` keeps the unpinned worktree on
   that branch out of the Inactive group while the repository has no main worktree.
   `Worktree.isMain` stays false for it.
 - With repository groups (086), the Inactive row stays per repository inside the
@@ -68,7 +70,8 @@
   order), nothing exempt without a worktree on the default branch, the `main` and
   `master` fallbacks, and a non-bare repository unchanged. `RemoteRepositoryHostTests`
   loads a real bare repository locally and through the host, with and without
-  `origin/HEAD`.
+  `origin/HEAD`, falls back to a local `master` when only an `origin/main` ref exists,
+  and resolves the branch of a remote repository restored without it.
 - `make check`, `make lint`, `make check-localization`, `make test-scripts`, and
   `make test` passed before the push; the PR records the counts.
 

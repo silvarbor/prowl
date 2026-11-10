@@ -112,6 +112,13 @@ nonisolated struct Repository: Identifiable, Hashable, Sendable {
     )
   }
 
+  /// This repository with `bareDefaultBranch` set to `branch`.
+  func withBareDefaultBranch(_ branch: String?) -> Repository {
+    Repository(
+      id: id, location: location, name: name, kind: kind, worktrees: worktrees, workspace: workspace,
+      bareDefaultBranch: branch)
+  }
+
   /// The root folder on this Mac. Nil for a remote repository.
   var localURL: URL? {
     location.localURL
