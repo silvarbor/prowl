@@ -208,6 +208,12 @@ extension RepositoriesFeature {
       return .send(.reloadRepositories(animated: false))
 
     case .reloadRepositories(let animated):
+      // A reload would cancel an in-flight add/open through the shared load cancellation ID
+      // before it has persisted the folders, so it runs after the open instead.
+      if state.isOpeningRepositories {
+        state.needsReloadAfterOpen = true
+        return .none
+      }
       let roots = state.repositoryRoots
       guard !roots.isEmpty else {
         state.isRefreshingWorktrees = false
@@ -217,6 +223,10 @@ extension RepositoriesFeature {
         fallbackRoots: roots, animated: animated, knownRemoteRepositories: state.retainedRemoteRepositories)
 
     case .repositoriesLoaded(let loadedRepositories, let failures, let roots, let animated, let reusedIDs):
+      // A repository removal can replace an in-flight open with its own load, which also
+      // covers a reload that the open deferred.
+      state.isOpeningRepositories = false
+      state.needsReloadAfterOpen = false
       let repositories = state.reconcilingReusedRemoteRepositories(loadedRepositories, reusedIDs: reusedIDs)
       state.isRefreshingWorktrees = false
       let wasRestoringSnapshot = state.snapshotPersistencePhase == .restoring
@@ -305,6 +315,7 @@ extension RepositoriesFeature {
       }
       allEffects.append(refreshWorkspaceChildrenEffect(state: state))
       allEffects.append(syncRemoteRefreshSchedules(state: &state))
+      allEffects.append(effectAfterLoad(state: &state))
       return .merge(allEffects)
 
     case .remoteRepositoryRefreshDue(let repositoryID):
@@ -512,8 +523,8 @@ extension RepositoriesFeature {
         }
         return .send(.selectWorktree(targetID, focusTerminal: true))
       } else {
-        // Enter canvas if there are any open worktrees.
-        guard !state.orderedWorktreeRows().isEmpty else { return .none }
+        // Canvas has the same requirement as Shelf: a worktree or a folder.
+        guard state.canEnterShelf else { return .none }
         return .send(.selectCanvas)
       }
 
@@ -775,6 +786,16 @@ extension RepositoriesFeature {
       }
       guard let id = state.worktreeID(byOffset: -1) else { return .none }
       return .send(.selectWorktree(id, focusTerminal: true))
+
+    // A restored terminal can hold first responder while no card is primary, so launching into
+    // Canvas names the anchor. `.reveal` keeps the board the user last saw instead of zooming in.
+    case .enterCanvasAtLaunch:
+      guard state.canEnterShelf else { return .none }
+      if let anchorID = state.selectedTerminalWorktree?.id {
+        requestCanvasFocus(
+          .selectedTabInWorktree(anchorID), viewport: .reveal, openedWorktreeID: anchorID, state: &state)
+      }
+      return .send(.selectCanvas)
 
     case .consumeCanvasFocusRequest(let id):
       if state.pendingCanvasFocusRequest?.id == id {
@@ -1076,8 +1097,8 @@ extension RepositoriesFeature {
       case .inProgress:
         return .cancel(id: CancelID.toastAutoDismiss)
       case .success, .warning:
-        return .run { send in
-          try? await ContinuousClock().sleep(for: .seconds(3))
+        return .run { [clock] send in
+          try? await clock.sleep(for: .seconds(3))
           await send(.dismissToast)
         }
         .cancellable(id: CancelID.toastAutoDismiss, cancelInFlight: true)

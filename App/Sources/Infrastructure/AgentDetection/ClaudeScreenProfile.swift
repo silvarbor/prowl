@@ -49,13 +49,61 @@ enum ClaudeScreenProfile {
   /// A recognized composer, including wrapped draft rows. Nil means its boundaries
   /// cannot be established and must not be interpreted as an empty input.
   nonisolated static func composerContents(in snapshot: AgentScreenSnapshot) -> String? {
-    let lines = snapshot.lines
+    composerRows(in: snapshot.lines).map { composerText(rows: $0, in: snapshot.lines) }
+  }
+
+  /// `composerContents(in:)` with the styled snapshot read whenever the plain text shows
+  /// anything, to tell a dim hint from a typed draft. A draft stays on the plain screen, which
+  /// joins soft-wrapped rows the way the paste confirmation compares tokens; the styled snapshot
+  /// keeps every physical row apart and only decides whether the box is empty. Nil when the box
+  /// is unrecognized or the styles cannot be read.
+  nonisolated static func composerContents(
+    in snapshot: AgentScreenSnapshot, styledSnapshot: () -> String?
+  ) -> String? {
+    guard let contents = composerContents(in: snapshot) else { return nil }
+    guard !contents.isEmpty else { return "" }
+    guard let styled = styledSnapshot().flatMap(composerContents(styledSnapshot:)) else { return nil }
+    return styled.isEmpty ? "" : contents
+  }
+
+  /// `composerContents(in:)` read from a VT snapshot, where a hint Claude Code shows in an empty
+  /// box reads as empty: `Try "…"` before the first message, the prompt suggestion after a turn
+  /// (2.1.29x and later), and the queued messages hint while a turn runs. Only the dim rendering
+  /// tells a hint from the same words typed by the user, whatever the hint says; an attachment
+  /// marker is never a hint.
+  nonisolated static func composerContents(styledSnapshot: String) -> String? {
+    guard let styled = StyledScreenSnapshot(styledSnapshot: styledSnapshot) else { return nil }
+    let lines = styled.rows.map(\.text)
+    guard let rows = composerRows(in: lines) else { return nil }
+    let contents = composerText(rows: rows, in: lines)
+    guard !contents.isEmpty, !showsAttachmentMarker(contents) else { return contents }
+    let prompt = styled.rows[rows.lowerBound]
+    let scalars = prompt.text.unicodeScalars
+    let afterPrompt = scalars.firstIndex(of: "❯").map { scalars.distance(from: scalars.startIndex, to: $0) + 1 } ?? 0
+    let onlyHint =
+      prompt.showsOnlyDimText(from: afterPrompt)
+      && styled.rows[rows.dropFirst()].allSatisfy { $0.showsOnlyDimText() }
+    return onlyHint ? "" : contents
+  }
+
+  /// Claude collapses an image or a long paste into a marker (`[Image #1]`,
+  /// `[Pasted text #1 +9 lines]`); whatever its styling, it stands for content.
+  nonisolated static func showsAttachmentMarker(_ contents: String) -> Bool {
+    contents.contains(/\[(Image #\d+|Pasted text #\d+ \+\d+ lines)\]/)
+  }
+
+  /// The prompt row through the last row before the closing border.
+  nonisolated private static func composerRows(in lines: [String]) -> Range<Int>? {
     guard let prompt = lines.lastIndex(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("❯") }),
       prompt > 0, isBoxBorderLine(lines[prompt - 1]),
       let end = lines.indices.dropFirst(prompt + 1).first(where: { isBoxBorderLine(lines[$0]) })
     else { return nil }
-    let first = lines[prompt].trimmingCharacters(in: .whitespaces).dropFirst()
-    return ([String(first)] + Array(lines[(prompt + 1)..<end]))
+    return prompt..<end
+  }
+
+  nonisolated private static func composerText(rows: Range<Int>, in lines: [String]) -> String {
+    let first = lines[rows.lowerBound].trimmingCharacters(in: .whitespaces).dropFirst()
+    return ([String(first)] + Array(lines[rows.dropFirst()]))
       .joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
