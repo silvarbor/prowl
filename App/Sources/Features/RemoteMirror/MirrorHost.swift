@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import Observation
+import ProwlCLIShared
 import Security
 
 @MainActor
@@ -33,6 +34,12 @@ final class MirrorHost {
   private(set) var pendingHandshakeCount = 0
   static let maximumPendingHandshakes = 8
   @ObservationIgnored private var subscriptions: [UUID: Subscription] = [:]
+  /// `conversation-v1` feeds by pane. A feed outlives its subscription for a while so a
+  /// reconnecting client can resume by sequence (docs-ai 087).
+  @ObservationIgnored private var conversationFeeds: [UUID: MirrorConversationFeed] = [:]
+  @ObservationIgnored private var conversationReleases: [UUID: Task<Void, Never>] = [:]
+  @ObservationIgnored private var screenPromptReads: [UUID: Date] = [:]
+  static let conversationFeedRetention: Duration = .seconds(600)
   @ObservationIgnored private var pollTask: Task<Void, Never>?
   private(set) var hostRunID: UUID?
   @ObservationIgnored private var connectionAttempts = MirrorConnectionAttempts()
@@ -70,7 +77,7 @@ final class MirrorHost {
     guard let (peerID, _) = subscriptions.first(where: { $0.value.id == subscriptionID }),
       let peer = peers[peerID]
     else { return }
-    subscriptions.removeValue(forKey: peerID)
+    removeSubscription(peerID)
     subscriberCount = subscriptions.count
     if subscriptions.isEmpty {
       pollTask?.cancel()
@@ -187,6 +194,16 @@ final class MirrorHost {
     var textGate = MirrorTextFrameGate()
     var history: MirrorHistory?
     var scroll: ScrollRequest?
+    /// `conversation-v1` only: the pane's event feed, the last sequence sent, and the batch
+    /// awaiting acknowledgement (docs-ai 087).
+    var feed: MirrorConversationFeed?
+    /// `text-v1` with `includeScreenPrompt`: the subscription reads the pane's screen prompts
+    /// through its conversation feed, and remembers the last one it sent.
+    var includeScreenPrompt = false
+    var holdsFeed = false
+    var sentScreenPrompt: MirrorConversationEvent.Prompt?
+    var conversationCursor: UInt64 = 0
+    var conversationOutstanding: UInt64?
   }
 
   private struct ScrollRequest {
@@ -357,6 +374,10 @@ final class MirrorHost {
     commandPeers.removeAll()
     commandDevices.removeAll()
     subscriptions.removeAll()
+    for task in conversationReleases.values { task.cancel() }
+    conversationReleases.removeAll()
+    for feed in conversationFeeds.values { feed.stop() }
+    conversationFeeds.removeAll()
     hostRunID = nil
     subscriberCount = 0
     isRunning = false
@@ -432,7 +453,7 @@ final class MirrorHost {
       self.peers.removeValue(forKey: peer.id)
       // Accepted create requests can outlive a lost connection. Keep their device
       // ownership until completion so explicit revoke or stop can still cancel them.
-      self.subscriptions.removeValue(forKey: peer.id)
+      self.removeSubscription(peer.id)
       self.subscriberCount = self.subscriptions.count
       if self.subscriptions.isEmpty {
         self.pollTask?.cancel()
@@ -523,23 +544,28 @@ final class MirrorHost {
       switch message.kind {
       case .list:
         let busy = Set(subscriptions.values.map(\.paneID))
-        let panes = source.panes().map {
-          MirrorPaneDescriptor(
-            id: $0.id, title: $0.title, directory: $0.directory, busy: busy.contains($0.id),
-            projectName: $0.projectName, subtitle: $0.subtitle, role: $0.role)
+        // Copy the source descriptor whole: rebuilding it field by field dropped new fields (#1040).
+        let panes = source.panes().map { pane in
+          var listed = pane
+          listed.busy = busy.contains(pane.id)
+          return listed
         }
         peer.send(
           .panes(
             .init(
               panes: panes,
-              capabilities: ["vt-v1", "text-v1", "takeover", "refresh"]
+              capabilities: ["vt-v1", "text-v1", "conversation-v1", "takeover", "refresh"]
                 + (commandService != nil
-                  ? ["launch-profile", "launch-shell", "agents-dispatch", "agent-input"] : [])
+                  ? [
+                    "launch-profile", "launch-shell", "agents-dispatch", "agent-input", "prompt-respond", "agent-keys",
+                    "shell-send", "shell-keys",
+                  ] : [])
                 + (source.supportsBoundedHistory ? ["history"] : [])
                 + (source.supportsRemoteScroll ? ["remote-scroll"] : [])
                 + (source.supportsViewportText ? ["viewport-text-v1"] : [])
                 + (source.supportsStyledScrollback ? ["styled-scrollback-v1"] : [])
-                + (source.supportsScrollState ? ["scroll-state-v1"] : []), hostRunID: hostRunID)))
+                + (source.supportsScrollState ? ["scroll-state-v1"] : []), hostRunID: hostRunID,
+              hostName: MirrorHostAddresses.computerName)))
       case .command:
         try handleCommand(message, peer: peer)
       case .commandReceipt:
@@ -592,7 +618,7 @@ final class MirrorHost {
             requestID: request.requestID)))
       return
     }
-    guard source.supportsRemoteScroll else {
+    guard source.supportsRemoteScroll, subscription.feed == nil else {
       peer.send(
         .failure(
           .init(
@@ -659,6 +685,18 @@ final class MirrorHost {
       guard pending == request else { throw MirrorProtocolError.invalidMessage }
       return
     }
+    if case .promptRespond(let answer) = request.request.command, let paneID = UUID(uuidString: answer.pane) {
+      answerPrompt(answer, paneID: paneID, request: request, peer: peer, lease: lease)
+      return
+    }
+    if case .agentKeys(let input) = request.request.command, let paneID = UUID(uuidString: input.pane) {
+      pressKeys(input, paneID: paneID, request: request, peer: peer, lease: lease)
+      return
+    }
+    if case .send(let input) = request.request.command, let paneID = UUID(uuidString: input.selector.value) {
+      runShellLine(input, paneID: paneID, request: request, peer: peer, lease: lease)
+      return
+    }
     commandPeers[peer.id] = request
     commandDevices[peer.id] = devicePeers[peer.id]
     let peerID = peer.id
@@ -672,6 +710,144 @@ final class MirrorHost {
       self.commandDevices.removeValue(forKey: peerID)
       guard let peer, self.peers[peerID] === peer else { return }
       peer.send(.commandResult(.init(commandResponse: response)))
+    }
+  }
+
+  /// Answers a screen prompt for the pane this connection mirrors (docs-ai 089 S4). Only the
+  /// prompt the feed has open can be answered, and the source asks before every key whether this
+  /// connection still owns the pane and that prompt is still open; a refusal never retries.
+  private func answerPrompt(
+    _ answer: MirrorCommandRequest.PromptRespond, paneID: UUID, request: MirrorCommandRequest,
+    peer: MirrorConnection, lease: UUID?
+  ) {
+    commandPeers[peer.id] = request
+    let peerID = peer.id
+    let isLive: @MainActor () -> Bool = { [weak self, weak peer] in
+      guard let self, let peer, self.peers[peerID] === peer else { return false }
+      guard lease == nil || self.subscriptions[peerID]?.id == lease else { return false }
+      return self.conversationFeeds[paneID]?.openScreenPromptID == answer.prompt
+    }
+    Task { @MainActor [weak self, weak peer] in
+      guard let self else { return }
+      let result: MirrorPromptAnswer
+      let choice = MirrorPromptChoice.target(answer.choice)
+      if let choice, isLive(), let contentID = self.conversationFeeds[paneID]?.screenPrompt?.id {
+        result = await self.source.answerPrompt(contentID, choice: choice, in: paneID, isLive: isLive)
+      } else if choice != nil, lease == nil || self.subscriptions[peerID]?.id == lease {
+        result = .refused(code: "PROMPT_CLOSED", message: String(localized: "The prompt is no longer open on the Mac."))
+      } else {
+        result = .refused(code: "PROMPT_CLOSED", message: String(localized: "The mirror no longer owns this pane."))
+      }
+      self.commandPeers.removeValue(forKey: peerID)
+      let response: MirrorJSON
+      switch result {
+      case .delivered(let option, let permission):
+        self.conversationFeeds[paneID]?.noteScreenAnswer(
+          promptID: answer.prompt, option: option, permission: permission)
+        response = Self.promptAnswered(answer)
+      case .submitted:
+        self.conversationFeeds[paneID]?.noteScreenAnswer(
+          promptID: answer.prompt, option: MirrorPromptChoice.submitOption, permission: false)
+        response = Self.promptAnswered(answer)
+      case .toggled:
+        // The menu stays open; the next screen read sends the new boxes with the same prompt id.
+        response = Self.promptAnswered(answer)
+      case .refused(let code, let message):
+        response = MirrorCommandService.failure(message, code: code)
+      }
+      guard let peer, self.peers[peerID] === peer else { return }
+      peer.send(.commandResult(.init(commandResponse: .init(requestID: request.requestID, response: response))))
+    }
+  }
+
+  private static func promptAnswered(_ answer: MirrorCommandRequest.PromptRespond) -> MirrorJSON {
+    .object([
+      "ok": .bool(true), "command": .string("prompt.respond"),
+      "schema_version": .string("prowl.remote.command.v1"),
+      "data": .object(["prompt": .string(answer.prompt), "choice": .string(answer.choice)]),
+    ])
+  }
+
+  /// Presses allow-listed keys for the pane this connection mirrors (docs-ai 089 S5).
+  private func pressKeys(
+    _ input: MirrorCommandRequest.AgentKeys, paneID: UUID, request: MirrorCommandRequest,
+    peer: MirrorConnection, lease: UUID?
+  ) {
+    commandPeers[peer.id] = request
+    let peerID = peer.id
+    let isLive: @MainActor () -> Bool = { [weak self, weak peer] in
+      guard let self, let peer, self.peers[peerID] === peer else { return false }
+      return lease == nil || self.subscriptions[peerID]?.id == lease
+    }
+    Task { @MainActor [weak self, weak peer] in
+      guard let self else { return }
+      let refusal: String?
+      if !input.isAllowed {
+        refusal = String(localized: "Only navigation and control keys can be sent from a mirror.")
+      } else if !isLive() {
+        refusal = String(localized: "The mirror no longer owns this pane.")
+      } else {
+        refusal = await self.source.pressKeys(input.keys, in: paneID, isLive: isLive)
+      }
+      self.commandPeers.removeValue(forKey: peerID)
+      let response: MirrorJSON =
+        if let refusal {
+          MirrorCommandService.failure(refusal, code: "KEYS_REFUSED")
+        } else {
+          .object([
+            "ok": .bool(true), "command": .string("agent.keys"),
+            "schema_version": .string("prowl.remote.command.v1"),
+            "data": .object(["keys": .array(input.keys.map { .string($0) })]),
+          ])
+        }
+      guard let peer, self.peers[peerID] === peer else { return }
+      peer.send(.commandResult(.init(commandResponse: .init(requestID: request.requestID, response: response))))
+    }
+  }
+
+  /// Runs a command in the shell pane this connection mirrors (capability `shell-send`). The
+  /// source checks that the shell is at its prompt and clears the line first.
+  private func runShellLine(
+    _ input: MirrorShellInput, paneID: UUID, request: MirrorCommandRequest, peer: MirrorConnection, lease: UUID?
+  ) {
+    commandPeers[peer.id] = request
+    let peerID = peer.id
+    let isLive: @MainActor () -> Bool = { [weak self, weak peer] in
+      guard let self, let peer, self.peers[peerID] === peer else { return false }
+      return lease == nil || self.subscriptions[peerID]?.id == lease
+    }
+    Task { @MainActor [weak self, weak peer] in
+      guard let self else { return }
+      let refusal: String?
+      if !input.trailingEnter || input.wait || input.captureOutput
+        || input.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        || input.text.utf8.count > MirrorWire.maximumInput
+      {
+        refusal = String(localized: "Send one command line from a mirror.")
+      } else if let invalid = DispatchInput(pane: input.selector.value, prompt: input.text).validationErrorMessage {
+        refusal = invalid
+      } else if !isLive() {
+        refusal = String(localized: "The mirror no longer owns this pane.")
+      } else {
+        refusal = await self.source.sendShellLine(input.text, in: paneID, isLive: isLive)
+      }
+      self.commandPeers.removeValue(forKey: peerID)
+      let response: MirrorJSON =
+        if let refusal {
+          MirrorCommandService.failure(refusal, code: "SHELL_REFUSED")
+        } else {
+          .object([
+            "ok": .bool(true), "command": .string("send"),
+            "schema_version": .string("prowl.remote.command.v1"),
+            "data": .object([
+              "input": .object([
+                "bytes": .number(Double(input.text.utf8.count)), "trailing_enter_sent": .bool(true),
+              ])
+            ]),
+          ])
+        }
+      guard let peer, self.peers[peerID] === peer else { return }
+      peer.send(.commandResult(.init(commandResponse: .init(requestID: request.requestID, response: response))))
     }
   }
 
@@ -708,7 +884,10 @@ final class MirrorHost {
     else {
       throw MirrorProtocolError.invalidMessage
     }
-    if subscription.representation == .text {
+    if subscription.feed != nil {
+      guard subscription.conversationOutstanding == sequence else { throw MirrorProtocolError.invalidMessage }
+      subscription.conversationOutstanding = nil
+    } else if subscription.representation == .text {
       try subscription.textGate.acknowledge(sequence)
     } else {
       try subscription.gate.acknowledge(sequence)
@@ -717,11 +896,13 @@ final class MirrorHost {
   }
 
   private func subscribe(_ message: MirrorMessage, peer: MirrorConnection) throws {
-    guard let hostRunID, subscriptions[peer.id] == nil, let paneID = message.paneID,
-      let representation = message.representation,
+    guard let hostRunID, let paneID = message.paneID, let representation = message.representation,
       source.panes().contains(where: { $0.id == paneID })
     else { throw MirrorProtocolError.invalidMessage }
-    let previous = subscriptions.first { $0.value.paneID == paneID }
+    // A peer may subscribe its own pane again to switch representation; another pane is invalid.
+    let own = subscriptions[peer.id]
+    guard own == nil || own?.paneID == paneID else { throw MirrorProtocolError.invalidMessage }
+    let previous = subscriptions.first { $0.value.paneID == paneID && $0.key != peer.id }
     guard previous == nil || message.intent == .takeover else {
       peer.send(
         .failure(
@@ -734,18 +915,32 @@ final class MirrorHost {
         && source.supportsViewportText,
       includeStyledScrollback: representation == .terminal && message.includeViewportText == true
         && message.includeStyledScrollback == true && source.supportsStyledScrollback,
-      includeScrollState: message.includeScrollState == true && source.supportsScrollState)
+      includeScrollState: message.includeScrollState == true && source.supportsScrollState,
+      includeScreenPrompt: representation == .text && message.includeScreenPrompt == true)
+    if representation == .conversation {
+      guard let feed = conversationFeed(for: paneID) else {
+        peer.send(
+          .failure(
+            .init(
+              error: "CONVERSATION_UNSUPPORTED: This pane has no supported agent; use text-v1.",
+              subscriptionID: nil)))
+        return
+      }
+      next.feed = feed
+    }
     // Prepare and encode before revoking the old lease. Capture failure leaves it intact.
-    let first = try capture(&next)
+    let first = next.feed == nil ? try capture(&next) : nil
     if let first { _ = try MirrorWire.encode(first) }
     if let previous {
-      subscriptions.removeValue(forKey: previous.key)
+      removeSubscription(previous.key)
       if let oldPeer = peers[previous.key] { end(oldPeer, reason: .takenOver) }
     }
+    conversationReleases.removeValue(forKey: paneID)?.cancel()
     subscriptions[peer.id] = next
     subscriberCount = subscriptions.count
     peer.send(.subscribed(.init(paneID: paneID, subscriptionID: next.id, hostRunID: hostRunID)))
     if let first { send(first, subscription: next, to: peer) }
+    if next.feed != nil { sendConversationSnapshot(since: message.since, peerID: peer.id) }
 
     if pollTask == nil {
       let clock = clock
@@ -862,9 +1057,14 @@ final class MirrorHost {
     for (id, var subscription) in subscriptions {
       guard let peer = peers[id] else { continue }
       guard source.panes().contains(where: { $0.id == subscription.paneID }) else {
-        subscriptions.removeValue(forKey: id)
+        removeSubscription(id)
         subscriberCount = subscriptions.count
         end(peer, reason: .paneClosed)
+        continue
+      }
+      if subscription.feed != nil {
+        pollConversation(&subscription, peer: peer)
+        subscriptions[id] = subscription
         continue
       }
       do {
@@ -883,7 +1083,126 @@ final class MirrorHost {
         }
       } catch {
         peer.close("Host pane is unavailable: \(error.localizedDescription)")
+        continue
       }
+      if subscription.includeScreenPrompt {
+        let prompt = screenPrompt(for: &subscription)
+        if prompt != subscription.sentScreenPrompt {
+          subscription.sentScreenPrompt = prompt
+          peer.send(.screenPrompt(.init(prompt: prompt, subscriptionID: subscription.id)))
+        }
+        subscriptions[id] = subscription
+      }
+    }
+  }
+
+  // MARK: - conversation-v1 (docs-ai 087)
+
+  @discardableResult
+  private func removeSubscription(_ peerID: UUID) -> Subscription? {
+    guard let removed = subscriptions.removeValue(forKey: peerID) else { return nil }
+    if removed.feed != nil || removed.holdsFeed { scheduleConversationRelease(paneID: removed.paneID) }
+    return removed
+  }
+
+  /// The menu a text subscription's agent waits on (docs-ai 089 S4). The pane's conversation
+  /// feed reads it from the screen, as for Chat, so an answer from Terminal is checked the same
+  /// way; the subscription keeps the feed alive until it ends.
+  private func screenPrompt(for subscription: inout Subscription) -> MirrorConversationEvent.Prompt? {
+    guard let feed = conversationFeed(for: subscription.paneID) else { return nil }
+    subscription.holdsFeed = true
+    syncConversation(feed, pane: source.agentState(subscription.paneID), paneID: subscription.paneID)
+    return feed.openScreenPromptPayload
+  }
+
+  private func conversationFeed(for paneID: UUID) -> MirrorConversationFeed? {
+    if let feed = conversationFeeds[paneID] { return feed }
+    guard let pane = source.agentState(paneID), let agent = pane.detectedAgent,
+      MirrorConversationAdapters.supports(agent)
+    else { return nil }
+    let feed = MirrorConversationFeed()
+    conversationFeeds[paneID] = feed
+    syncConversation(feed, pane: pane, paneID: paneID)
+    return feed
+  }
+
+  /// Keeps a feed tailing after its subscription ends, then releases it unless another
+  /// subscription took it over.
+  private func scheduleConversationRelease(paneID: UUID) {
+    conversationReleases[paneID]?.cancel()
+    let clock = clock
+    conversationReleases[paneID] = Task { @MainActor [weak self] in
+      do { try await clock.sleep(for: Self.conversationFeedRetention) } catch { return }
+      guard let self, !self.subscriptions.values.contains(where: { $0.paneID == paneID }) else { return }
+      self.conversationReleases.removeValue(forKey: paneID)
+      self.conversationFeeds.removeValue(forKey: paneID)?.stop()
+    }
+  }
+
+  /// Points the feed at the pane's current transcript and agent state. A changed transcript
+  /// (`/clear`, `/new`, resume) restarts the tail with `session.changed`.
+  private func syncConversation(_ feed: MirrorConversationFeed, pane: PaneAgentState?, paneID: UUID) {
+    let transcript = pane.flatMap { pane -> MirrorConversationFeed.Transcript? in
+      guard let agent = pane.detectedAgent, let url = pane.session?.transcriptPath else { return nil }
+      return .init(url: url, agent: agent)
+    }
+    feed.follow(transcript, reason: .switched)
+    if let pane { feed.observe(pane) }
+    observeScreenPrompt(feed, pane: pane, paneID: paneID)
+  }
+
+  /// While the agent is blocked, reads its menu from the screen (docs-ai 089 S4), at most every
+  /// `screenPromptInterval`. The transcript does not hold a waiting prompt (Claude Code
+  /// 2.1.318 writes it only once answered), and the screen is what the answer must match.
+  private func observeScreenPrompt(_ feed: MirrorConversationFeed, pane: PaneAgentState?, paneID: UUID) {
+    guard pane?.state == .blocked else {
+      screenPromptReads.removeValue(forKey: paneID)
+      feed.observeScreen(nil)
+      return
+    }
+    let now = Date()
+    if let last = screenPromptReads[paneID], now.timeIntervalSince(last) < Self.screenPromptInterval { return }
+    screenPromptReads[paneID] = now
+    feed.observeScreen((try? source.activeText(paneID)).flatMap(MirrorScreenPrompt.parse))
+  }
+
+  static let screenPromptInterval: TimeInterval = 0.5
+
+  private func sendConversationSnapshot(since: UInt64?, peerID: UUID) {
+    guard var subscription = subscriptions[peerID], let feed = subscription.feed, let peer = peers[peerID] else {
+      return
+    }
+    let snapshot = feed.log.snapshot(since: since)
+    subscription.conversationCursor = snapshot.latestSequence
+    subscription.conversationOutstanding = snapshot.events.isEmpty ? nil : snapshot.latestSequence
+    subscriptions[peerID] = subscription
+    peer.send(
+      .conversationSnapshot(
+        .init(
+          events: snapshot.events, gap: snapshot.gap, sequence: snapshot.latestSequence,
+          subscriptionID: subscription.id, session: snapshot.session)))
+  }
+
+  /// Sends the events appended since the cursor once the previous batch is acknowledged. A gap
+  /// (the client fell behind the log's retention) is sent as a fresh snapshot.
+  private func pollConversation(_ subscription: inout Subscription, peer: MirrorConnection) {
+    guard let feed = subscription.feed else { return }
+    syncConversation(feed, pane: source.agentState(subscription.paneID), paneID: subscription.paneID)
+    guard subscription.conversationOutstanding == nil else { return }
+    let batch = feed.log.snapshot(since: subscription.conversationCursor)
+    guard !batch.events.isEmpty else { return }
+    subscription.conversationCursor = batch.latestSequence
+    subscription.conversationOutstanding = batch.latestSequence
+    if batch.gap {
+      peer.send(
+        .conversationSnapshot(
+          .init(
+            events: batch.events, gap: true, sequence: batch.latestSequence, subscriptionID: subscription.id,
+            session: batch.session)))
+    } else {
+      peer.send(
+        .conversationEvents(
+          .init(events: batch.events, sequence: batch.latestSequence, subscriptionID: subscription.id)))
     }
   }
 }

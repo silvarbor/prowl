@@ -1037,6 +1037,7 @@ extension WorktreeTerminalState {
     agentDetectionWakeRequests.removeAll()
     agentDetectionFreshProbeRequests.removeAll()
     pendingCommandFinishedBySurface.removeAll()
+    agentExitHandoffBySurface.removeAll()
     programStatusStoresBySurface.removeAll()
     programStatusUnmappedAppsLoggedBySurface.removeAll()
     programStatusOriginBySurface.removeAll()
