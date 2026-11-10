@@ -108,16 +108,22 @@ final class GhosttyMirrorPaneSource: MirrorPaneSource {
     URL(filePath: worktree.repositoryLocation.path, directoryHint: .isDirectory).lastPathComponent
   }
 
+  /// The sidebar's names, colors and order, pushed from the repositories state (docs-ai 089).
+  var decorations = MirrorRosterDecorations()
+
   func panes() -> [MirrorPaneDescriptor] {
     manager.activeWorktreeStates.flatMap { state in
-      let project = Self.projectName(of: state.worktree)
+      let decoration = decorations.project(for: state.worktree.repositoryLocation.id)
+      let project = decoration?.title ?? Self.projectName(of: state.worktree)
       return state.tabManager.tabs.flatMap { tab in
         let leaves = state.trees[tab.id]?.leaves() ?? []
         return leaves.enumerated().compactMap { paneIndex, view -> MirrorPaneDescriptor? in
           guard view.surface != nil else { return nil }
           let name = tab.displayTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-          let agent = state.surfaceAgentStates[view.id]?.detectedAgent?.rawValue.capitalized
+          let agentState = state.surfaceAgentStates[view.id]
+          let agent = agentState?.detectedAgent?.rawValue.capitalized
           let terminal = name.isEmpty || name == "Terminal" ? (agent ?? "Shell") : name
+          let launchProfile = state.launchProfilesBySurface[view.id]
           var location = [terminal, state.worktree.name]
           var title = [project, terminal, state.worktree.name]
           if leaves.count > 1 {
@@ -125,14 +131,251 @@ final class GhosttyMirrorPaneSource: MirrorPaneSource {
             location.append(label)
             title.append(label)
           }
-          return MirrorPaneDescriptor(
+          var descriptor = MirrorPaneDescriptor(
             id: view.id, title: title.joined(separator: " · "),
             directory: Self.directoryPath(of: state.worktree), busy: false,
             projectName: project,
-            subtitle: location.joined(separator: " · "))
+            subtitle: location.joined(separator: " · "),
+            agent: agentState?.detectedAgent?.rawValue,
+            agentState: agentState.map { MirrorConversationEvent.AgentState(rawValue: $0.state.rawValue) ?? .unknown },
+            conversation: Self.conversationSupport(agentState))
+          if let agentState, agentState.detectedAgent != nil {
+            descriptor.displayState = Self.displayState(agentState.displayState)
+            descriptor.stateChangedAt = MirrorConversationEvent.formatTimestamp(agentState.lastChangedAt)
+          }
+          descriptor.tabTitle = Self.rosterTitle(
+            customTitle: tab.customTitle,
+            paneTitle: state.paneTitle(surfaceID: view.id, fallbackTabTitle: name),
+            profileName: launchProfile?.name, agent: agentState?.detectedAgent)
+          descriptor.worktreeName = state.worktree.name
+          descriptor.repositoryColor = decoration?.color
+          descriptor.projectOrder = decoration?.order
+          descriptor.groupName = decoration?.group
+          return descriptor
         }
       }
     }.sorted { $0.title < $1.title }
+  }
+
+  /// The name the phone shows for a pane (docs-ai 089). A tab renamed on the Mac keeps its
+  /// name. Otherwise a Profile launch titles its pane with
+  /// the launch command (`env -u PROWL_LAUNCH_DISPATCH …`) until the agent sets a title;
+  /// that, an empty title or the default "Terminal" falls back to the Profile, then the agent.
+  static func rosterTitle(
+    customTitle: String? = nil, paneTitle: String, profileName: String?, agent: DetectedAgent?
+  ) -> String {
+    // A name the person gave the tab on the Mac wins over anything the terminal reports.
+    if let custom = customTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !custom.isEmpty {
+      return custom
+    }
+    // Agents animate a Braille spinner in front of their title (`⠦ Run tests`); the phone has
+    // its own working indicator, and a title that changes every frame would churn the roster.
+    let title = String(
+      paneTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        .drop { $0.unicodeScalars.allSatisfy { (0x2800...0x28FF).contains($0.value) } || $0 == " " })
+    let isPlaceholder =
+      title.isEmpty || title == "Terminal"
+      || (title.hasPrefix("env ") && title.contains(AgentProfileLaunchPlanner.dispatchCarrierName))
+    guard isPlaceholder else { return title }
+    return profileName ?? agent?.displayName ?? String(localized: "Shell")
+  }
+
+  static func displayState(_ state: AgentDisplayState) -> MirrorPaneDescriptor.DisplayState {
+    switch state {
+    case .working: .working
+    case .blocked: .blocked
+    case .done: .done
+    case .idle: .idle
+    }
+  }
+
+  static func conversationSupport(_ pane: PaneAgentState?) -> MirrorPaneDescriptor.ConversationSupport {
+    guard let pane, let agent = pane.detectedAgent, MirrorConversationAdapters.supports(agent) else {
+      return .unsupported
+    }
+    return pane.session?.transcriptPath != nil ? .available : .pending
+  }
+
+  /// Answers the screen prompt `id` with `choice` (docs-ai 089 S4). Before every key the mirror
+  /// must still own the pane (`isLive`), the agent must still be blocked, nobody may be editing
+  /// on the Mac, and a fresh read of the screen must still show this prompt; a move key must
+  /// have moved the highlight one row before the next key goes. Enter goes only on the chosen
+  /// row. In a multi-select menu, Enter on an option toggles its box and the menu stays open.
+  func answerPrompt(
+    _ id: String, choice: MirrorScreenPrompt.Target, in pane: UUID, isLive: @escaping @MainActor () -> Bool
+  ) async -> MirrorPromptAnswer {
+    let closed = MirrorPromptAnswer.refused(
+      code: "PROMPT_CLOSED", message: String(localized: "The prompt is no longer open on the Mac."))
+    guard let surface = view(pane),
+      let state = manager.activeWorktreeStates.first(where: { $0.surfaceAgentStates[pane] != nil })
+    else { return closed }
+    var guardrail = AgentKeySequenceGuard(
+      hasMarkedText: surface.hasMarkedText(), lastEditingAt: surface.lastEditingAt,
+      now: ProcessInfo.processInfo.systemUptime)
+    if let refusal = guardrail.refusal { return .refused(code: "HOST_EDITING", message: refusal) }
+    var moved = false
+    var prompt = (try? activeText(pane)).flatMap(MirrorScreenPrompt.parse)
+    for _ in 0..<Self.maximumPromptKeys {
+      // Stopping after the highlight moved leaves the menu open on another row; say so.
+      func stopped(_ code: String, _ message: String) -> MirrorPromptAnswer {
+        guard moved else { return .refused(code: code, message: message) }
+        return .refused(
+          code: code,
+          message: message + " " + String(localized: "The selection may have moved; nothing was chosen."))
+      }
+      guard isLive(), agentState(pane)?.state == .blocked else {
+        return stopped("PROMPT_CLOSED", String(localized: "The prompt is no longer open on the Mac."))
+      }
+      if let refusal = guardrail.check(hasMarkedText: surface.hasMarkedText(), lastEditingAt: surface.lastEditingAt) {
+        return stopped("HOST_EDITING", refusal)
+      }
+      guard let current = prompt else {
+        return stopped("PROMPT_CLOSED", String(localized: "The prompt is no longer open on the Mac."))
+      }
+      guard current.id == id else {
+        return stopped("PROMPT_CHANGED", String(localized: "The prompt changed on the Mac. Check it again."))
+      }
+      let option: MirrorScreenPrompt.Option?
+      switch choice {
+      case .option(let number): option = current.answers.first { $0.number == number }
+      case .submit: option = nil
+      }
+      guard option != nil || (choice == .submit && current.isMultiSelect),
+        let key = current.nextKey(toward: choice)
+      else {
+        return .refused(
+          code: "PROMPT_CHOICE_INVALID", message: String(localized: "That answer is not offered on the Mac."))
+      }
+      guard state.sendKeyToken(key, in: pane) else { return closed }
+      guardrail.noteSent(lastEditingAt: surface.lastEditingAt)
+      if key == "enter" {
+        guard let option else { return .submitted }
+        return current.isMultiSelect ? .toggled(option) : .delivered(option, permission: current.isPermission)
+      }
+      moved = true
+      guard let expected = current.target(after: key) else { return closed }
+      prompt = await waitForHighlight(expected, of: id, in: pane)
+      guard prompt?.highlighted == expected else {
+        return .refused(
+          code: "DELIVERY_UNCERTAIN",
+          message: String(localized: "The Mac did not move the selection as expected. Check the prompt there."))
+      }
+    }
+    return .refused(
+      code: "DELIVERY_UNCERTAIN", message: String(localized: "The answer needed too many steps. Answer on the Mac."))
+  }
+
+  private static let maximumPromptKeys = 16
+
+  /// Presses keys from a mirror's key bar or Stop (docs-ai 089 S5), one key at a time. Before
+  /// every key the mirror must still own the pane, nobody may be editing on the Mac
+  /// (`AgentKeySequenceGuard`), and the pane must still run the agent it ran at the first key, or still
+  /// none: an agent's keys must not reach the shell after it exits, and a shell pane's keys must
+  /// not reach an agent that started since.
+  func pressKeys(_ keys: [String], in pane: UUID, isLive: @escaping @MainActor () -> Bool) async -> String? {
+    guard let surface = view(pane), let state = worktreeState(of: pane) else {
+      return String(localized: "The pane is no longer open on the Mac.")
+    }
+    let agent = agentState(pane)?.detectedAgent
+    var guardrail = AgentKeySequenceGuard(
+      hasMarkedText: surface.hasMarkedText(), lastEditingAt: surface.lastEditingAt,
+      now: ProcessInfo.processInfo.systemUptime)
+    if let refusal = guardrail.refusal { return refusal }
+    for (index, key) in keys.enumerated() {
+      if index > 0 { try? await Task.sleep(for: .milliseconds(60)) }
+      let partial = index > 0 ? " " + String(localized: "Only the first \(index) keys were pressed.") : ""
+      guard isLive() else { return String(localized: "The mirror no longer owns this pane.") + partial }
+      guard agentState(pane)?.detectedAgent == agent else {
+        return
+          (agent == nil
+          ? String(localized: "An agent started in this pane.")
+          : String(localized: "The agent in this pane is no longer running.")) + partial
+      }
+      if let refusal = guardrail.check(hasMarkedText: surface.hasMarkedText(), lastEditingAt: surface.lastEditingAt) {
+        return refusal + partial
+      }
+      guard state.sendKeyToken(key, in: pane) else {
+        return String(localized: "The Mac did not accept the key.") + partial
+      }
+      guardrail.noteSent(lastEditingAt: surface.lastEditingAt)
+    }
+    return nil
+  }
+
+  /// Runs a command from a mirror in a shell pane (docs-ai 089 follow-up): only while the shell
+  /// alone is in front and the cursor is on the input line of a primary prompt
+  /// (`MirrorShellPrompt`), with nobody editing on the Mac. It clears that line first
+  /// (Control-E, Control-U), so an old draft cannot join the command; the shell keeps the
+  /// cleared text in its kill ring. A one-line command is typed as plain bytes: zsh pushes pasted
+  /// text onto the kill ring too, which would hide the draft from Control-Y. A command with
+  /// newlines or tabs is pasted, and only while the shell takes bracketed paste.
+  func sendShellLine(_ text: String, in pane: UUID, isLive: @escaping @MainActor () -> Bool) -> String? {
+    guard let surface = view(pane), let state = worktreeState(of: pane) else {
+      return String(localized: "The pane is no longer open on the Mac.")
+    }
+    guard agentState(pane)?.detectedAgent == nil else {
+      return String(localized: "An agent runs in this pane. Send your message to the agent instead.")
+    }
+    var guardrail = AgentKeySequenceGuard(
+      hasMarkedText: surface.hasMarkedText(), lastEditingAt: surface.lastEditingAt,
+      now: ProcessInfo.processInfo.systemUptime)
+    if let refusal = guardrail.refusal { return refusal }
+    func shellRefusal() -> String? {
+      MirrorShellPrompt.refusal(
+        for: surface.bridge.foregroundProcessGroupID().flatMap { ProcessDetection.foregroundJob(processGroupID: $0) },
+        input: surface.bridge.inputState(), text: text)
+    }
+    if let refusal = shellRefusal() { return refusal }
+    let cleared = String(
+      localized: "The prompt line was cleared and nothing ran. ⌃Y on the Mac brings the old text back.")
+    for (index, key) in ["ctrl-e", "ctrl-u"].enumerated() {
+      let note = index > 0 ? " " + cleared : ""
+      guard isLive() else { return String(localized: "The mirror no longer owns this pane.") + note }
+      if let refusal = guardrail.check(hasMarkedText: surface.hasMarkedText(), lastEditingAt: surface.lastEditingAt) {
+        return refusal + note
+      }
+      guard state.sendKeyToken(key, in: pane) else {
+        return String(localized: "The Mac did not accept the key.") + note
+      }
+      guardrail.noteSent(lastEditingAt: surface.lastEditingAt)
+    }
+    guard isLive() else { return String(localized: "The mirror no longer owns this pane.") + " " + cleared }
+    if let refusal = guardrail.check(hasMarkedText: surface.hasMarkedText(), lastEditingAt: surface.lastEditingAt) {
+      return refusal + " " + cleared
+    }
+    // The keys may not have reached the shell yet, but nothing else may have moved it off its prompt.
+    if let refusal = shellRefusal() { return refusal + " " + cleared }
+    let inserted =
+      MirrorShellPrompt.needsPaste(text)
+      ? state.insertCommittedText(text, in: pane) : (try? write(Data(text.utf8), to: pane)) != nil
+    guard inserted else { return String(localized: "The Mac did not accept the text.") + " " + cleared }
+    guardrail.noteSent(lastEditingAt: surface.lastEditingAt)
+    guard isLive(), state.submitLine(in: pane) else {
+      return String(localized: "The command is on the prompt line on the Mac but did not run.")
+    }
+    return nil
+  }
+
+  private func worktreeState(of pane: UUID) -> WorktreeTerminalState? {
+    manager.activeWorktreeStates.first { $0.surfaces[pane] != nil }
+  }
+
+  /// Re-reads the screen until the highlight sits on `expected`, the prompt changes, or about a
+  /// second passes.
+  private func waitForHighlight(
+    _ expected: MirrorScreenPrompt.Target, of id: String, in pane: UUID
+  ) async -> MirrorScreenPrompt? {
+    var latest: MirrorScreenPrompt?
+    for _ in 0..<10 {
+      try? await Task.sleep(for: .milliseconds(100))
+      latest = (try? activeText(pane)).flatMap(MirrorScreenPrompt.parse)
+      if latest?.id != id || latest?.highlighted == expected { return latest }
+    }
+    return latest
+  }
+
+  func agentState(_ id: UUID) -> PaneAgentState? {
+    manager.activeWorktreeStates.lazy.compactMap { $0.surfaceAgentStates[id] }.first
   }
 
   var supportsViewportText: Bool { true }

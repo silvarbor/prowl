@@ -84,7 +84,7 @@ reads have no scheduled removal date.
 | `copyIgnoredOnWorktreeCreate` | Bool | `false` | Copy `.gitignore`'d files into new worktrees. |
 | `copyUntrackedOnWorktreeCreate` | Bool | `false` | Copy untracked files into new worktrees. |
 | `pullRequestMergeStrategy` | enum (`merge`/`squash`/`rebase`) | `merge` | Default PR merge strategy. |
-| `restoreTerminalLayoutOnLaunch` | Bool | `false` | Restore tabs/splits on launch. |
+| `restoreTerminalLayout` | Bool | `true` | Restore tabs/splits on launch. Replaces `restoreTerminalLayoutOnLaunch`: Prowl ignores the old field, so the setting turns on once for every existing settings file. |
 | `terminalFontSize` | Float32? | `nil` | Remembered terminal font size; `nil` follows Ghostty's `font-size`. A size equal to Ghostty's `font-size` is stored as `nil`, also at launch. |
 | `ghosttyConfigPath` | String? | `nil` | Dedicated Ghostty config file for Prowl; replaces Ghostty's own config files. `nil` = share Ghostty's config. |
 | `archivedAutoDeletePeriod` | enum? (days) | `nil` | Auto-delete archived worktrees after N days; `nil` = never. |
@@ -94,6 +94,7 @@ reads have no scheduled removal date.
 | `dimUnfocusedSplits` | Bool | `true` | Dim panes that aren't focused. |
 | `autoShowActiveAgentsPanel` | Bool | `false` | Auto-open the Active Agents panel on a new agent. |
 | `showActiveAgentTabTitles` | Bool | `false` | Show pane titles (surface title, falling back to the tab title; vs. branch) in the agents panel. |
+| `showActiveAgentNames` | Bool | `true` | Show the agent name before the repository name in agents panel rows; when off, the name moves to the row's tooltip. Agent Island is not affected. |
 | `showActiveAgentStatusInShelf` | Bool | `true` | Show agent status markers on Shelf tab icons. |
 | `agentIslandSilentOpacity` | Double | `0.35` | Quiet floating island opacity (0.2–1.0), under Agents → Display. Notched monitors stay fully opaque. |
 | `agentIslandEnabled` | Bool | `false` | Show Agent Island, including its empty state unless `agentIslandOnlyShowWithAgents` is enabled. |
