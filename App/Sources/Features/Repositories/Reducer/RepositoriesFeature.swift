@@ -298,6 +298,9 @@ struct RepositoriesFeature {
   @CasePathable
   enum RepositoryManagementAction: Equatable {
     case openRepositories([URL])
+    /// Folders that Finder or the Dock asked to open. They open through `openRepositories` once
+    /// the saved list has restored and no other add/open is in flight.
+    case openSystemFolders([URL])
     /// Adds a remote folder that the Add Remote Folder sheet checked (docs-ai 084 C1).
     case openRemoteRepository(RepositoryLocation, kind: Repository.Kind)
     case openRepositoriesFinished(
@@ -446,6 +449,15 @@ struct RepositoriesFeature {
     var shouldRestoreLastFocusedWorktree = false
     var shouldSelectFirstAfterReload = false
     var isRefreshingWorktrees = false
+    /// A refresh must not cancel an add/open before it has persisted the folders.
+    var isOpeningRepositories = false
+    /// A refresh that arrived during an add/open runs after it instead of cancelling it.
+    var needsReloadAfterOpen = false
+    /// Folders from Finder or the Dock that wait for the saved list to restore or an add/open to finish.
+    var pendingSystemFolderURLs: [URL] = []
+    var canOpenSystemFolders: Bool {
+      snapshotPersistencePhase.hasLoadedLiveRepositories && !isOpeningRepositories
+    }
     var statusToast: StatusToast?
     var snapshotPersistencePhase: SnapshotPersistencePhase = .idle
     var githubIntegrationAvailability: GithubIntegrationAvailability = .unknown
@@ -498,6 +510,7 @@ struct RepositoriesFeature {
     var isSidebarDragActive = false
     var pendingSidebarNotifyReorderIDs: [Worktree.ID] = []
     var showActiveAgentTabTitles = false
+    var showActiveAgentNames = true
     var nextCanvasFocusRequestID = 0
     var pendingCanvasFocusRequest: CanvasFocusRequest?
     var nextCanvasCommandRequestID = 0
@@ -611,6 +624,7 @@ struct RepositoriesFeature {
     case focusCanvasWorktree(Worktree.ID)
     case selectNextWorktree
     case selectPreviousWorktree
+    case enterCanvasAtLaunch
     case consumeCanvasFocusRequest(Int)
     case requestCanvasCommand(CanvasCommandRequest.Command)
     case consumeCanvasCommandRequest(Int)

@@ -43,6 +43,16 @@ final class ProwlAppDelegate: NSObject, NSApplicationDelegate {
       }
     }
   }
+
+  /// Finder "Open With" and Dock drops. The reducer holds the folders until startup has
+  /// restored the saved project list, so a cold launch does not need the delegate to wait.
+  func application(_ application: NSApplication, open urls: [URL]) {
+    let folders = FolderOpenRequest.folderURLs(in: urls)
+    guard !folders.isEmpty else { return }
+    application.surfaceMainWindow()
+    appStore?.send(.repositories(.repositoryManagement(.openSystemFolders(folders))))
+  }
+
   var terminalManager: WorktreeTerminalManager?
   var cliSocketServer: CLISocketServer?
   var remoteMirror: RemoteMirrorStore?
@@ -993,13 +1003,13 @@ struct ProwlApp: App {
       resolveTarget: { pane in
         resolveTabTarget(.pane(pane))
       },
-      inputProtection: { target in
+      inputProtection: { target, text, policy in
         guard let surfaceID = UUID(uuidString: target.paneID),
           let state = terminalManager.stateIfExists(for: target.worktreeID)
         else {
-          return "The target terminal is no longer available."
+          return AgentInputRefusal("The target terminal is no longer available.")
         }
-        return state.dispatchInputProtection(surfaceID: surfaceID)
+        return state.dispatchInputProtection(surfaceID: surfaceID, delivering: text, policy: policy)
       },
       pendingDispatch: { target in
         UUID(uuidString: target.paneID).flatMap {
@@ -1016,13 +1026,13 @@ struct ProwlApp: App {
           return .failure(.bindingMissing)
         }
       },
-      deliverPrompt: { target, text in
+      deliverPrompt: { target, text, policy in
         guard let surfaceID = UUID(uuidString: target.paneID),
           let state = terminalManager.stateIfExists(for: target.worktreeID)
         else {
-          return false
+          return .notInserted
         }
-        return await state.submitAgentLine(text, surfaceID: surfaceID, purpose: .dispatch) == .submitted
+        return await state.deliverAgentInput(text, surfaceID: surfaceID, policy: policy)
       },
       cancelDispatch: { dispatchID in
         terminalManager.cancelAgentDispatchIssuance(dispatchID: dispatchID)
