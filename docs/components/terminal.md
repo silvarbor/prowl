@@ -27,10 +27,10 @@ why Prowl is fully native and CJK-correct.
 
 | Operation | How |
 |-----------|-----|
-| New tab | Terminal menu → **New Terminal** (Ghostty `new_tab`, typically `⌘T`); the **+** on a Shelf spine; the [`prowl create tab`](cli.md) CLI |
+| New tab | File menu → **New Terminal** (Ghostty `new_tab`, typically `⌘T`); the **+** on a Shelf spine; the [`prowl create tab`](cli.md) CLI |
 | Select tab 1–9 | `⌘1`–`⌘9` |
 | Previous / Next tab | `⌘⇧[` / `⌘⇧]` |
-| Close focused tab | Terminal menu → **Close Terminal Tab** (Ghostty `close_tab`) |
+| Close focused tab | File menu → **Close Terminal Tab** (Ghostty `close_tab`) |
 | Close (right-click a tab) | Close Tab · Close Other Tabs · Close Tabs to the Right · Close All |
 | Undo a close | Ghostty `undo` (typically `⌘Z`) within `undo-timeout` (5 s default) restores the last closed tab or pane in place; `redo` (`⌘⇧Z`) closes it again. See [undo close](../reference/keyboard-shortcuts.md#undo-close) |
 | Rename tab | Right-click → **Rename Tab** (sets a custom title) |
@@ -51,7 +51,7 @@ Splitting is handled by Ghostty actions (bind/keys in your Ghostty config):
 | Resize split | `resize_split:<dir>:<px>` |
 | Equalize splits | `equalize_splits` |
 | Zoom / maximize a pane | `toggle_split_zoom` (app default `⌘⌥⇧F`) |
-| Close a pane | `close_surface` (Terminal menu → **Close Terminal**) |
+| Close a pane | `close_surface` (File menu → **Close Terminal**) |
 
 App-level pane navigation (works inside the terminal too): `⌘[` / `⌘]` previous /
 next pane, `⌘⌥↑/↓/←/→` for directional pane focus, `⌘⌥⇧F` to zoom / unzoom the
@@ -100,6 +100,18 @@ profile opens in a split. Auto-detection reads the first token of the command,
 and a profile that sets launch-scoped environment variables runs as
 `env VAR=… claude`, whose first token is `env`. The slot stays claimable, so a
 later recognised command in the same tab still takes it over.
+
+While a pane has a detected agent, its titles do not change the icon: an agent's
+title is its own text, such as the conversation topic, not a command line. The
+tab takes the agent's icon when detection first sees the agent, so an agent
+started through an alias gets the right icon too. Only the focused pane of a tab
+can change the tab's icon. Without a detected agent, a program's title still
+counts as a command, so a title that starts with a known command name (for
+example `Codex thread`) sets that icon.
+
+In a tab with splits, focusing a pane with a detected agent gives the tab that
+agent's icon, unless a user or script icon is set. Focusing a pane without an
+agent does not change the icon: the next recognised command in that pane does.
 
 A tab with a pane whose foreground `ssh` reaches a remote host also shows a network glyph
 before its title, and the tooltip names the host. The pane itself shows `user@host` in its
@@ -158,7 +170,7 @@ When a command finishes (via OSC 133), Prowl can:
 
 ## Font size
 
-- **Reset / Increase / Decrease** via the Terminal menu (Ghostty
+- **Reset / Increase / Decrease** via the View menu (Ghostty
   `reset_font_size` / `increase_font_size:1` / `decrease_font_size:1`; usually
   `⌘0` / `⌘+` / `⌘-`).
 - The chosen size is remembered (`terminalFontSize`) and applied across worktrees;
@@ -169,7 +181,7 @@ When a command finishes (via OSC 133), Prowl can:
 
 ## In-terminal search
 
-Terminal menu: **Find…** (`start_search`), **Find Next/Previous**
+Edit menu: **Find…** (`start_search`), **Find Next/Previous**
 (`search:next`/`search:previous`), **Hide Find Bar** (`end_search`), **Use
 Selection for Find** (`search_selection`). These are Ghostty-managed.
 
@@ -288,14 +300,24 @@ no in-app Ghostty theme picker; change Ghostty colors via its config file.
 
 ## Layout persistence
 
-If `restoreTerminalLayoutOnLaunch` is enabled, Prowl saves the tab/split layout
-(which worktrees, tabs, split trees, titles, icons) and restores it on next
-launch. It saves when you quit and each time Prowl stops being the active app, so
-a crash loses only the changes made since you last switched away. Notification
-bodies are not persisted. If a repository fails to load at
-launch (for example, its folder is gone), Prowl still restores the layout of the
-other repositories and applies the default view mode; the worktrees of the
-failed repository are skipped.
+`restoreTerminalLayout` is on by default (Settings → General → Terminal
+Layout). Prowl saves the tab/split layout (which worktrees, tabs, split trees,
+titles, icons, each pane's folder) and restores it on next launch. Restored panes
+start a new shell: running commands and agents do not start again, and a folder
+outside the worktree falls back to the worktree root. It saves when you quit and
+each time Prowl stops being the active app, so a crash loses only the changes made
+since you last switched away. Notification bodies are not persisted.
+
+If a saved worktree is gone at launch (it was removed outside Prowl, or its
+repository failed to load), Prowl skips it and restores the rest. The next save
+no longer holds the skipped worktree, so its layout does not return if the folder
+comes back later. If the saved layout names no available worktree, Prowl selects
+the last focused worktree, else the first available worktree or folder. A saved file that
+cannot be read is removed without a message. A saved layout that cannot be applied
+is reset, and Prowl shows a warning.
+
+When the default view is Canvas, launch focuses the selected tab of the saved
+worktree, so keyboard input goes to the highlighted card.
 
 ## Gotchas for agents
 

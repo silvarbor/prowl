@@ -48,6 +48,7 @@ struct AppFeature {
     ) {
       var repositories = repositories
       repositories.showActiveAgentTabTitles = settings.showActiveAgentTabTitles
+      repositories.showActiveAgentNames = settings.showActiveAgentNames
       repositories.activeAgents.isIslandEnabled = settings.agentIslandEnabled
       self.repositories = repositories
       self.settings = settings
@@ -342,7 +343,6 @@ struct AppFeature {
           ids.contains($0.key)
         }
         let restorableWorktrees = makeTerminalRestorableWorktrees(from: Array(repositories))
-        let allowsMissingWorktrees = !failedRepositoryIDs.isEmpty
         appLogger.info("[LayoutRestore] restorableWorktrees count=\(restorableWorktrees.count)")
         var allEffects: [Effect<Action>] = [
           // Runs a previous app instance left behind are marked interrupted (dsl-spec §10 Restart).
@@ -376,9 +376,7 @@ struct AppFeature {
           if shouldRestoreLayout {
             effects.append(
               .run { _ in
-                await terminalClient.send(
-                  .restoreLayoutSnapshot(
-                    worktrees: restorableWorktrees, allowsMissingWorktrees: allowsMissingWorktrees))
+                await terminalClient.send(.restoreLayoutSnapshot(worktrees: restorableWorktrees))
               }
             )
           }
@@ -404,9 +402,7 @@ struct AppFeature {
         if shouldRestoreLayout {
           effects.append(
             .run { _ in
-              await terminalClient.send(
-                .restoreLayoutSnapshot(
-                  worktrees: restorableWorktrees, allowsMissingWorktrees: allowsMissingWorktrees))
+              await terminalClient.send(.restoreLayoutSnapshot(worktrees: restorableWorktrees))
             }
           )
         }
@@ -493,6 +489,7 @@ struct AppFeature {
         if settings.remoteAgentDetection != .undecided { state.remoteAgentConsentPrompt = nil }
         state.settings.keybindingUserOverrides = settings.keybindingUserOverrides
         state.repositories.showActiveAgentTabTitles = settings.showActiveAgentTabTitles
+        state.repositories.showActiveAgentNames = settings.showActiveAgentNames
         state.repositories.activeAgents.isIslandEnabled = settings.agentIslandEnabled
         if let selectedWorktree = state.repositories.selectedTerminalWorktree {
           @Shared(.repositorySettings(selectedWorktree.repositoryLocation)) var repositorySettings
