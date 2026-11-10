@@ -316,21 +316,34 @@ struct ActiveAgentsFeatureTests {
       key: "i",
       modifiers: .init(command: true, option: true)
     )
+    let visibilityBinding = Keybinding(
+      key: "p",
+      modifiers: .init(command: true, shift: true, option: true)
+    )
+    let roster = AppShortcuts.CommandID.toggleAgentIsland
+    let visibility = AppShortcuts.CommandID.toggleAgentIslandVisibility
     let store = TestStore(initialState: ActiveAgentsFeature.State()) {
       ActiveAgentsFeature()
     }
 
-    await store.send(.setIslandHotKeyRegistrationFailure(binding)) {
-      $0.islandHotKeyRegistrationFailure = binding
+    await store.send(.setIslandHotKeyRegistrationFailure(commandID: roster, binding: binding)) {
+      $0.islandHotKeyRegistrationFailures = [roster: binding]
     }
+    await store.send(.setIslandHotKeyRegistrationFailure(commandID: visibility, binding: visibilityBinding)) {
+      $0.islandHotKeyRegistrationFailures = [roster: binding, visibility: visibilityBinding]
+    }
+    // Hiding the island drops the roster shortcut but keeps the show/hide shortcut registered.
     await store.send(.islandEnabledChanged(false)) {
-      $0.islandHotKeyRegistrationFailure = nil
+      $0.islandHotKeyRegistrationFailures = [visibility: visibilityBinding]
     }
-    await store.send(.setIslandHotKeyRegistrationFailure(binding)) {
-      $0.islandHotKeyRegistrationFailure = binding
+    await store.send(.setIslandHotKeyRegistrationFailure(commandID: roster, binding: binding)) {
+      $0.islandHotKeyRegistrationFailures = [roster: binding, visibility: visibilityBinding]
     }
-    await store.send(.setIslandHotKeyRegistrationFailure(nil)) {
-      $0.islandHotKeyRegistrationFailure = nil
+    await store.send(.setIslandHotKeyRegistrationFailure(commandID: roster, binding: nil)) {
+      $0.islandHotKeyRegistrationFailures = [visibility: visibilityBinding]
+    }
+    await store.send(.setIslandHotKeyRegistrationFailure(commandID: visibility, binding: nil)) {
+      $0.islandHotKeyRegistrationFailures = [:]
     }
   }
 
@@ -527,6 +540,31 @@ struct ActiveAgentsFeatureTests {
       $0.isIslandRosterExpanded = false
       $0.islandNavigation = .init()
     }
+  }
+
+  @Test func hiddenAgentNameMovesToHelpAndAccessibilityLabel() {
+    let entry = entry(id: UUID(0), paneTitle: "Review issue 385", state: .idle, changedAt: Date())
+
+    #expect(
+      ActiveAgentRowPresentation.helpText(
+        for: entry, branchName: "main", showTabTitles: false, showAgentName: false)
+        == "\(entry.displayName)\nReview issue 385"
+    )
+    #expect(
+      ActiveAgentRowPresentation.helpText(
+        for: entry, branchName: "main", showTabTitles: false, showAgentName: true)
+        == "Review issue 385"
+    )
+    #expect(
+      ActiveAgentRowPresentation.repositoryAccessibilityLabel(
+        for: entry, repositoryName: "Prowl", showAgentName: false)
+        == "\(entry.displayName), Prowl"
+    )
+    #expect(
+      ActiveAgentRowPresentation.repositoryAccessibilityLabel(
+        for: entry, repositoryName: "Prowl", showAgentName: true)
+        == "Prowl"
+    )
   }
 
   @Test func sharedRowSubtitleAndHelpSwapPaneTitleAndBranchWhenEnabled() {

@@ -5,7 +5,7 @@ struct AgentDisplaySettingsView: View {
   @Bindable var store: StoreOf<SettingsFeature>
   let effectiveKeybindings: ResolvedKeybindingMap
   let customCommands: [EffectiveCustomCommand]
-  let islandHotKeyRegistrationFailure: Keybinding?
+  let islandHotKeyRegistrationFailures: [String: Keybinding]
 
   var body: some View {
     Form {
@@ -20,6 +20,11 @@ struct AgentDisplaySettingsView: View {
           isOn: $store.showActiveAgentTabTitles
         )
         .help("Display each agent's own terminal title in the row and show the branch name on hover.")
+        Toggle(
+          "Show agent names in agent rows",
+          isOn: $store.showActiveAgentNames
+        )
+        .help("Display the agent name before the repository name. When off, the name shows on hover.")
         Toggle(
           "Show agent status in Shelf tabs",
           isOn: $store.showActiveAgentStatusInShelf
@@ -45,7 +50,7 @@ struct AgentDisplaySettingsView: View {
         store: store,
         effectiveKeybindings: effectiveKeybindings,
         customCommands: customCommands,
-        globalHotKeyRegistrationFailure: islandHotKeyRegistrationFailure
+        globalHotKeyRegistrationFailures: islandHotKeyRegistrationFailures
       )
     }
     .formStyle(.grouped)

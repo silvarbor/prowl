@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Network
 import Observation
 
@@ -24,11 +25,156 @@ final class MirrorSession: Identifiable {
     }
   }
 
+  /// How the pane is shown: the agent's conversation or the terminal screen (docs-ai 088).
+  enum Mode: String, Equatable, Sendable {
+    case conversation
+    case screen
+  }
+
   let id = UUID()
   private(set) var configuration: MirrorSavedConnection
   private(set) var panes: [MirrorPaneDescriptor] = []
   private(set) var pane: MirrorPaneDescriptor?
-  private(set) var status: Status = .disconnected
+  @ObservationIgnored private var expectedLaunch: MirrorPaneDescriptor?
+  @ObservationIgnored private var latestRosterDescriptor: MirrorPaneDescriptor?
+  @ObservationIgnored private var expectationTask: Task<Void, Never>?
+  private(set) var mode: Mode = .screen
+  private(set) var conversation = MirrorConversationStore()
+  private(set) var supportsConversation = false
+  /// The Host answers screen prompts from here (docs-ai 089 S4).
+  private(set) var supportsPromptRespond = false
+  /// The Host presses navigation and control keys in agent panes (docs-ai 089 S5).
+  private(set) var supportsAgentKeys = false
+  /// Why the last key press or Stop was refused, until the next one; the composer shows it in
+  /// both modes.
+  private(set) var keyRefusal: String?
+  @ObservationIgnored private var sendingKeys = false
+
+  /// The Host presses keys in shell panes too (capability `shell-keys`).
+  private(set) var supportsShellKeys = false
+
+  /// The Host and the pane take keys: the key bar shows.
+  var keysAvailable: Bool { status == .live && supportsAgentKeys && (pane?.agent != nil || supportsShellKeys) }
+  /// A key can go now; not while a message may still be being delivered.
+  var canSendKeys: Bool { keysAvailable && !isDeliveringMessage }
+
+  /// The composer's Stop button: an agent works in the pane and a key can go (docs-ai 089 S5).
+  /// Stop presses Escape, which interrupts an agent but not a shell command; a shell has ⌃C.
+  var canStopAgent: Bool { pane?.agent != nil && agentState == .working && canSendKeys }
+
+  /// Presses `keys` in the pane on the Mac: the Terminal key bar and Stop. One press at a time;
+  /// a press while another is in flight is dropped rather than queued.
+  func sendKeys(_ keys: [String]) {
+    guard canSendKeys, let pane, !sendingKeys else { return }
+    sendingKeys = true
+    keyRefusal = nil
+    Task { [weak self] in
+      var refusal: String?
+      do {
+        guard let self else { return }
+        let response = try await self.command(.agentKeys(.init(pane: pane.id.uuidString, keys: keys)))
+        struct Result: Decodable {
+          struct Failure: Decodable { let message: String }
+          let ok: Bool
+          let error: Failure?
+        }
+        let result = try response.decode(Result.self)
+        if !result.ok { refusal = result.error?.message ?? String(localized: "The Host refused the keys.") }
+      } catch {
+        refusal = error.localizedDescription
+      }
+      if let refusal { MirrorLog.commands.notice("Keys \(keys, privacy: .public) refused: \(refusal, privacy: .private)") }
+      guard let self else { return }
+      self.sendingKeys = false
+      self.keyRefusal = refusal
+    }
+  }
+
+  /// A message the Host may still be delivering. It holds the connection's only Host command,
+  /// so a prompt answer or a key must wait: a second command would close the connection (089
+  /// review S5-R4). An unknown outcome counts too, because a timeout is no proof that the Host
+  /// finished. It ends with a receipt or with "I've Checked", as for the next message.
+  var isDeliveringMessage: Bool {
+    submission?.outcome.status == .pending || submission?.outcome.status == .unknown
+  }
+
+  /// The `promptRespond` choice for the Submit row of a multi-select menu.
+  static let submitChoice = "submit"
+
+  /// Terminal view: the choice menu the agent waits on, from the Host's `screenPrompt` (docs-ai
+  /// 089 S4). Chat reads it from the conversation instead.
+  private(set) var screenPrompt: MirrorConversationEvent.Prompt?
+
+  /// The answer this device sent to an open prompt, until the prompt resolves or the Host
+  /// refuses it.
+  private(set) var promptAnswer: PromptAnswer?
+
+  struct PromptAnswer: Equatable {
+    enum State: Equatable {
+      case sending
+      /// The Host pressed the keys; the prompt resolves when the agent moves on.
+      case delivered
+      case refused(String)
+    }
+
+    let promptID: String
+    let choice: String
+    var state: State
+    /// A box of a multi-select menu: once delivered, the menu still takes more answers.
+    var toggles = false
+  }
+
+  /// Sends `choice` for the open screen prompt. The Host checks that the screen still shows
+  /// this prompt before it presses any key, and never retries.
+  /// `toggles` marks a box of a multi-select menu: the menu stays open, so more boxes may follow.
+  func answerPrompt(_ promptID: String, choice: String, toggles: Bool = false) {
+    guard status == .live, supportsPromptRespond, let pane else { return }
+    // One answer per prompt: a refused one may be tried again, a sent one may not. Boxes may
+    // change one at a time until the menu is submitted.
+    if let promptAnswer, promptAnswer.promptID == promptID, promptAnswer.state == .sending
+      || (promptAnswer.state == .delivered && !promptAnswer.toggles)
+    {
+      return
+    }
+    guard !isDeliveringMessage else {
+      promptAnswer = .init(
+        promptID: promptID, choice: choice,
+        state: .refused(String(localized: "Wait until the Mac confirms your message, then answer.")))
+      return
+    }
+    promptAnswer = .init(promptID: promptID, choice: choice, state: .sending, toggles: toggles)
+    Task { [weak self] in
+      let state: PromptAnswer.State
+      do {
+        guard let self else { return }
+        let response = try await self.command(
+          .promptRespond(.init(pane: pane.id.uuidString, prompt: promptID, choice: choice)))
+        struct Result: Decodable {
+          struct Failure: Decodable { let message: String }
+          let ok: Bool
+          let error: Failure?
+        }
+        let result = try response.decode(Result.self)
+        state = result.ok ? .delivered : .refused(result.error?.message ?? String(localized: "The Host refused the answer."))
+      } catch {
+        state = .refused(error.localizedDescription)
+      }
+      MirrorLog.commands.info(
+        "Prompt answer \(promptID, privacy: .public) choice \(choice, privacy: .public): \(String(describing: state), privacy: .private)"
+      )
+      guard let self, self.promptAnswer?.promptID == promptID, self.promptAnswer?.choice == choice else { return }
+      self.promptAnswer?.state = state
+    }
+  }
+  /// A representation switch that keeps the connection: the next `subscribed` is not a reconnect.
+  @ObservationIgnored private var resumesConversation = false
+  private(set) var status: Status = .disconnected {
+    didSet {
+      guard status != oldValue else { return }
+      MirrorLog.session.info(
+        "Status \(String(describing: oldValue), privacy: .public) -> \(String(describing: self.status), privacy: .public)")
+    }
+  }
   private(set) var text = ""
   private(set) var revision: UInt64 = 0
   private(set) var updatedAt: Date?
@@ -45,7 +191,8 @@ final class MirrorSession: Identifiable {
   @ObservationIgnored private var pendingScrollState: MirrorMessage.ScrollStatePayload?
   @ObservationIgnored private var pendingScroll: PendingScroll?
   @ObservationIgnored private var scrollTimeout: Task<Void, Never>?
-  @ObservationIgnored private var supportsShellSend = false
+  /// The Host runs commands in shell panes at their prompt (capability `shell-send`).
+  private(set) var supportsShellSend = false
   @ObservationIgnored private var supportsAgentInput = false
   @ObservationIgnored private var pendingCommand: PendingCommand?
   @ObservationIgnored private var commandTimeout: Task<Void, Never>?
@@ -80,7 +227,7 @@ final class MirrorSession: Identifiable {
       case .disconnected: "Connection lost before Host confirmed the command."
       case .timedOut: "Host did not confirm the command in time."
       case .agentInputUnavailable: "Update Host to support interactive Agent input."
-      case .shellUnavailable: "This Host does not support shell submission. Choose an Agent pane."
+      case .shellUnavailable: "Update Prowl on the Mac to run shell commands from here."
       }
     }
   }
@@ -112,8 +259,13 @@ final class MirrorSession: Identifiable {
     let runID: UUID
     let draftRevision: UUID
     let configuration: MirrorSavedConnection
+    /// `replace` when the Host may clear a draft in the agent's input box first (docs-ai 090).
+    let onDraft: String?
     var outcome: MirrorDeliveryOutcome
   }
+
+  /// The person chose to bring the Mac's draft into this composer; the next send replaces it.
+  @ObservationIgnored private var replacesHostDraftOnNextSend = false
 
   var canSubmit: Bool {
     status == .live && supportsSubmission && !isComposing
@@ -123,12 +275,6 @@ final class MirrorSession: Identifiable {
       && draft.utf8.count <= MirrorWire.maximumInput
   }
 
-  var submissionHint: String {
-    if let submission, submission.outcome.status != .accepted { return submission.outcome.detail }
-    if !supportsSubmission { return "This Host has not enabled message submission for this pane." }
-    if status != .live { return "Reconnect to the pane before sending." }
-    return "Host checks Agent readiness when you send."
-  }
   var followsLatest = true
   var onVerifiedConnection: ((MirrorSavedConnection) -> Void)?
   @ObservationIgnored private var transport: (any MirrorTransport)?
@@ -216,6 +362,78 @@ final class MirrorSession: Identifiable {
     subscribe()
   }
 
+  /// Takes the newer descriptor of the open pane from the Host roster: its title, agent and
+  /// state change after the pane opens (a new Profile pane gets its agent detected later).
+  func refreshDescriptor(_ descriptor: MirrorPaneDescriptor) {
+    guard pane?.id == descriptor.id else { return }
+    let merged = merging(descriptor)
+    if pane != merged { pane = merged }
+  }
+
+  /// A pane this device just launched from a Profile: until the Host detects the agent, the
+  /// roster reports a Shell. Keep the launched agent and title for a short while so the
+  /// composer and title do not flip to "Shell" (docs-ai 089 D1). When the time runs out
+  /// without detection, the Host's latest descriptor wins, even if it never changed.
+  func expectAgent(of launched: MirrorPaneDescriptor, for duration: Duration = .seconds(30)) {
+    guard launched.agent != nil else { return }
+    expectedLaunch = launched
+    expectationTask?.cancel()
+    let clock = clock
+    expectationTask = Task { [weak self] in
+      do { try await clock.sleep(for: duration) } catch { return }
+      self?.endLaunchExpectation()
+    }
+  }
+
+  private func endLaunchExpectation() {
+    expectationTask?.cancel()
+    expectationTask = nil
+    guard expectedLaunch != nil else { return }
+    expectedLaunch = nil
+    if let latest = latestRosterDescriptor, latest.id == pane?.id, pane != latest { pane = latest }
+  }
+
+  private func merging(_ descriptor: MirrorPaneDescriptor) -> MirrorPaneDescriptor {
+    latestRosterDescriptor = descriptor
+    guard let expected = expectedLaunch, expected.id == descriptor.id else { return descriptor }
+    guard descriptor.agent == nil else {
+      endLaunchExpectation()
+      return descriptor
+    }
+    var merged = descriptor
+    merged.agent = expected.agent
+    merged.subtitle = expected.subtitle
+    merged.conversation = descriptor.conversation == .unsupported ? nil : descriptor.conversation
+    return merged
+  }
+
+  /// Connects and subscribes to a pane chosen from a Host roster, in the given mode.
+  func open(_ pane: MirrorPaneDescriptor, mode: Mode) {
+    self.pane = pane
+    self.mode = mode == .conversation && pane.conversation == .available ? .conversation : .screen
+    intent = pane.busy ? .takeover : .ifFree
+    connect()
+  }
+
+  /// Switches the representation on the same connection; the Host replaces the subscription.
+  func switchMode(_ newMode: Mode) {
+    guard newMode != mode, status == .live || status == .subscribing else { return }
+    guard newMode == .screen || supportsConversation else { return }
+    mode = newMode
+    resumesConversation = newMode == .conversation && conversation.latestSequence > 0
+    subscribe()
+  }
+
+  /// The agent's state now. The conversation stream reports it in Chat; in Terminal that stream
+  /// is paused and its last status is stale, so the roster's state counts (089 review S5-R1). A
+  /// pane whose agent is gone has no agent state, whatever the paused stream last said.
+  var agentState: MirrorConversationEvent.AgentState? {
+    switch mode {
+    case .conversation: conversation.status?.state ?? pane?.agentState
+    case .screen: pane?.agent == nil ? nil : pane?.agentState ?? conversation.status?.state
+    }
+  }
+
   func refreshPanes() {
     guard status == .choosingPane else { return }
     send(.list)
@@ -263,6 +481,9 @@ final class MirrorSession: Identifiable {
 
   func disconnect() {
     userDisconnected = true
+    // Ending here, not only pausing the timer, keeps a reconnect from showing the launched
+    // agent forever (R089-P0-003).
+    endLaunchExpectation()
     finishCommand(.failure(CommandFailure.disconnected))
     generation = UUID()
     let old = transport
@@ -279,8 +500,12 @@ final class MirrorSession: Identifiable {
 
   func command(_ command: MirrorCommandRequest.Command) async throws -> MirrorJSON {
     let liveListing: Bool = {
-      if case .list = command { return status == .live }
-      return false
+      switch command {
+      // The Host runs one command per connection; a message it is still delivering holds it.
+      case .promptRespond, .agentKeys: return status == .live && !isDeliveringMessage
+      case .list: return status == .live
+      default: return false
+      }
     }()
     guard status == .choosingPane || liveListing, supportsLaunch, transport != nil,
       pendingCommand == nil
@@ -316,12 +541,13 @@ final class MirrorSession: Identifiable {
     pending?.continuation.resume(with: result)
   }
 
-  func submitDraft() {
+  func submitDraft(onDraft: String? = nil) {
     guard canSubmit, let pane, let hostRunID, let subscriptionID else { return }
+    let policy = onDraft ?? (replacesHostDraftOnNextSend ? MirrorHostDraft.replace : nil)
     let request = Submission(
       id: UUID(), text: draft, paneID: pane.id, runID: hostRunID,
-      draftRevision: draftRevision, configuration: configuration,
-      outcome: .init(status: .pending, detail: "Host is checking readiness and sending…"))
+      draftRevision: draftRevision, configuration: configuration, onDraft: policy,
+      outcome: .init(status: .pending, detail: "Sending…"))
     submission = request
     Task { await routeSubmission(request, lease: subscriptionID) }
     let clock = clock
@@ -337,7 +563,7 @@ final class MirrorSession: Identifiable {
       let listing = try await command(.list(.init()))
       guard status == .live, subscriptionID == lease, submission?.id == request.id else { return }
       let input = try MirrorInputRoute.command(
-        listing: listing, paneID: request.paneID, text: request.text)
+        listing: listing, paneID: request.paneID, text: request.text, onDraft: request.onDraft)
       if case .agentsInput = input, !supportsAgentInput { throw CommandFailure.agentInputUnavailable }
       if case .send = input, !supportsShellSend { throw CommandFailure.shellUnavailable }
       send(
@@ -346,6 +572,7 @@ final class MirrorSession: Identifiable {
             subscriptionID: lease,
             commandRequest: .init(requestID: request.id, request: .init(command: input)))))
     } catch {
+      MirrorLog.commands.notice("Message refused before sending: \(error.localizedDescription, privacy: .public)")
       guard submission?.id == request.id else { return }
       submission?.outcome = .init(
         status: .rejected, detail: error.localizedDescription + " No input was sent.")
@@ -362,12 +589,17 @@ final class MirrorSession: Identifiable {
         struct Input: Decodable {
           let bytes: Int
           let trailing_enter_sent: Bool
+          let replaced_draft: MirrorHostDraft.Replaced?
         }
         let input: Input?
       }
       struct Failure: Decodable {
+        struct Details: Decodable {
+          let input: MirrorHostDraft.Refusal?
+        }
         let code: String
         let message: String
+        let details: Details?
       }
       let ok: Bool
       let command: String?
@@ -381,13 +613,17 @@ final class MirrorSession: Identifiable {
     if result.ok, ["send", "agents.input"].contains(result.command ?? ""), let input = result.data?.input,
       input.bytes == current.text.utf8.count, input.trailing_enter_sent
     {
+      let replaced = input.replaced_draft.map(MirrorHostDraft.init)
       current.outcome = .init(
-        status: .accepted, detail: "Sent. Agent completion is separate.")
+        status: .accepted, detail: replaced?.sentNote ?? "Sent. Agent completion is separate.",
+        replacedDraft: replaced)
+      replacesHostDraftOnNextSend = false
       if current.draftRevision == draftRevision { draft = "" }
     } else if let error = result.error,
       !["REMOTE_COMMAND_UNCONFIRMED", "DISPATCH_FAILED", "SEND_FAILED"].contains(error.code)
     {
-      current.outcome = .init(status: .rejected, detail: error.message)
+      let hostDraft = (error.details?.input).flatMap(MirrorHostDraft.init)
+      current.outcome = .init(status: .rejected, detail: error.message, hostDraft: hostDraft)
     } else {
       current.outcome = .init(
         status: .unknown, detail: "Delivery is unconfirmed. Check Host before sending again.")
@@ -405,6 +641,33 @@ final class MirrorSession: Identifiable {
 
   func acknowledgeUnknownSubmission() {
     guard submission?.outcome.status == .unknown else { return }
+    submission = nil
+  }
+
+  /// The draft the Mac refused the last message for, while that refusal is shown.
+  var hostDraft: MirrorHostDraft? {
+    guard let submission, submission.outcome.status == .rejected else { return nil }
+    return submission.outcome.hostDraft
+  }
+
+  /// Sends the refused message again and lets the Host clear the Mac's draft first (docs-ai 090).
+  func replaceHostDraftAndSend() {
+    guard let hostDraft, hostDraft.replaceable, canSubmit else { return }
+    submitDraft(onDraft: MirrorHostDraft.replace)
+  }
+
+  /// Puts the Mac's draft in front of this composer's text so the person can merge them; the
+  /// next send then replaces the draft on the Mac.
+  func bringHostDraftHere() {
+    guard let hostDraft, hostDraft.isComplete else { return }
+    let mine = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+    draft = mine.isEmpty ? hostDraft.text : hostDraft.text + "\n" + mine
+    replacesHostDraftOnNextSend = hostDraft.replaceable
+    submission = nil
+  }
+
+  func dismissHostDraft() {
+    guard hostDraft != nil else { return }
     submission = nil
   }
 
@@ -520,13 +783,23 @@ final class MirrorSession: Identifiable {
     status = .subscribing
     revision = 0
     subscriptionID = nil
+    screenPrompt = nil
     clearScroll()
     clearScrollState()
+    MirrorLog.session.info(
+      "Subscribe pane \(pane.id, privacy: .public) as \(self.mode == .conversation ? "conversation" : "text", privacy: .public)"
+    )
+    if mode == .conversation {
+      let since = conversation.latestSequence > 0 ? conversation.latestSequence : nil
+      resumesConversation = since != nil
+      send(.subscribe(.init(paneID: pane.id, representation: .conversation, intent: intent, since: since)))
+      return
+    }
     send(
       .subscribe(
         .init(
           paneID: pane.id, representation: .text, intent: intent,
-          includeScrollState: supportsScrollState ? true : nil)))
+          includeScrollState: supportsScrollState ? true : nil, includeScreenPrompt: true)))
   }
 
   private func send(_ message: MirrorMessage) { transport?.send(message, closeAfterSending: false) }
@@ -547,15 +820,21 @@ final class MirrorSession: Identifiable {
       supportsHistory = message.capabilities?.contains("history") == true
       supportsRemoteScroll = message.capabilities?.contains("remote-scroll") == true
       supportsScrollState = message.capabilities?.contains("scroll-state-v1") == true
+      supportsConversation = message.capabilities?.contains("conversation-v1") == true
+      supportsPromptRespond = message.capabilities?.contains("prompt-respond") == true
+      supportsAgentKeys = message.capabilities?.contains("agent-keys") == true
+      supportsShellKeys = message.capabilities?.contains("shell-keys") == true
       if supportsSubmission { querySubmission() }
       panes = message.panes ?? []
       onVerifiedConnection?(configuration)
       if let pane {
-        guard panes.contains(where: { $0.id == pane.id }) else {
+        guard let current = panes.first(where: { $0.id == pane.id }) else {
           status = .paneClosed
           transport?.close(nil)
           return
         }
+        self.pane = merging(current)
+        if mode == .conversation, !supportsConversation { mode = .screen }
         subscribe()
       } else {
         status = .choosingPane
@@ -588,6 +867,33 @@ final class MirrorSession: Identifiable {
       isLoadingHistory = false
       showsHistory = false
       querySubmission()
+    case .conversationSnapshot, .conversationEvents:
+      guard mode == .conversation, let lease = subscriptionID, message.subscriptionID == lease,
+        let sequence = message.sequence, let events = message.conversationEvents,
+        events.count <= MirrorConversationStore.maximumEvents
+      else {
+        invalidMessage()
+        return
+      }
+      let openPrompt = conversation.openScreenPrompt?.id
+      defer {
+        if conversation.openScreenPrompt?.id != openPrompt {
+          MirrorLog.prompts.info(
+            "Chat prompt \(self.conversation.openScreenPrompt?.id ?? "closed", privacy: .public) on pane \(lease, privacy: .public)"
+          )
+        }
+      }
+      if case .conversationSnapshot(let payload) = message {
+        conversation.apply(
+          snapshot: events, gap: payload.gap, sequence: sequence, session: payload.session,
+          resumed: resumesConversation)
+        resumesConversation = false
+      } else {
+        conversation.apply(events: events, sequence: sequence)
+      }
+      updatedAt = Date()
+      status = .live
+      if !events.isEmpty { send(.acknowledge(.init(sequence: sequence, subscriptionID: lease))) }
     case .textFrame:
       guard let lease = subscriptionID, message.subscriptionID == lease,
         let sequence = message.sequence, sequence > revision, let replacement = message.text,
@@ -601,6 +907,15 @@ final class MirrorSession: Identifiable {
       updatedAt = Date()
       status = .live
       send(.acknowledge(.init(sequence: sequence, subscriptionID: lease)))
+    case .screenPrompt:
+      guard case .screenPrompt(let payload) = message, let lease = subscriptionID,
+        payload.subscriptionID == lease, mode == .screen
+      else { return }
+      if payload.prompt?.id != screenPrompt?.id {
+        MirrorLog.prompts.info(
+          "Terminal prompt \(payload.prompt?.id ?? "closed", privacy: .public) on pane \(lease, privacy: .public)")
+      }
+      screenPrompt = payload.prompt
     case .scrollResult:
       receiveScrollResult(message)
     case .scrollState:
@@ -650,6 +965,12 @@ final class MirrorSession: Identifiable {
         error = message.error
         return
       }
+      if message.error?.hasPrefix("CONVERSATION_UNSUPPORTED") == true, mode == .conversation {
+        // The pane has no supported agent right now; the screen still works.
+        mode = .screen
+        subscribe()
+        return
+      }
       if message.error?.hasPrefix("PANE_BUSY") == true { status = .takenOver }
       error = message.error ?? "Host rejected the request."
       transport?.close(nil)
@@ -657,7 +978,8 @@ final class MirrorSession: Identifiable {
     }
   }
 
-  private func invalidMessage() {
+  private func invalidMessage(line: Int = #line) {
+    MirrorLog.session.error("Invalid mirror message, rejected at MirrorSession.swift:\(line, privacy: .public)")
     error = "Host sent an invalid mirror message."
     transport?.close(error)
   }
@@ -667,4 +989,67 @@ nonisolated struct MirrorDeliveryOutcome: Equatable, Sendable {
   enum Status: String, Sendable { case pending, accepted, rejected, unknown }
   let status: Status
   let detail: String
+  /// With `rejected`: the draft in the agent's input box on the Mac that refused the message.
+  var hostDraft: MirrorHostDraft? = nil
+  /// With `accepted`: the draft the Host cleared from the Mac's input box before delivering.
+  var replacedDraft: MirrorHostDraft? = nil
+}
+
+/// A draft in the agent's input box on the Mac, as the Host reports it (docs-ai 090).
+nonisolated struct MirrorHostDraft: Equatable, Sendable {
+  static let replace = "replace"
+
+  struct Refusal: Decodable {
+    struct Draft: Decodable {
+      let text: String
+      let is_complete: Bool
+    }
+    let reason: String
+    let draft: Draft?
+    let replaceable: Bool
+    let recovery: String?
+  }
+  struct Replaced: Decodable {
+    let text: String
+    let is_complete: Bool
+    let recovery: String?
+  }
+
+  let text: String
+  /// False when a collapsed paste or an image marker hides content, so the text cannot be
+  /// carried into this composer.
+  let isComplete: Bool
+  /// Whether the Host can clear it before delivering (`on_draft: replace`).
+  let replaceable: Bool
+  /// `stash` when the same key on the Mac brings it back; nil when it would be gone.
+  let recovery: String?
+
+  init(text: String, isComplete: Bool, replaceable: Bool, recovery: String?) {
+    self.text = text
+    self.isComplete = isComplete
+    self.replaceable = replaceable
+    self.recovery = recovery
+  }
+
+  init?(_ refusal: Refusal) {
+    guard refusal.reason == "draft", let draft = refusal.draft else { return nil }
+    self.init(text: draft.text, isComplete: draft.is_complete, replaceable: refusal.replaceable, recovery: refusal.recovery)
+  }
+
+  init(_ replaced: Replaced) {
+    self.init(text: replaced.text, isComplete: replaced.is_complete, replaceable: true, recovery: replaced.recovery)
+  }
+
+  /// The start of the draft on one line.
+  var excerpt: String {
+    let collapsed = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    return collapsed.count > 80 ? String(collapsed.prefix(80)) + "…" : collapsed
+  }
+
+  /// What a receipt says after the Host replaced this draft.
+  var sentNote: String {
+    recovery == "stash"
+      ? String(localized: "Sent. The draft on the Mac was stashed and is back in its input box.")
+      : String(localized: "Sent. The draft on the Mac was cleared: “\(excerpt)”")
+  }
 }
