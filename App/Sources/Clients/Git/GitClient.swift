@@ -235,6 +235,32 @@ struct GitClient {
     return nil
   }
 
+  /// The repository's default branch: the branch `refs/remotes/origin/HEAD` names, else
+  /// `main`, else `master` when that local branch exists. Nil when none applies.
+  nonisolated func defaultBranchName(for repoRoot: URL) async -> String? {
+    let originHead = (try? await defaultRemoteBranchRef(for: repoRoot)).flatMap { $0 }
+    var localBranches: Set<String> = []
+    if originHead == nil {
+      for candidate in Self.defaultBranchFallbacks {
+        guard await refExists("refs/heads/\(candidate)", repoRoot: repoRoot) else { continue }
+        localBranches.insert(candidate)
+      }
+    }
+    return Self.defaultBranchName(originHeadRef: originHead, localBranches: localBranches)
+  }
+
+  nonisolated static let defaultBranchFallbacks = ["main", "master"]
+
+  /// `originHeadRef` is the resolved `origin/HEAD` target, such as `origin/main`.
+  nonisolated static func defaultBranchName(originHeadRef: String?, localBranches: Set<String>) -> String? {
+    if let originHeadRef {
+      let prefix = "origin/"
+      let name = originHeadRef.hasPrefix(prefix) ? String(originHeadRef.dropFirst(prefix.count)) : originHeadRef
+      if !name.isEmpty { return name }
+    }
+    return defaultBranchFallbacks.first { localBranches.contains($0) }
+  }
+
   nonisolated func automaticWorktreeBaseRef(for repoRoot: URL) async -> String? {
     let resolved = try? await defaultRemoteBranchRef(for: repoRoot)
     if let resolved {

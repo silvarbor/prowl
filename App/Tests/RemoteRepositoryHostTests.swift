@@ -700,6 +700,50 @@ struct RemoteRepositoryHostTests {
 
   // MARK: - Loading through the host (B3e)
 
+  /// A bare repository has no main worktree, so the load resolves its default branch, and
+  /// the worktree on it does not fold (docs-ai 087). Locally and through the host alike:
+  /// `origin/HEAD` when it is set, else `main`.
+  @Test(.dependencies) func aBareRepositoryLoadsWithItsDefaultBranchLocallyAndThroughTheHost() async throws {
+    let fixture = try await GitFixture()
+    defer { fixture.remove() }
+    let bare = try await fixture.makeUpstream()
+    let worktree = fixture.root.appending(path: "pool/main", directoryHint: .isDirectory)
+    try await fixture.git(["branch", "main", "trunk"], in: bare)
+    try await fixture.git(["worktree", "add", "-q", worktree.path, "main"], in: bare)
+    let bareID = bare.path(percentEncoded: false).trimmingSuffix("/")
+    let remote = RemoteRepositoryFixtures.location(bareID)
+    let entries = [
+      PersistedRepositoryEntry(path: bareID, kind: .git),
+      PersistedRepositoryEntry(path: remote.id, kind: .git),
+    ]
+    let feature = withDependencies {
+      $0[RemoteRepositoryHostClient.self] = fixture.remoteClient
+      $0.continuousClock = TestClock()
+    } operation: {
+      RepositoriesFeature()
+    }
+
+    var (loaded, failures) = await feature.loadRepositoriesData(entries)
+    #expect(failures.isEmpty)
+    #expect(loaded.map(\.bareDefaultBranch) == ["main", "main"])
+    for repository in loaded {
+      #expect(repository.worktrees.contains { $0.name == "main" && !$0.isMain })
+    }
+
+    // `origin/HEAD` wins over the fallback.
+    try await fixture.git(["update-ref", "refs/remotes/origin/trunk", "trunk"], in: bare)
+    try await fixture.git(["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk"], in: bare)
+    (loaded, failures) = await feature.loadRepositoriesData(entries)
+    #expect(failures.isEmpty)
+    #expect(loaded.map(\.bareDefaultBranch) == ["trunk", "trunk"])
+
+    // The non-bare repository keeps its main worktree and resolves nothing.
+    (loaded, _) = await feature.loadRepositoriesData([
+      PersistedRepositoryEntry(path: fixture.remoteLocation.id, kind: .git)
+    ])
+    #expect(loaded.first?.bareDefaultBranch == nil)
+  }
+
   @Test(.dependencies) func remoteFoldersLoadTheirWorktreesThroughTheHost() async throws {
     let fixture = try await GitFixture()
     defer { fixture.remove() }

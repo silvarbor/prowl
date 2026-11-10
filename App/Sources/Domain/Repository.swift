@@ -46,6 +46,12 @@ nonisolated struct Repository: Identifiable, Hashable, Sendable {
   let kind: Kind
   let worktrees: IdentifiedArrayOf<Worktree>
   let workspace: ProjectWorkspace?
+  /// The default branch of a bare repository: the branch `refs/remotes/origin/HEAD`
+  /// names, else `main`, else `master`. A bare repository has no main worktree, so the
+  /// worktree on this branch takes its place as the row that never folds into the
+  /// Inactive group. Resolved when the repository loads, and only for a repository
+  /// without a main worktree; nil otherwise.
+  let bareDefaultBranch: String?
 
   init(
     id: String,
@@ -53,7 +59,8 @@ nonisolated struct Repository: Identifiable, Hashable, Sendable {
     name: String,
     kind: Kind = .git,
     worktrees: IdentifiedArrayOf<Worktree>,
-    workspace: ProjectWorkspace? = nil
+    workspace: ProjectWorkspace? = nil,
+    bareDefaultBranch: String? = nil
   ) {
     self.id = id
     self.location = location
@@ -62,6 +69,7 @@ nonisolated struct Repository: Identifiable, Hashable, Sendable {
     self.kind = workspace == nil ? kind : .plain
     self.worktrees = worktrees
     self.workspace = workspace
+    self.bareDefaultBranch = bareDefaultBranch
   }
 
   /// The ID is the encoded location (docs-ai 084 D1).
@@ -70,7 +78,8 @@ nonisolated struct Repository: Identifiable, Hashable, Sendable {
     name: String,
     kind: Kind = .git,
     worktrees: IdentifiedArrayOf<Worktree>,
-    workspace: ProjectWorkspace? = nil
+    workspace: ProjectWorkspace? = nil,
+    bareDefaultBranch: String? = nil
   ) {
     self.init(
       id: location.id,
@@ -78,7 +87,8 @@ nonisolated struct Repository: Identifiable, Hashable, Sendable {
       name: name,
       kind: kind,
       worktrees: worktrees,
-      workspace: workspace
+      workspace: workspace,
+      bareDefaultBranch: bareDefaultBranch
     )
   }
 
@@ -88,7 +98,8 @@ nonisolated struct Repository: Identifiable, Hashable, Sendable {
     name: String,
     kind: Kind = .git,
     worktrees: IdentifiedArrayOf<Worktree>,
-    workspace: ProjectWorkspace? = nil
+    workspace: ProjectWorkspace? = nil,
+    bareDefaultBranch: String? = nil
   ) {
     self.init(
       id: id,
@@ -96,7 +107,8 @@ nonisolated struct Repository: Identifiable, Hashable, Sendable {
       name: name,
       kind: kind,
       worktrees: worktrees,
-      workspace: workspace
+      workspace: workspace,
+      bareDefaultBranch: bareDefaultBranch
     )
   }
 

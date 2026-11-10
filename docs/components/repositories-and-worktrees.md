@@ -188,6 +188,11 @@ to turn on.
 - **Never folded:** the main worktree, pinned worktrees, worktrees being created,
   and selected worktrees. Plain folders, workspaces, and remote folders have no
   worktree list, so they have nothing to fold.
+- **Bare repositories:** a bare repository has no main worktree, so the worktree
+  on its default branch takes that place and never folds. The default branch is
+  the one `origin/HEAD` points to, or `main`, or `master` when `origin/HEAD` is not
+  set. If no worktree is on the default branch, every worktree with no open tab
+  folds.
 - **Groups:** the Inactive row belongs to its repository, so a repository in a
   [group](#repository-groups) shows its Inactive row inside that group. A
   collapsed group hides it with the rest of the repository's rows.

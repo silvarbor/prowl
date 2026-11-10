@@ -258,11 +258,16 @@ extension RepositoriesFeature {
       switch entry.kind {
       case .git:
         let worktrees = try await host.worktrees(in: location)
+        // A bare repository lists no main worktree. Its default branch names the worktree
+        // that stays out of the Inactive group in its place (docs-ai 087).
+        let bareDefaultBranch =
+          worktrees.contains(where: \.isMain) ? nil : await host.defaultBranchName(in: location)
         return WorktreesFetchResult(
           entry: entry,
           repository: Repository(
             location: location, name: Repository.name(for: location), kind: .git,
-            worktrees: IdentifiedArray(worktrees, uniquingIDsWith: { current, _ in current })),
+            worktrees: IdentifiedArray(worktrees, uniquingIDsWith: { current, _ in current }),
+            bareDefaultBranch: bareDefaultBranch),
           errorMessage: nil
         )
       case .plain:

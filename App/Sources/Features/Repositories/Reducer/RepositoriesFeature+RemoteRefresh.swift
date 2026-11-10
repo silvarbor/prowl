@@ -213,7 +213,8 @@ extension RepositoriesFeature {
       if let index = repositories.firstIndex(where: { $0.id == repository.id }) {
         repositories[index] = Repository(
           location: repository.location, name: repository.name, kind: repository.kind,
-          worktrees: IdentifiedArray(worktrees, uniquingIDsWith: { current, _ in current }))
+          worktrees: IdentifiedArray(worktrees, uniquingIDsWith: { current, _ in current }),
+          bareDefaultBranch: repository.bareDefaultBranch)
       }
       effects.append(
         .send(

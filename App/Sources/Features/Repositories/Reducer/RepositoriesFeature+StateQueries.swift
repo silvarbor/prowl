@@ -613,6 +613,10 @@ extension RepositoriesFeature.State {
     for pending in pendingEntries {
       pendingRows.append(makePendingWorktreeRow(pending))
     }
+    // In a repository without a main worktree (a bare one), the worktree on the default
+    // branch stands in for it and never folds. A worktree's name is its branch. `isMain`
+    // stays false, so deleting it and the merged-PR archive are unaffected.
+    let foldAnchorBranch = mainWorktree == nil ? repository.bareDefaultBranch : nil
     var unpinnedRows: [WorktreeRowModel] = []
     var inactiveRows: [WorktreeRowModel] = []
     for worktree in unpinnedWorktrees {
@@ -622,7 +626,7 @@ extension RepositoriesFeature.State {
         isPinned: false,
         isMainWorktree: false
       )
-      if isWorktreeFolded(worktree.id) {
+      if isWorktreeFolded(worktree.id), worktree.name != foldAnchorBranch {
         inactiveRows.append(row)
       } else {
         unpinnedRows.append(row)
