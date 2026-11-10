@@ -14,6 +14,60 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct MirrorTerminalIntegrationTests {
+  /// A real zsh that marks its prompts like Ghostty's shell integration (OSC 133). Shell commands
+  /// from a mirror go only at its primary prompt, and the line is cleared first (089 review
+  /// R1, R2): a continuation prompt and a waiting `read` refuse, and a draft does not run.
+  @Test(.timeLimit(.minutes(2))) func shellCommandsGoOnlyToAPrimaryPrompt() async throws {
+    let home = FileManager.default.temporaryDirectory.appending(path: "mirror-zsh-\(UUID())")
+    try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: home) }
+    try #"""
+    PS1=$'%{\e]133;A\a%}$ %{\e]133;B\a%}'
+    PS2=$'%{\e]133;P;k=s\a%}> %{\e]133;B\a%}'
+    preexec() { print -n $'\e]133;C\a' }
+    unsetopt BEEP
+    """#.write(to: home.appending(path: ".zshrc"), atomically: true, encoding: .utf8)
+    let fixture = try Fixture(agentArguments: ["/usr/bin/env", "ZDOTDIR=\(home.path)", "/bin/zsh", "-i"])
+    defer { fixture.close() }
+    let pane = fixture.hostView.id
+    func primary() -> Bool { fixture.hostView.bridge.inputState()?.primaryPrompt == true }
+    func waitForQuietMac() async throws {
+      try await fixture.wait("No recent local edit") {
+        ProcessInfo.processInfo.systemUptime - (fixture.hostView.lastEditingAt ?? 0) > 2.2
+      }
+    }
+    try await fixture.wait("Primary prompt") { primary() }
+
+    // A continuation prompt of a pending command.
+    try fixture.source.write(Data("echo OLD \\\n".utf8), to: pane)
+    try await fixture.wait("Continuation prompt") { fixture.hostText.contains("> ") && !primary() }
+    try await waitForQuietMac()
+    #expect(fixture.source.sendShellLine("echo SAFE", in: pane, isLive: { true }) != nil)
+    try fixture.source.write(Data([0x03]), to: pane)
+    try await fixture.wait("Prompt after interrupt") { primary() }
+
+    // A builtin waiting for input.
+    try fixture.source.write(Data("read answer\n".utf8), to: pane)
+    try await fixture.wait("read waits") { !primary() }
+    try await waitForQuietMac()
+    #expect(fixture.source.sendShellLine("echo SAFE", in: pane, isLive: { true }) != nil)
+    try fixture.source.write(Data([0x03]), to: pane)
+    try await fixture.wait("Prompt after read") { primary() }
+    #expect(!fixture.hostText.contains("SAFE"))
+
+    // At the primary prompt, an old draft is cleared and only the mirror's command runs.
+    try fixture.source.write(Data("echo DRAFT".utf8), to: pane)
+    try await waitForQuietMac()
+    #expect(fixture.source.sendShellLine("echo MIRROR-RAN", in: pane, isLive: { true }) == nil)
+    try await fixture.wait("Command output") {
+      fixture.hostText.components(separatedBy: "\n").contains {
+        $0.trimmingCharacters(in: .whitespaces) == "MIRROR-RAN"
+      }
+    }
+    #expect(!fixture.hostText.contains("DRAFTecho"))
+    #expect(!fixture.hostText.contains("DRAFT MIRROR"))
+  }
+
   @Test(.timeLimit(.minutes(1))) func styledNativeScrollbackSurvivesWideRowsAndReflow() async throws {
     let fixture = try Fixture()
     defer { fixture.close() }
@@ -511,6 +565,23 @@ struct MirrorTerminalIntegrationTests {
     try await fixture.wait("Draft rendered") { fixture.hostText.contains("DRAFT") }
     let draft = try #require(fixture.hostView.readStyledSnapshotForCLI())
     #expect(!CodexScreenProfile.composerHasNoDraft(styledSnapshot: draft))
+  }
+
+  @Test(.timeLimit(.minutes(1))) func claudeHintStylingSurvivesRealGhosttyCapture() async throws {
+    let fixture = try Fixture()
+    defer { fixture.close() }
+    try await fixture.wait("Host program ready") { fixture.hostText.contains("READY") }
+    try fixture.send("claude-hint")
+    try await fixture.wait("Dim hint rendered") {
+      fixture.hostText.contains("HINT") && fixture.hostText.contains("status")
+    }
+    let hint = try #require(fixture.hostView.readStyledSnapshotForCLI())
+    #expect(ClaudeScreenProfile.composerContents(styledSnapshot: hint) == "")
+    try fixture.send("claude-draft")
+    try await fixture.wait("Draft rendered") { fixture.hostText.contains("DRAFT") }
+    let draft = try #require(fixture.hostView.readStyledSnapshotForCLI())
+    // Claude positions each word of a paste marker; the gaps are never-written cells.
+    #expect(ClaudeScreenProfile.composerContents(styledSnapshot: draft) == "[Pasted text #1 +9 lines]")
   }
 
   @Test(.timeLimit(.minutes(2))) func boundedCapturePreservesRealSurface() async throws {
@@ -1034,6 +1105,10 @@ struct MirrorTerminalIntegrationTests {
         case "$action" in
           hint) printf '\033[2J\033[HHINT\r\n› \033[2mAsk Codex to do anything\033[0m\r\n  gpt-5.6 · ~/work';;
           draft) printf '\033[2J\033[HDRAFT\r\n› Ask Codex to do anything\r\n  gpt-5.6 · ~/work';;
+          claude-hint) printf '\033[2J\033[HHINT\r\n────\r\n❯ \033[2mTry "fix lint"\033[22m\r\n────\r\n  status';;
+          claude-draft)
+            printf '\033[2J\033[HDRAFT\r\n────\r\n❯ [Pasted\033[1Ctext\033[1C#1\033[1C+9\033[1Clines]'
+            printf '\r\n────\r\n  status';;
           think) printf '\033[2J\033[H\033[31mTHINKING:思考中\033[0m\033[4;7H';;
           finish) printf '\033[2J\033[H\033[32mFINAL:结论\033[0m\033[2;3H';;
           history|focus-history)

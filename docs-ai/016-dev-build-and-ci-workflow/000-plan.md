@@ -105,3 +105,6 @@ Anchor wave, all landed 2026-04-04/05:
 - Updated 2026-10-04: a watchdog samples the test processes and interrupts xcodebuild after 10
   minutes without test output, so a hung run fails early and names the hung test — see
   [009-test-hang-watchdog.md](009-test-hang-watchdog.md)
+- Updated 2026-11-01: Fix CI incremental builds (random Metal toolchain path) and remove the CAS — see [010-stable-incremental-state.md](010-stable-incremental-state.md)
+- Updated 2026-11-01: Run the Mac app tests in several processes — see [011-test-shards.md](011-test-shards.md)
+- Updated 2026-11-01: Move the CLI tests to the checks job, reduce the package cache, keep the App cache across a version change — see [012-lighter-build-job.md](012-lighter-build-job.md)

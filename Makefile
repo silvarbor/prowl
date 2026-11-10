@@ -24,6 +24,8 @@ SPM_CACHE_DIR := $(HOME)/Library/Caches/prowl-spm-cache/SourcePackages
 XCODE_WORKSPACE := $(CURRENT_MAKEFILE_DIR)/Prowl.xcworkspace
 APP_SCHEME := Prowl
 TEST_TARGET := ProwlTests
+# Test processes for the bulk of the Mac app tests: two thirds of the cores, from 2 to 8.
+PROWL_TEST_SHARDS ?= $(shell cores=$$(sysctl -n hw.ncpu); shards=$$((cores * 2 / 3)); echo $$((shards < 2 ? 2 : (shards > 8 ? 8 : shards))))
 IOS_MIRROR_PROJECT := $(CURRENT_MAKEFILE_DIR)/Mirror/iOS/ProwlMirror-iOS.xcodeproj
 IOS_MIRROR_SCHEME := ProwlMirror-iOS
 # Regular expression for the full simulator name. Each Xcode release renames the models,
@@ -91,7 +93,7 @@ TEST_SIGNING_ARGS := CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: build-ghostty-xcframework ensure-ghostty sync-ghostty _record-ghostty-hash generate ensure-project ensure-mirror-ios-project build-app build-cli build-cli-release embed-cli-debug embed-cli embed-docs embed-skills run-app install-dev-build install-release archive export-archive format format-changed format-lint lint check test test-all test-app test-mirror-ios test-mirror-ios-unit test-mirror-android test-scripts test-cli-smoke test-cli-unit test-cli-integration benchmark-build bump-version log-stream agent-versions
+.PHONY: build-ghostty-xcframework ensure-ghostty sync-ghostty generate ensure-project ensure-mirror-ios-project build-app build-cli build-cli-release embed-cli-debug embed-cli embed-docs embed-skills run-app install-dev-build install-release archive export-archive archive-mirror-ios testflight-mirror-ios format format-changed format-lint lint check test test-all test-app test-mirror-ios test-mirror-ios-unit test-mirror-android test-scripts test-cli-smoke test-cli-unit test-cli-integration benchmark-build bump-version log-stream agent-versions
 .PHONY: test-agent-contracts _test-agent-contract-codex _test-agent-contract-export
 
 help:  # Display this help.
@@ -100,7 +102,6 @@ help:  # Display this help.
 	@-+grep -Eh "^[a-z-]+:.*#" $(CURRENT_MAKEFILE_PATH) | sed -E 's/^(.*:)(.*#+)(.*)/  \1 @@@ \3 /' | column -t -s "@@@"
 
 build-ghostty-xcframework: $(GHOSTTY_BUILD_STAMP) # Build ghostty framework
-	@$(MAKE) _record-ghostty-hash
 
 # Internal: actually rebuild ghostty.
 $(GHOSTTY_BUILD_STAMP):
@@ -116,6 +117,7 @@ $(GHOSTTY_BUILD_STAMP):
 	mkdir -p "$$terminfo_dst"; \
 	rsync -a --delete "$$terminfo_src/" "$$terminfo_dst/"
 	touch "$(GHOSTTY_BUILD_STAMP)"
+	git -C "$(CURRENT_MAKEFILE_DIR)" rev-parse HEAD:ThirdParty/ghostty > "$(GHOSTTY_HASH_FILE)"
 
 # Public entry point: downloads pinned prebuilt artifacts when available, then
 # falls back to a local Ghostty source build.
@@ -141,10 +143,6 @@ ensure-ghostty: # Ensure GhosttyKit is up-to-date (fast path when unchanged)
 		rm -rf ~/Library/Developer/Xcode/DerivedData/Prowl-*; \
 		echo "Cleared Xcode DerivedData for ghostty header/module changes"; \
 	fi
-
-# Internal: record the current submodule SHA after a successful build.
-_record-ghostty-hash:
-	@git -C "$(CURRENT_MAKEFILE_DIR)" rev-parse HEAD:ThirdParty/ghostty > "$(GHOSTTY_HASH_FILE)"
 
 # Force a clean rebuild of GhosttyKit (ignores cached SHA, useful after submodule updates).
 sync-ghostty: # Force sync GhosttyKit to current submodule HEAD (always rebuilds)
@@ -323,7 +321,7 @@ install-dev-build: build-app # Build Debug and install to /Applications
 	ditto "$$src" "$$dst"; \
 	echo "installed $$dst"
 
-install-release: build-ghostty-xcframework # Build Release, sign locally, install to /Applications
+install-release: ensure-ghostty # Build Release, sign locally, install to /Applications
 	@set -euo pipefail; \
 	SIGNING_IDENTITY="$$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Developer ID Application/ {print $$2; exit}')"; \
 	if [ -z "$$SIGNING_IDENTITY" ]; then \
@@ -402,11 +400,17 @@ install-release: build-ghostty-xcframework # Build Release, sign locally, instal
 	ditto "$$APP_PATH" "$$DST"; \
 	echo "installed $$DST (Release build, locally signed)"
 
-archive: build-ghostty-xcframework embed-cli embed-docs embed-skills ensure-project # Archive Release build for distribution
+archive: ensure-ghostty embed-cli embed-docs embed-skills ensure-project # Archive Release build for distribution
 	bash -o pipefail -c 'xcodebuild -workspace "$(XCODE_WORKSPACE)" -scheme $(APP_SCHEME) -configuration Release -archivePath build/Prowl.xcarchive archive CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="$$APPLE_TEAM_ID" CODE_SIGN_IDENTITY="$$DEVELOPER_ID_IDENTITY_SHA" OTHER_CODE_SIGN_FLAGS="--timestamp" PROWL_SENTRY_DSN="$(PROWL_SENTRY_DSN)" PROWL_POSTHOG_API_KEY="$(PROWL_POSTHOG_API_KEY)" PROWL_POSTHOG_HOST="$(PROWL_POSTHOG_HOST)" -skipMacroValidation -clonedSourcePackagesDirPath $(SPM_CACHE_DIR) $(XCODEBUILD_FLAGS) 2>&1 | mise exec -- xcsift -qw --format toon'
 
 export-archive: # Export xarchive
 	bash -o pipefail -c 'xcodebuild -exportArchive -archivePath build/Prowl.xcarchive -exportPath build/export -exportOptionsPlist build/ExportOptions.plist 2>&1 | mise exec -- xcsift -qw --format toon'
+
+archive-mirror-ios: # Archive the iOS mirror app and export an IPA to build/mirror-ios without uploading
+	@"$(CURRENT_MAKEFILE_DIR)/scripts/release-mirror-ios.sh" --export-only
+
+testflight-mirror-ios: # Archive the iOS mirror app and publish it to TestFlight with asc
+	@"$(CURRENT_MAKEFILE_DIR)/scripts/release-mirror-ios.sh"
 
 test: ensure-ghostty embed-cli-debug embed-docs embed-skills test-app
 
@@ -459,6 +463,10 @@ test-scripts: # Run tests for the repository's scripts
 	@python3 -m unittest discover -s "$(CURRENT_MAKEFILE_DIR)/scripts" -p 'test_*.py'
 	@bash "$(CURRENT_MAKEFILE_DIR)/scripts/test-performance-measurement-scripts.sh"
 
+# Most suites run on the main actor, so one test process runs them nearly one at a time. The bulk
+# of the tests runs in several test-without-building processes, each with its own main thread.
+# Only `xcodebuild test` builds, and two builds in one checkout can hang.
+#
 # Real I/O deadlines run separately from the bulk suite's main-actor work. A TCA TestStore
 # enqueues all tasks of the process on the main thread while it lives, so in the bulk run a
 # task that blocks on a child process also blocks every test.
@@ -476,10 +484,10 @@ test-app: ensure-ghostty ensure-project # Run app/unit tests via xcodebuild
 			set -- -derivedDataPath "$$PROWL_DERIVED_DATA_PATH" "$$@"; \
 		fi; \
 		set +e; \
-		xcodebuild "$$action" -workspace "$(XCODE_WORKSPACE)" -scheme $(APP_SCHEME) -destination "platform=macOS" -resultBundlePath "$$result_bundle" $(TEST_SIGNING_ARGS) -skipMacroValidation -clonedSourcePackagesDirPath $(SPM_CACHE_DIR) -showBuildTimingSummary SWIFT_COMPILATION_MODE=incremental "$$@" 2>&1 | tee "$$result_bundle.log" | tee >(PROWL_TEST_PROGRESS_LABEL="$${result_bundle##*/}" awk -f "$(CURRENT_MAKEFILE_DIR)/scripts/test-progress.awk" >&2) | mise exec -- xcsift -w --format toon; \
+		xcodebuild "$$action" -workspace "$(XCODE_WORKSPACE)" -scheme $(APP_SCHEME) -destination "platform=macOS" -resultBundlePath "$$result_bundle" $(TEST_SIGNING_ARGS) -skipMacroValidation -clonedSourcePackagesDirPath $(SPM_CACHE_DIR) -showBuildTimingSummary SWIFT_COMPILATION_MODE=incremental $(PROWL_CI_BUILD_SETTINGS) "$$@" 2>&1 | tee "$$result_bundle.log" | tee >(PROWL_TEST_PROGRESS_LABEL="$${result_bundle##*/}" awk -f "$(CURRENT_MAKEFILE_DIR)/scripts/test-progress.awk" >&2) | mise exec -- xcsift -w --format toon; \
 		local xcodebuild_status=$${PIPESTATUS[0]}; \
 		set -e; \
-		if [ "$$action" = "test" ] && [ -d "$$result_bundle" ]; then \
+		if [ "$$action" = "build-for-testing" ] && [ -d "$$result_bundle" ]; then \
 			xcrun xcresulttool get log --path "$$result_bundle" --type build --compact > "$$result_bundle.build.json" \
 				|| echo "warning: could not export Xcode build metrics" >&2; \
 		fi; \
@@ -490,6 +498,9 @@ test-app: ensure-ghostty ensure-project # Run app/unit tests via xcodebuild
 		if [ "$$xcodebuild_status" -ne 0 ]; then \
 			bash "$(CURRENT_MAKEFILE_DIR)/scripts/print-xcresult-failures.sh" "$$result_bundle" || true; \
 			return "$$xcodebuild_status"; \
+		fi; \
+		if [ "$$action" = "build-for-testing" ]; then \
+			return 0; \
 		fi; \
 		if [ -n "$$expected_test_count" ]; then \
 			bash "$(CURRENT_MAKEFILE_DIR)/scripts/assert-xcresult-tests.sh" "$$result_bundle" "$$expected_test_count"; \
@@ -525,7 +536,23 @@ test-app: ensure-ghostty ensure-project # Run app/unit tests via xcodebuild
 		skip_args+=("-skip-testing:$$test_id"); \
 		event_args+=("-only-testing:$$test_id"); \
 	done; \
-	run_xcode_tests "$$result_root/prowl-tests.xcresult" test "" "$${skip_args[@]}"; \
+	rm -rf "$$result_root"/prowl-tests*.xcresult*; \
+	run_xcode_tests "$$result_root/prowl-tests.xcresult" build-for-testing ""; \
+	shard_dir="$$(mktemp -d "$${TMPDIR:-/tmp}/prowl-test-shards.XXXXXX")"; \
+	trap 'rm -rf "$$shard_dir"' EXIT; \
+	xcodebuild test-without-building -workspace "$(XCODE_WORKSPACE)" -scheme $(APP_SCHEME) -destination "platform=macOS" $(TEST_SIGNING_ARGS) -skipMacroValidation -clonedSourcePackagesDirPath $(SPM_CACHE_DIR) SWIFT_COMPILATION_MODE=incremental $(PROWL_CI_BUILD_SETTINGS) $${PROWL_DERIVED_DATA_PATH:+-derivedDataPath "$$PROWL_DERIVED_DATA_PATH"} -enumerate-tests -test-enumeration-format json -test-enumeration-style flat -test-enumeration-output-path "$$shard_dir/tests.json" >"$$shard_dir/enumerate.log" 2>&1 || { cat "$$shard_dir/enumerate.log" >&2; exit 1; }; \
+	printf '%s\n' "$${process_cancellation_tests[@]}" "$${event_monitor_tests[@]}" "$${mirror_suites[@]/#/$(TEST_TARGET)/}" >"$$shard_dir/excluded.txt"; \
+	shard_count="$$(python3 "$(CURRENT_MAKEFILE_DIR)/scripts/test-shards.py" --enumeration "$$shard_dir/tests.json" --costs "$(CURRENT_MAKEFILE_DIR)/scripts/test-suite-costs.json" --excluded "$$shard_dir/excluded.txt" --shards "$(PROWL_TEST_SHARDS)" --out "$$shard_dir")"; \
+	shard_pids=(); \
+	for ((shard = 0; shard < shard_count; shard++)); do \
+		shard_args=(); \
+		while IFS= read -r argument; do shard_args+=("$$argument"); done <"$$shard_dir/shard$$shard.args"; \
+		( run_xcode_tests "$$result_root/prowl-tests-shard$$shard.xcresult" test-without-building "$$(cat "$$shard_dir/shard$$shard.count")" "$${shard_args[@]}" "$${skip_args[@]}" ) & \
+		shard_pids+=("$$!"); \
+	done; \
+	shards_failed=0; \
+	for pid in "$${shard_pids[@]}"; do wait "$$pid" || shards_failed=1; done; \
+	[ "$$shards_failed" -eq 0 ]; \
 	run_xcode_tests "$$result_root/prowl-event-monitor-tests.xcresult" test-without-building "" "$${event_args[@]}"; \
 	run_xcode_tests "$$result_root/prowl-mirror-tests.xcresult" test-without-building "" "$${mirror_args[@]}"; \
 	run_xcode_tests "$$result_root/prowl-process-cancellation-tests.xcresult" test-without-building 4 "$${only_args[@]}"
