@@ -403,6 +403,10 @@ struct RepositoryHostTests {
         recordLocalGitCall("automaticWorktreeBaseRef")
         return "main"
       },
+      defaultBranchName: { _ in
+        recordLocalGitCall("defaultBranchName")
+        return nil
+      },
       ignoredFileCount: { _ in
         recordLocalGitCall("ignoredFileCount")
         return 0

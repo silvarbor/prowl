@@ -275,6 +275,8 @@ extension RepositorySnapshotCachePayload {
     let kind: Repository.Kind
     let worktrees: [SnapshotWorktree]
     let workspace: ProjectWorkspace?
+    /// Absent in snapshots written before it existed; the next load resolves it.
+    let bareDefaultBranch: String?
 
     init(repository: Repository) {
       rootPath = repository.location.id
@@ -282,6 +284,7 @@ extension RepositorySnapshotCachePayload {
       kind = repository.kind
       worktrees = repository.worktrees.map { SnapshotWorktree(worktree: $0) }
       workspace = repository.workspace
+      bareDefaultBranch = repository.bareDefaultBranch
     }
 
     /// Nil when the repository cannot be restored: a local folder that is gone, a worktree
@@ -324,7 +327,8 @@ extension RepositorySnapshotCachePayload {
         name: repositoryName.isEmpty ? Repository.name(for: rootURL) : repositoryName,
         kind: kind,
         worktrees: IdentifiedArray(restoredWorktrees, uniquingIDsWith: { current, _ in current }),
-        workspace: workspace?.normalized(relativeTo: rootURL)
+        workspace: workspace?.normalized(relativeTo: rootURL),
+        bareDefaultBranch: bareDefaultBranch
       )
     }
 
@@ -348,7 +352,8 @@ extension RepositorySnapshotCachePayload {
         location: location,
         name: repositoryName.isEmpty ? Repository.name(for: location) : repositoryName,
         kind: kind,
-        worktrees: IdentifiedArray(restoredWorktrees, uniquingIDsWith: { current, _ in current })
+        worktrees: IdentifiedArray(restoredWorktrees, uniquingIDsWith: { current, _ in current }),
+        bareDefaultBranch: bareDefaultBranch
       )
     }
   }

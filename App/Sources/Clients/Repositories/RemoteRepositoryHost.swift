@@ -170,6 +170,10 @@ nonisolated struct RemoteRepositoryHost: Sendable {
     await git.automaticWorktreeBaseRef(for: Self.url(path))
   }
 
+  func defaultBranchName(at path: String) async -> String? {
+    await git.defaultBranchName(for: Self.url(path))
+  }
+
   /// Counted on the host, so a large list (an ignored `node_modules`) never crosses the
   /// connection or reaches the lane's output budget.
   func ignoredFileCount(at path: String) async throws -> Int {
