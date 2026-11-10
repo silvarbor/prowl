@@ -7197,6 +7197,16 @@
         }
       }
     },
+    "Display the agent name before the repository name. When off, the name shows on hover." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在仓库名称前显示 Agent 名称。关闭后，悬停时才显示名称。"
+          }
+        }
+      }
+    },
     "Do nothing" : {
       "localizations" : {
         "zh-Hans" : {
@@ -15614,6 +15624,26 @@
         }
       }
     },
+    "Reopen the saved terminal tabs and splits when Prowl starts" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prowl 启动时重新打开已保存的终端标签页和分屏"
+          }
+        }
+      }
+    },
+    "Reopens your tabs and splits in their folders. Commands that were running do not start again." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在原来的文件夹中重新打开标签页和分屏。之前正在运行的命令不会重新启动。"
+          }
+        }
+      }
+    },
     "Repair" : {
       "localizations" : {
         "zh-Hans" : {
@@ -16064,12 +16094,12 @@
         }
       }
     },
-    "Restore terminal layout on launch (experimental)" : {
+    "Restore terminal layout on launch" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "启动时恢复终端布局（实验性）"
+            "value" : "启动时恢复终端布局"
           }
         }
       }
@@ -18156,6 +18186,16 @@
         }
       }
     },
+    "Show agent names in agent rows" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Agent 行中显示 Agent 名称"
+          }
+        }
+      }
+    },
     "Show agent status in Shelf tabs" : {
       "localizations" : {
         "zh-Hans" : {
@@ -18422,6 +18462,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "显示 %@ 中的未提交更改"
+          }
+        }
+      }
+    },
+    "Show/Hide Agent Island" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示/隐藏 Agent 灵动岛"
           }
         }
       }
@@ -22050,16 +22101,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "关闭时，所有书架书脊均使用所选的灰色或系统色调样式。"
-          }
-        }
-      }
-    },
-    "When enabled, Prowl attempts to restore tabs and splits after restart." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "开启时，Prowl 会在重启后尝试恢复标签页和分屏。"
           }
         }
       }

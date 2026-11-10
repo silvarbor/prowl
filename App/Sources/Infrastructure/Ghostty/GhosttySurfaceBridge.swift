@@ -92,6 +92,7 @@ final class GhosttySurfaceBridge {
 
   func sendText(_ text: String) {
     guard let surface else { return }
+    surfaceView?.noteInput()
     text.withCString { ptr in
       ghostty_surface_text(surface, ptr, UInt(text.lengthOfBytes(using: .utf8)))
     }
@@ -117,6 +118,14 @@ final class GhosttySurfaceBridge {
     guard let surface else { return nil }
     let pid = ghostty_surface_pid(surface)
     return pid > 0 ? pid_t(pid) : nil
+  }
+
+  /// Whether input sent now reaches a primary shell prompt, from shell integration (OSC 133),
+  /// and whether bracketed paste is on; nil without a terminal.
+  func inputState() -> MirrorShellPrompt.InputState? {
+    guard let surface else { return nil }
+    let state = ghostty_surface_input_state(surface)
+    return .init(primaryPrompt: state.primary_prompt, bracketedPaste: state.bracketed_paste)
   }
 
   /// The pty's foreground process group (`tcgetpgrp` on the master side), or

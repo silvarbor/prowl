@@ -28,7 +28,9 @@ replaces the code; **Cancel** invalidates an unused code without stopping Host o
 revoking a device that already paired. When a device completes pairing, the sheet
 shows **Paired with** its name and closes by itself. On the other Mac, open
 **Remote Mirror → Client → Connect to a New Host** and enter the address (an IP or a
-host name such as `mini.local`), port, and code. On iOS, use the connection editor.
+host name such as `mini.local`), port, and code. On iOS, **Pair with a Mac** on the
+first launch, or **Add Host…** in the Mac menu, takes the same address, port and code, or
+scans the QR code.
 Successful enrollment consumes the code. The client saves its device credential in
 Keychain, then opens a new authenticated connection. A pairing-only connection
 cannot list or operate panes. No extra long-lived code is required. A saved
@@ -49,10 +51,12 @@ address. If the Host no longer recognizes this Mac, for example after **Revoke**
 the attempt fails at once with an explanation and the code field appears. A
 refused port, an unreachable address, or an unresolved name also fails at once;
 an unanswered connection gives up after ten seconds. Saved credentials survive
-Host stop/start and App restart. They do not discover a changed IP address. The iOS
-connection editor can retain a device credential while updating the Host address;
-the client checks the Host identity after connecting. A new Host or revoked device
-requires a fresh pairing window. Old experiment keys are not migrated.
+Host stop/start and App restart. They do not discover a changed IP address. On iOS,
+a paired Host stays in the Hosts list with its credential and reconnects without a
+code; **Rename** changes the name shown on the phone, **Forget** removes the entry and
+its credential, and a Host that no longer recognizes the device needs a new pairing
+through **Add Host**. A new Host or revoked device requires a fresh pairing window. Old
+experiment keys are not migrated.
 
 The Host section lists paired devices with **Connected** and the active mirror
 count, **Last seen** for a device that is offline, or **Paired · never connected**,
@@ -110,6 +114,24 @@ the manual scroll position within the available bounds. Large Host grids can mak
 Fit to Window text small. iOS
 renders replacement text with local reflow. Cleared output is not an archive.
 
+On iOS, the first launch asks you to pair with a Mac. After that the app opens on the
+agents of the last Mac you chose, titled with the Mac's name; the Mac menu at the top left
+switches the Host, adds one, or opens **Manage Hosts** (rename, forget). Three counts on
+top show how many agents are **Blocked**, **Working** and **Done** (finished and not looked
+at yet); tap one to show only those agents, tap it again to show all. The panes follow the
+Mac sidebar: projects in sidebar order with their repository color and group, agents
+sorted blocked, working, done, idle, each with its agent mark, tab title, worktree and how
+long ago its state changed. Working shows the Bagua spinner, as on the Mac. Terminals
+without an agent fold into one row per project. A pane opens in **Chat** when the
+conversation is available and in **Terminal** otherwise. Its title shows the pane's name
+and, under it, its state and project / worktree. The toolbar button next to **…** switches
+Chat and Terminal on the same connection, and a Terminal pane whose agent starts moves to
+Chat by itself unless you chose Terminal. A lost connection shows its reason with
+**Reconnect** (or **Take Over** when another device mirrors the pane), and a blocked agent
+shows what it waits for above the composer. The **…** menu holds **History** and **Live
+Output** for the terminal, **Reconnect** or **Take Over**, and **Disconnect**. The list keeps refreshing behind the pane, so a new agent or a closed pane
+is noticed within a few seconds.
+
 On a Host advertising remote scrolling, **Scroll Up** and **Scroll Down** move
 the live Host terminal by its current pane height minus three rows (at least one
 row). Native scrollback moves by that exact number of rows. Application-owned
@@ -121,8 +143,10 @@ user settings, and never affect native Ghostty scrollback. Host precision-scroll
 settings and application behavior can still affect TUI distance. These buttons sit above the live
 view on all clients. Wheel and touch gestures only move the local readable view;
 they never request remote scrolling. Each completed remote scroll resets the local
-reader to the top in both directions, including Mac Original Size mode. Follow
-latest remains below the mobile reader.
+reader to the top in both directions, including Mac Original Size mode. On iOS the
+two buttons are a small capsule at the top right of the reader, with **Scrolling…** or
+an error to its left. The reader follows the newest output while its end is in view;
+after you scroll away, an arrow button returns to it and following starts again.
 
 A current Host sends frame-matched boundary state. **Scroll Up** is disabled at
 a known top and **Scroll Down** at a known bottom. Native terminal scrollback can
@@ -177,8 +201,12 @@ cancellation, or disconnect. Closing a mirror still leaves the Host program runn
 
 ## Create and send from iOS
 
-**New Agent Pane** selects an existing Host worktree and an available Agent Profile,
-with an optional initial prompt. Host creates a normal background tab through its
+**New Session** (the **+** on the Agents screen, or a project's **…** menu) is shaped like
+the composer: the optional first message on top, and under it two menus. The project menu
+lists the Host's repositories, with worktrees as a submenu, and starts on the project you
+came from. The Profile menu shows each Agent Profile's agent, model and effort, and greys
+out unavailable ones with the reason. The last Profile you started is chosen again. The
+arrow starts the session and opens it. Host creates a normal background tab through its
 public CLI router. There is no special AI Control Console, bundled private control
 skill, or separate agent-launch implementation. Profile settings determine model
 and permissions.
@@ -190,20 +218,44 @@ Interactive input delivers the message as written, without a `[Prowl]` prefix or
 completion instruction. It creates no dispatch record and does not require
 `dispatch-complete`. An existing pending automation receipt is neither completed nor
 abandoned and does not block this human input, just as local typing does not settle
-an automation task. The usual Agent readiness and local input protections still apply.
+an automation task. Like typing at the Mac, a message also goes in while the agent works:
+the agent queues it or steers its current turn by its own rules (Claude Code queues it,
+Codex adds it to the running turn). Only a blocked agent, one that waits for an answer to a
+question or permission, refuses the message. The local input protections still apply.
 Host rechecks the exact subscribed pane and lease, plus input protection, before delivery.
-Mobile shell panes are read-only: Host cannot yet verify an empty shell command line,
-so structured shell Send is refused and its capability is not advertised. An idle task
-can still contain an older local draft. Use an Agent Profile for mobile prompts, or
-control the shell on Host. Local CLI `send` and Mac mirror keyboard input retain their
-existing direct-input behavior.
+In a shell pane, the composer runs a command. The Host takes it only while the shell waits
+for a new command at its primary prompt, which it learns from Ghostty's shell integration
+(zsh, bash 4 and later, fish; not the macOS `/bin/bash` 3.2). It refuses when a program
+such as `vim`, `less`, `ssh` or a script runs in front of the shell (and names it), at a
+continuation prompt of an unfinished command, while a command such as a `read` waits for
+input, and while someone types on the Mac. It clears the prompt line first (⌃E, ⌃U), so an
+old draft on the Mac cannot join the command; ⌃Y on the Mac brings the draft back. A
+one-line command is typed. A command with several lines or a tab is pasted, and only to a
+shell that takes bracketed paste. Local CLI `send` and Mac mirror keyboard input keep their
+direct-input behavior.
 
 Shared Agent input delivery rejects IME composition and recent Host editing. Claude must
-have a recognized empty composer. It inserts text, waits up to two seconds for the
-paste echo, and only then sends Enter, provided the surface/Agent/edit revision is
-unchanged. Codex has an explicit idle-composer rule; the delivery boundary also
-checks formatter dim styling so a hint is not confused with an identically worded
-draft. Unknown layouts, wrapped drafts and attachments refuse delivery.
+have a recognized empty composer; a dim hint in it counts as empty whatever its words: the
+`Try "…"` hint of a fresh session, the prompt suggestion Claude Code shows after a turn, and the
+queued messages hint of a running turn. It inserts text, waits up to two seconds for the paste echo, and only then sends
+Enter, provided the surface/Agent/edit revision is unchanged. The echo may wrap anywhere,
+also between two CJK characters; only spaces inside a row must match. Codex has an explicit
+idle-composer rule. For both, the delivery boundary reads the formatter's dim styling, not the
+hint's wording, so a rotating placeholder stays a hint and an identically worded draft stays a
+draft; an image or paste marker is a draft whatever its styling. When an earlier delivery left
+its text in the composer without Enter, the same request gets Enter alone instead of a second
+copy, but only for exactly that text and only while nobody has edited the composer since. A draft
+that merely looks the same on screen (a collapsed paste marker, whitespace) is not trusted. Unknown layouts, other drafts and attachments refuse delivery,
+and the refusal quotes the start of the draft.
+
+A draft someone left in the Agent's input box refuses the message, and the refusal carries
+the draft's text and whether the Host could replace it (`on_draft`, docs-ai 090). On request,
+the Host clears a replaceable draft the Agent's own way before the paste: Claude Code stashes
+it with ⌃S and puts it back in the box by itself after the message is sent (⌃S toggles it);
+Codex kills its lines with ⌃U.
+Every key goes under the same guard as the mirror's other keys, the box is re-read as empty
+before the text goes in, and the receipt names the replaced draft. Devin drafts and a box that
+does not read empty after clearing keep refusing.
 
 A successful input receipt confirms delivery, not Agent completion. Replies are
 correlated by UUID. Unknown delivery preserves the draft and is not automatically
@@ -217,6 +269,59 @@ different parameters is rejected. Takeover/disconnect cancels input still waitin
 also cancels pending Profile preparation, including requests whose connection was
 already lost. A plain disconnect alone does not cancel accepted Profile creation;
 check Host before retrying an uncertain result. Existing terminal programs continue.
+
+## Conversation view
+
+A Host advertising `conversation-v1` can serve a pane as the agent's conversation instead
+of its screen: the Host reads the agent's own transcript (Claude Code and Codex today),
+its hooks and its OSC 7501 status, and sends normalized events (turns, messages, tool
+cards with bounded output and diffs, prompts, status, session changes). The pane list
+marks each pane `available`, `pending` (agent known, transcript not yet resolved) or
+`unsupported`; Shell panes and other agents keep the text view. A client can switch a
+pane between the conversation and the text view on the same connection, and resumes by
+sequence after a reconnect while the Host still retains the feed (ten minutes). Assistant
+text arrives when a message completes; `working` comes from the agent's status. Codex
+without trusted hooks reports tools only when they finish and no approval content. See
+[wire contract](remote-mirror-wire.md#conversation-stream-conversation-v1) and
+docs-ai 087.
+
+The iOS client renders the stream as a chat: your messages in bubbles on the right (long
+ones fold after twelve lines), the agent's Markdown as text (headings, lists, quotes, code
+blocks and tables), and each run of tool calls between two messages as one quiet row
+("6 tool calls", with failures counted in red and the running call shown with a turning
+hourglass while the agent works). A row opens to one line per call, and a line opens its command, changes and output
+in a sheet. Thinking the agent shows as text in its pane (Claude Code's visible thinking,
+Codex's reasoning summary) is its own row between the steps, in secondary type. While the agent waits on a choice (a permission, a question, Codex's approval), a panel
+above the composer shows the question, what it is about (such as the command to approve) and
+the choices; tap one to answer. In a multi-select question, each tap checks or unchecks a box
+on the Mac and **Submit** sends the checked ones. A question in several parts ends on Claude's
+"Ready to submit your answers?" page, which the panel offers too. The Host checks that the Mac
+still shows the same question before it presses any key, so a stale tap is refused with a
+reason, and typed answers stay on the Mac. Answered prompts leave one line in the chat. Instructions that Prowl adds to a launch prompt, such
+as the dispatch completion protocol, fold under **Prowl instructions** in your message.
+On a wide screen such as an iPad, the chat and its composer keep a readable column in the
+middle. The chat opens at the newest message and stays there as messages arrive. The arrow button shows
+only after you scroll away from the end and returns to the newest message. While you type, the
+Hide Keyboard button shows too. Both float above the composer in one row, Hide Keyboard at the
+left edge and the arrow at the right edge. While the agent works and the
+composer is empty, its button becomes **Stop**, which presses Escape on the Mac after you
+confirm. In Terminal, agent and shell panes get a key bar (esc, ⌃C, ⇧⇥, ⇥, arrows, Return): menus in a
+TUI, and in a shell ⌃C to stop a command, Tab to complete and the arrows for history.
+When the Mac refuses a key or Stop, for example because someone is typing there, the reason
+shows above the composer. The prompt panel shows in Terminal too, above the key bar. While a message is still on its way to the Mac, the key bar and prompt answers wait.
+The iOS app logs connections, prompts and Host command results to the unified log under the
+subsystem `com.onevcat.prowl.mirror-ios`; collect it with Console.app or `log collect --device`.
+The floating composer
+under both views sends through `agents.input`; a note appears only when the Host refused
+something or a receipt needs a look. While the agent works, Send still delivers: the agent
+gets the message as if it was typed on the Mac. When a draft in the agent's input box on the
+Mac refuses the message, a card above the composer shows that draft and asks what to do:
+**Replace and Send** has the Host clear it first (Claude Code stashes it and puts it back after
+the message is sent; Codex's lines are cut) and then sends; **Bring Draft Here** puts the draft's
+text in front of the message so both can be merged and sent together, which then replaces the
+draft on the Mac; **Cancel** keeps the message on the phone. A draft the screen cannot carry (an
+image, a collapsed paste) can only be replaced or left. After a replacement, the receipt note
+says where the draft went.
 
 ## Protocol and development
 
