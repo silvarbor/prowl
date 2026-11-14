@@ -169,6 +169,30 @@ struct GitClientWorktreeDiscoveryTests {
     #expect(worktrees.map(\.id) == ["/tmp/repo", "/tmp/repo/.worktrees/feature"])
   }
 
+  @Test func worktreesMarkDetachedHeadsAndNameThemByDirectory() async throws {
+    let output = """
+      [
+        {"branch":"main","path":"/tmp/repo","head":"abc","is_bare":false},
+        {"branch":"","path":"/tmp/repo/.worktrees/review-3","head":"def","is_bare":false}
+      ]
+      """
+    let shell = ShellClient(
+      run: { _, _, _ in
+        ShellOutput(stdout: output, stderr: "", exitCode: 0)
+      },
+      runLoginImpl: { _, _, _, _ in
+        Issue.record("worktrees should not use runLogin when direct execution succeeds")
+        return ShellOutput(stdout: "", stderr: "", exitCode: 0)
+      }
+    )
+    let client = GitClient(shell: shell, resolveGit: { _ in .testExecutable })
+
+    let worktrees = try await client.worktrees(for: URL(fileURLWithPath: "/tmp/repo"))
+
+    #expect(worktrees.map(\.name) == ["main", "review-3"])
+    #expect(worktrees.map(\.isDetached) == [false, true])
+  }
+
   @Test func repoRootDoesNotReplayDiscoveryAgainstAnotherEnvironment() async {
     let calls = LockIsolated(0)
     let shell = ShellClient(

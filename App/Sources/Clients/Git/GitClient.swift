@@ -87,7 +87,8 @@ struct GitClient {
           detail: detail,
           location: location,
           repositoryLocation: .local(repositoryRootURL),
-          createdAt: createdAt
+          createdAt: createdAt,
+          isDetached: entry.branch.isEmpty
         ),
         createdAt: sortDate,
         index: index
