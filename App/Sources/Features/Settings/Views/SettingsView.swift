@@ -35,8 +35,10 @@ struct SettingsView: View {
           .tag(SettingsSection.updates)
         Label("GitHub", systemImage: "arrow.triangle.branch")
           .tag(SettingsSection.github)
-        Label("Commands", systemImage: "globe")
+        Label("Commands", systemImage: "command")
           .tag(SettingsSection.customCommands)
+        Label("Remote Mirror", systemImage: "network")
+          .tag(SettingsSection.remoteMirror)
         Label("Advanced", systemImage: "gearshape.2")
           .tag(SettingsSection.advanced)
 
@@ -54,12 +56,24 @@ struct SettingsView: View {
         }
 
         Section("Repositories") {
-          ForEach(repositories) { repository in
-            RepoDisplayName(
-              fallbackName: repository.name,
-              customTitle: customTitles[repository.id]
-            )
-            .tag(SettingsSection.repository(repository.id))
+          // Sidebar order and groups, so the two lists read the same.
+          ForEach(store.repositories.settingsRepositoryListItems()) { item in
+            switch item {
+            case .repository(let repositoryID):
+              repositoryRow(repositoryID, in: repositories, customTitles: customTitles)
+            case .group(_, let title, let repositoryIDs):
+              // A quiet caption, not a row: no tag (cannot be selected) and no icon.
+              Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .padding(.top, 4)
+                .accessibilityAddTraits(.isHeader)
+              ForEach(repositoryIDs, id: \.self) { repositoryID in
+                repositoryRow(repositoryID, in: repositories, customTitles: customTitles)
+                  .padding(.leading, 12)
+              }
+            }
           }
         }
       }
@@ -121,6 +135,11 @@ struct SettingsView: View {
             ProgressView()
               .frame(maxWidth: .infinity, maxHeight: .infinity)
           }
+        }
+      case .remoteMirror:
+        SettingsDetailView {
+          RemoteMirrorSettingsView(store: settingsStore)
+            .navigationTitle("Remote Mirror")
         }
       case .agentDisplay:
         SettingsDetailView {
@@ -206,6 +225,21 @@ struct SettingsView: View {
     }
     .focusedSceneAction(\.closeSettingsWindowAction, enabled: true) {
       dismiss()
+    }
+  }
+
+  @ViewBuilder
+  private func repositoryRow(
+    _ repositoryID: Repository.ID,
+    in repositories: IdentifiedArrayOf<Repository>,
+    customTitles: [Repository.ID: String]
+  ) -> some View {
+    if let repository = repositories[id: repositoryID] {
+      RepoDisplayName(
+        fallbackName: repository.name,
+        customTitle: customTitles[repository.id]
+      )
+      .tag(SettingsSection.repository(repository.id))
     }
   }
 }

@@ -1,4 +1,4 @@
-# Remote Mirror (experimental)
+# Remote Mirror (alpha)
 
 Two Prowl apps can view and control the same Host terminal. The Host keyboard stays
 available. Each pane has one remote owner. Explicit **Take Over** replaces that
@@ -8,26 +8,47 @@ it after the list was read; use the explicit **Take Over** action.
 
 ## Enable and pair
 
-Launch the Mac App with `PROWL_REMOTE_MIRROR=1`. The experiment is hidden and cannot
-start a listener otherwise. Hover over the **Remote Mirror** network button to
-preview, or click to keep it open. Under **Host**, pick **Listen on** and a port,
-then **Start Host**. The picker offers all interfaces (`0.0.0.0`), each of this
-Mac's IPv4 interfaces by name, and this Mac only (`127.0.0.1`); a value saved
-from an earlier version appears as **Custom**. The icon is gray when stopped,
-muted blue when listening, and muted green when at least one pane is mirrored.
+Open **Settings → Remote Mirror** and turn on **Enable Remote Mirror**. The switch is off
+by default. While it is off, the Remote Mirror button and the sidebar section are hidden
+and the Host cannot start a listener; turning it off stops the Host and closes all mirrors
+opened from this Mac.
+
+With the switch on, the Settings section has two groups, named by direction:
+
+- **Connect to This Mac**: this Mac is the Host. A paired iPhone or another Mac sees and
+  controls its Prowl terminals. The group holds the listener status, **Start Listening**
+  and **Stop Listening**, **Start listening when Prowl opens** (off by default),
+  **Listen on**, and **Port**. **Paired Devices** below it lists every paired device.
+- **Connect to Another Mac**: this Mac is the client. It lists the saved Macs and
+  **Connect to a Mac…**. After a pane is selected, the main window comes forward (it
+  reopens if it was closed) and shows the mirror.
+
+**Listen on** offers all interfaces (`0.0.0.0`), each of this Mac's IPv4 interfaces by
+name, and this Mac only (`127.0.0.1`); a value saved from an earlier version appears as
+**Custom**. The address and the port can change only while the listener is stopped. A
+valid edit is saved at once, so a start at launch uses the address and port that Settings
+shows.
+
+The **Remote Mirror** network button in the toolbar opens a small panel for the frequent
+actions: hover to preview, or click to keep it open. It shows the listener status,
+**Start Listening** or **Stop Listening**, **Add a Device…**, the devices that are
+connected now with their mirrored panes, and **Remote Mirror Settings…**. The icon is gray
+when stopped, muted blue when listening, and muted green when at least one pane is mirrored.
 A listener is reachable from the local network or a VPN; the internet cannot reach
 it unless a router forwards the port. Without a paired device key or a live pairing
 code, a connection fails during the TLS handshake.
 
-**Add a Device** opens a modal pairing sheet with a 60-second code, a reachable
-Wi-Fi or VPN address and port, and a QR code. **Copy Connection Details** (⌘C)
-copies the address, port, code, and expiry together. When multiple addresses are
+**Add a Device** opens a modal pairing sheet with a 60-second code and a reachable
+Wi-Fi or VPN address and port. A control at the top selects the device to pair: the
+**iPhone** page shows a QR code to scan in Prowl Mirror; the **Mac** page shows
+**Copy Connection Details** (⌘C), which copies the address, port, code, and expiry
+together. When multiple addresses are
 available, choose **Connection address** first. If the listener is restarting, the sheet waits before generating
-its first code; if Host is off, the sheet offers **Start Host**. **Refresh Code**
+its first code; if the listener is off, the sheet offers **Start Listening**. **Refresh Code**
 replaces the code; **Cancel** invalidates an unused code without stopping Host or
 revoking a device that already paired. When a device completes pairing, the sheet
 shows **Paired with** its name and closes by itself. On the other Mac, open
-**Remote Mirror → Client → Connect to a New Host** and enter the address (an IP or a
+**Settings → Remote Mirror → Connect to Another Mac → Connect to a Mac…** and enter the address (an IP or a
 host name such as `mini.local`), port, and code. On iOS, **Pair with a Mac** on the
 first launch, or **Add Host…** in the Mac menu, takes the same address, port and code, or
 scans the QR code.
@@ -36,12 +57,11 @@ Keychain, then opens a new authenticated connection. A pairing-only connection
 cannot list or operate panes. No extra long-lived code is required. A saved
 enrollment remains available for Retry if the first runtime connection fails.
 
-On Mac, paired Hosts are listed under **Client** with their name and last
-connection time. This list holds addresses only, stored outside Keychain, so hover
-previews show it without reading credentials. Records written by an earlier
-version are imported from Keychain once, after the first click on the Remote
-Mirror button; if that import fails, a hint keeps **Connect to a New Host**
-available and **Try Again** repeats it. Click **Connect** beside a Host to
+On Mac, paired Hosts are listed under **Connect to Another Mac** with their name and last
+connection time. This list holds addresses only, stored outside Keychain. Records written
+by an earlier version are imported from Keychain once, when the Remote Mirror section of
+Settings first shows with the switch on; if that import fails, a hint keeps
+**Connect to a Mac…** available and **Try Again** repeats it. Click **Connect** beside a Host to
 authenticate and open the pane picker without entering the address or code again.
 The **…** menu offers **Rename…**, a name shown on this Mac only, and **Forget**,
 which removes the saved access. Saved entries do not imply that the Host is
@@ -55,24 +75,36 @@ Host stop/start and App restart. They do not discover a changed IP address. On i
 a paired Host stays in the Hosts list with its credential and reconnects without a
 code; **Rename** changes the name shown on the phone, **Forget** removes the entry and
 its credential, and a Host that no longer recognizes the device needs a new pairing
-through **Add Host**. A new Host or revoked device requires a fresh pairing window. Old
-experiment keys are not migrated.
+through **Add Host**. The Agents screen then says so at once and stops trying by itself,
+because the Host stops answering an address after 12 rejected attempts in a minute; pairing
+again from **Add Host** connects without a restart of the app. A wrong pairing code and an
+address where nothing listens fail at once too, with the reason. A new Host or revoked
+device requires a fresh pairing window. Old experiment keys are not migrated. When the app
+goes to the background, an open pane closes its mirror so the Host frees the pane; when the
+app comes back, the pane connects again by itself and a message still in flight is checked
+with its receipt.
 
-The Host section lists paired devices with **Connected** and the active mirror
+If the saved devices cannot be read (for example, the keychain is locked), **Paired
+Devices** shows the failure and **Try Again** in place of an empty list.
+**Paired Devices** in Settings lists paired devices, also before the listener starts, with **Connected** and the active mirror
 count, **Last seen** for a device that is offline, or **Paired · never connected**,
 plus mirrored pane names and **Revoke**, which asks for confirmation. Each active
-mirror has a green dot and a red disconnect button. **Disconnect** asks for
+mirror has a green dot and a red disconnect button; the toolbar panel shows the same rows
+for the connected devices, without **Revoke**. **Disconnect** asks for
 confirmation, then disconnects only that mirror. The terminal keeps running,
 other mirrors remain connected, and the device stays paired and can reconnect.
 If that connection has already ended or been replaced, confirmation does nothing. A device
 browsing panes can be connected with zero mirrors.
+Each device shows an iPhone, iPad or Mac icon from the platform that it reported at pairing;
+a device paired by an earlier version shows a generic icon until it pairs again.
 Device labels use the Mac local host name or the iOS system device name; pairing
 does not resolve a DNS name to obtain this label.
 
 Revocation removes the persisted secret and disconnects all connections for that device;
 other devices remain connected. **Revoke All Devices…** asks for confirmation, then
 removes every device's saved authorization, including offline devices, disconnects
-all clients, and invalidates the current pairing code. Host keeps listening and
+all clients, and invalidates the current pairing code. **Revoke** and **Revoke All Devices…**
+do not start a stopped listener. A running Host keeps listening and
 local terminals keep running. Saved client connections cannot reconnect until each
 device pairs again with a fresh code. In the Mac connection form, **Pair Again…**
 shows the code field and bypasses saved access even if the connection error was
@@ -252,7 +284,9 @@ A draft someone left in the Agent's input box refuses the message, and the refus
 the draft's text and whether the Host could replace it (`on_draft`, docs-ai 090). On request,
 the Host clears a replaceable draft the Agent's own way before the paste: Claude Code stashes
 it with ⌃S and puts it back in the box by itself after the message is sent (⌃S toggles it);
-Codex kills its lines with ⌃U.
+Codex kills its lines with ⌃U. `on_draft: discard` removes the draft so that it does not come
+back: Claude Code gets ⌃E then ⌃U (⌃U alone removes only the text before the cursor), which
+is verified for a draft of one row; Codex's ⌃U already removes it for good.
 Every key goes under the same guard as the mirror's other keys, the box is re-read as empty
 before the text goes in, and the receipt names the replaced draft. Devin drafts and a box that
 does not read empty after clearing keep refusing.
@@ -291,24 +325,32 @@ blocks and tables), and each run of tool calls between two messages as one quiet
 ("6 tool calls", with failures counted in red and the running call shown with a turning
 hourglass while the agent works). A row opens to one line per call, and a line opens its command, changes and output
 in a sheet. Thinking the agent shows as text in its pane (Claude Code's visible thinking,
-Codex's reasoning summary) is its own row between the steps, in secondary type. While the agent waits on a choice (a permission, a question, Codex's approval), a panel
-above the composer shows the question, what it is about (such as the command to approve) and
-the choices; tap one to answer. In a multi-select question, each tap checks or unchecks a box
+Codex's reasoning summary) is its own row between the steps, in secondary type. While the agent waits on a choice (a permission, a question, Codex's approval, or the folder
+trust question Claude Code and Codex ask before the first turn in a new folder), a panel
+above the composer shows the question, what it is about (the command to approve and, when
+Claude Code gives one, its note on why the command needs approval; the folder for a trust
+question) and the choices; tap one to answer. In a multi-select question, each tap checks or unchecks a box
 on the Mac and **Submit** sends the checked ones. A question in several parts ends on Claude's
 "Ready to submit your answers?" page, which the panel offers too. The Host checks that the Mac
 still shows the same question before it presses any key, so a stale tap is refused with a
-reason, and typed answers stay on the Mac. Answered prompts leave one line in the chat. Instructions that Prowl adds to a launch prompt, such
+reason, and typed answers stay on the Mac. The panel shows the whole text of what the question is about; a long command scrolls inside its box. Answered prompts leave one line in the chat. Instructions that Prowl adds to a launch prompt, such
 as the dispatch completion protocol, fold under **Prowl instructions** in your message.
 On a wide screen such as an iPad, the chat and its composer keep a readable column in the
 middle. The chat opens at the newest message and stays there as messages arrive. The arrow button shows
 only after you scroll away from the end and returns to the newest message. While you type, the
 Hide Keyboard button shows too. Both float above the composer in one row, Hide Keyboard at the
-left edge and the arrow at the right edge. While the agent works and the
+left edge and the arrow at the right edge; the chat leaves room under its last message so the
+button does not cover it. While the agent works and the
 composer is empty, its button becomes **Stop**, which presses Escape on the Mac after you
 confirm. In Terminal, agent and shell panes get a key bar (esc, ⌃C, ⇧⇥, ⇥, arrows, Return): menus in a
 TUI, and in a shell ⌃C to stop a command, Tab to complete and the arrows for history.
 When the Mac refuses a key or Stop, for example because someone is typing there, the reason
 shows above the composer. The prompt panel shows in Terminal too, above the key bar. While a message is still on its way to the Mac, the key bar and prompt answers wait.
+When the agent is blocked and the Host cannot read the question as a menu (a dialog layout it
+does not know, or a typed answer), there is no prompt panel. A red **Blocked** strip shows
+instead. In Chat it has **Answer in Terminal**, which opens the terminal screen; the dialog
+is on that screen and the key bar answers it. The strip says "on the Mac" only when the Host
+takes no keys for the pane.
 The iOS app logs connections, prompts and Host command results to the unified log under the
 subsystem `com.onevcat.prowl.mirror-ios`; collect it with Console.app or `log collect --device`.
 The floating composer
@@ -318,8 +360,10 @@ gets the message as if it was typed on the Mac. When a draft in the agent's inpu
 Mac refuses the message, a card above the composer shows that draft and asks what to do:
 **Replace and Send** has the Host clear it first (Claude Code stashes it and puts it back after
 the message is sent; Codex's lines are cut) and then sends; **Bring Draft Here** puts the draft's
-text in front of the message so both can be merged and sent together, which then replaces the
-draft on the Mac; **Cancel** keeps the message on the phone. A draft the screen cannot carry (an
+text in front of the message so both can be merged and sent together, which then removes the
+draft on the Mac for good (it is part of the message now, so Claude Code must not bring it
+back; a Host from before `discard` stashes it as before); **Cancel** keeps the message on the
+phone. A draft the screen cannot carry (an
 image, a collapsed paste) can only be replaced or left. After a replacement, the receipt note
 says where the draft went.
 

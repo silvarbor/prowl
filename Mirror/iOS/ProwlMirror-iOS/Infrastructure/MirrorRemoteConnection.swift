@@ -78,7 +78,8 @@ final class MirrorRemoteConnection: MirrorTransport {
       let peer = MirrorConnection(
         NWConnection(
           host: .init(configuration.address),
-          port: .init(rawValue: configuration.port)!, using: parameters))
+          port: .init(rawValue: configuration.port)!, using: parameters),
+        isPairing: configuration.credential == nil)
       connection = peer
       peer.onMessage = { [weak self] in self?.receive($0) }
       peer.onClose = { [weak self] reason in
@@ -139,7 +140,8 @@ final class MirrorRemoteConnection: MirrorTransport {
                 name: name,
                 proof: MirrorAuthentication.proof(
                   key: Data(code.utf8), host: value.hostID,
-                  nonce: value.nonce, purpose: "pair", identity: name))))
+                  nonce: value.nonce, purpose: "pair", identity: name),
+                platform: UIDevice.current.userInterfaceIdiom == .pad ? "ipados" : "ios")))
         }
       case .paired(let credential):
         guard configuration.credential == nil, credential.hostID == challenge?.hostID,

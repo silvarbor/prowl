@@ -47,6 +47,10 @@ hostID and a fresh 32-byte nonce. Device proves its secret using HMAC-SHA256 ove
 UTF-8 `device:HOST_UUID:DEVICE_UUID:` followed by nonce bytes. Enrollment proves the
 code over `pair:HOST_UUID:DEVICE_NAME:` plus nonce. UUID strings use the Foundation
 uppercase canonical spelling. Proofs are Base64 Data fields in control JSON.
+The `pair` control can carry an optional `platform` string (`ios`, `ipados`, `macos`,
+`android`). It is a display hint for the Host's device list and is not part of the proof.
+The Host stores a value that it knows and ignores any other value; a client that sends
+none shows with a generic icon.
 Different purpose, Host, identity or nonce cannot reuse a proof.
 
 Before proof validation only authentication/enrollment and connection heartbeats
@@ -155,18 +159,22 @@ to end: a working agent takes the text as typed input. A blocked agent refuses i
 detector also reports blocked, because the signal stays until the turn ends. `text-v1`
 remains the mobile representation. `agentsDispatch` retains its automation semantics.
 
-The payload takes an optional `on_draft` (`refuse`, the default, or `replace`; docs-ai 090).
+The payload takes an optional `on_draft` (`refuse`, the default, `replace`, or `discard`; docs-ai 090).
 A draft or an attachment in the agent's input box refuses under `refuse` with
 `DISPATCH_TARGET_BUSY` and `error.details.input`: `reason` (`draft`, `unrecognized`,
 `editing`, `composing`, or `clearing` when a replacement did not leave the box empty),
 `draft` (`text` as the screen shows it; `is_complete` only for one screen row without a
 marker, since several rows cannot tell a soft wrap from a newline and a collapsed paste or an
 image marker hides content), `replaceable` (false for an image attachment, whose clearing is
-unverified), and `recovery` (`stash` when the agent puts the draft back in its box by itself
-after the message is sent; the same key toggles it). Under `replace`, a replaceable draft is cleared the agent's own
+unverified), `recovery` (`stash` when the agent puts the draft back in its box by itself
+after the message is sent; the same key toggles it), and `discardable` (whether `discard` would
+remove it; absent on a Host from before `discard`, which rejects that value). Under `replace`, a replaceable draft is cleared the agent's own
 way first — Claude Code's ⌃S stash, Codex's ⌃U line kills — under the same key guard as
 `agentKeys`, and the box is re-read as empty before the text goes in; a dim hint is never a
-draft. A Host that does not know `on_draft` ignores it and refuses drafts as before.
+draft. Under `discard`, the draft is removed so that it does not come back, for a client that
+already took its text: Claude Code's ⌃E then ⌃U, only for a draft of one row (`is_complete`);
+Codex's ⌃U. The receipt's `replaced_draft` then has no `recovery`. A Host that does not know
+`on_draft` ignores it and refuses drafts as before.
 
 Success has `command: "agents.input"`, schema `prowl.cli.agents.input.v1`, and
 `data.input` containing UTF-8 `bytes`, `characters`, `source`, `trailing_enter_sent`, and,

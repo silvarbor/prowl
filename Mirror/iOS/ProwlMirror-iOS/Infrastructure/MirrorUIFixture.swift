@@ -123,9 +123,16 @@
         events.append(
           .init(.agentStatus, .status(.init(state: .working)), at: Date(), source: .osc, sequence: last.sequence + 2))
       }
+      // `--mirror-ui-blocked-fixture`: the agent waits on a prompt that the Host did not read as a menu.
+      let blocked = CommandLine.arguments.contains("--mirror-ui-blocked-fixture")
+      if blocked, let last = events.last {
+        let status = MirrorConversationEvent.Status(state: .blocked, kind: "permission")
+        events.append(.init(.agentStatus, .status(status), at: Date(), source: .osc, sequence: last.sequence + 1))
+      }
       channel.conversation = events
       channel.agent = agent
       if CommandLine.arguments.contains("--mirror-ui-running-tool-fixture") { channel.setAgentState(.working) }
+      if blocked { channel.setAgentState(.blocked) }
       return channel
     }
 
@@ -354,7 +361,18 @@
           case .agentsInput(let input) where CommandLine.arguments.contains("--mirror-ui-refuse-input-draft"):
             // The Mac's input box holds a draft (docs-ai 090): refused until the message asks to
             // replace it, then delivered with the stashed draft in the receipt.
-            if input.onDraft == "replace" {
+            if input.onDraft == "discard" {
+              // Removed for good: no recovery in the receipt.
+              payload = .object([
+                "ok": .bool(true), "command": .string("agents.input"),
+                "data": .object([
+                  "input": .object([
+                    "bytes": .number(Double(input.prompt.utf8.count)), "trailing_enter_sent": .bool(true),
+                    "replaced_draft": .object(["text": .string("review the tests"), "is_complete": .bool(true)]),
+                  ])
+                ]),
+              ])
+            } else if input.onDraft == "replace" {
               payload = .object([
                 "ok": .bool(true), "command": .string("agents.input"),
                 "data": .object([
@@ -377,7 +395,7 @@
                     "input": .object([
                       "reason": .string("draft"),
                       "draft": .object(["text": .string("review the tests"), "is_complete": .bool(true)]),
-                      "replaceable": .bool(true), "recovery": .string("stash"),
+                      "replaceable": .bool(true), "recovery": .string("stash"), "discardable": .bool(true),
                     ])
                   ]),
                 ]),
