@@ -135,6 +135,27 @@ struct TerminalTabManagerTests {
     #expect(manager.tabs.map(\.id) == [third, first, second])
   }
 
+  @Test func tabOrderCallbackFiresForReorderCloseAndInsertOnly() {
+    let manager = TerminalTabManager()
+    var calls = 0
+    manager.onTabOrderChanged = { calls += 1 }
+    let first = manager.createTab(title: "one", icon: nil)
+    let second = manager.createTab(title: "two", icon: nil)
+    #expect(calls == 2)
+
+    manager.reorderTabs([second, first])
+    #expect(calls == 3)
+
+    manager.reorderTabs([second, first])
+    manager.updateTitle(first, title: "renamed")
+    manager.updateDirty(first, isDirty: true)
+    manager.selectTab(second)
+    #expect(calls == 3)
+
+    manager.closeTab(first)
+    #expect(calls == 4)
+  }
+
   @Test func updateDirtyUpdatesTabState() {
     let manager = TerminalTabManager()
     let tabId = manager.createTab(title: "one", icon: nil)
