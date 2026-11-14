@@ -107,10 +107,30 @@ nonisolated struct AgentStateMachine: Sendable {
   private var suppressedSessionID: String?
   private var programStatus: ProgramStatusEvidence?
   private var programStatusRevision: UInt64 = 0
+  /// The screen rule that proves the agent's input box is free. Set by the coordinator
+  /// for a producer whose `working` report outlives its turn: Codex reports `working`
+  /// for as long as a background terminal runs, which can be hours after the composer
+  /// came back. While the root says `working`, a screen that keeps matching this rule
+  /// for `inputReadyWindow` decides Idle (`osc.working.inputReady`), because "can we
+  /// type into the input box" is what idle waits and dispatch ask.
+  var inputReadyRule: AgentScreenRuleID?
+  /// Long enough that two screen reads of one frame, or a repaint gap at a turn's start,
+  /// do not end a turn; shorter than the delegated 2 s cadence, so the second read decides.
+  var inputReadyWindow: TimeInterval = 1
+  private var inputReadySince: TimeInterval?
+  /// A screen read confirmed the rule at least `inputReadyWindow` after the first one. Only a
+  /// read sets it, so a later push or tick cannot grant Idle from a single frame.
+  private var inputReadyConfirmed = false
   private(set) var decision = AgentStateDecision(state: .unknown, reason: .screen(.noRuleMatched))
 
   /// An eligible OSC 7501 root record currently decides the state.
   var hasProgramStatusAuthority: Bool { programStatus != nil }
+
+  /// The tick must keep reading the screen under authority: the root says `working` and
+  /// the producer's `working` can outlive its turn.
+  var needsScreenUnderAuthority: Bool {
+    inputReadyRule != nil && programStatus?.root == .working
+  }
 
   @discardableResult
   mutating func receive(_ event: AgentDetectionEvent, now: TimeInterval) -> AgentStateDecision {
@@ -173,7 +193,15 @@ nonisolated struct AgentStateMachine: Sendable {
       suppressedSessionID = nil
       for session in roots.keys { roots[session]?.lastActivity = nil }
     }
+    // A new root state starts the free-input-box clock over: the earlier frames described
+    // the previous state.
+    if evidence?.root != programStatus?.root { resetInputReady() }
     programStatus = evidence
+  }
+
+  private mutating func resetInputReady() {
+    inputReadySince = nil
+    inputReadyConfirmed = false
   }
 
   private mutating func observeInventory(_ sessions: Set<String>) {
@@ -223,6 +251,16 @@ nonisolated struct AgentStateMachine: Sendable {
   ) {
     screen = detection
     screenContentID = contentID
+    if let inputReadyRule {
+      // A read that cannot confirm the free input box, `unknown` included, ends the check.
+      if detection.state != .unknown, detection.reason == .matched(inputReadyRule) {
+        let since = inputReadySince ?? now
+        inputReadySince = since
+        inputReadyConfirmed = now - since >= inputReadyWindow
+      } else {
+        resetInputReady()
+      }
+    }
     if detection.state != .unknown {
       if requiresConfirmedIdleScreen, detection.state == .idle, stableScreen == .working {
         // Hold until the Idle verdict has *kept* arriving for the window: two reads
@@ -263,7 +301,13 @@ nonisolated struct AgentStateMachine: Sendable {
   }
 
   private func resolve(now: TimeInterval) -> AgentStateDecision {
-    if let programStatus { return programStatus.decision }
+    if let programStatus {
+      let decision = programStatus.decision
+      if decision.state == .working, inputReadyConfirmed {
+        return AgentStateDecision(state: .idle, reason: .programStatus(.workingInputReady))
+      }
+      return decision
+    }
     if let native, nativeAvailable {
       let suppressed = suppressedSessionID == native.sessionID && suppressedScreen == screen
       let blocked = native.state == .blocked || (screen.state == .blocked && !suppressed)

@@ -208,6 +208,96 @@ struct AgentStateMachineProgramStatusTests {
     #expect(withdrawn.screenReason?.identifier == "pi.working")
   }
 
+  private static let emptyComposer = CodexScreenProfile.RuleID.emptyComposer
+
+  private func freeComposer() -> AgentDetectionEvent {
+    screen(.idle, reason: .matched(Self.emptyComposer))
+  }
+
+  private func codexMachine() -> AgentStateMachine {
+    var machine = AgentStateMachine()
+    machine.inputReadyRule = Self.emptyComposer
+    return machine
+  }
+
+  @Test func workingRootYieldsToAFreeInputBoxOnceTheScreenKeepsSayingSo() {
+    var machine = codexMachine()
+    _ = machine.receive(osc(.working, revision: 1), now: 0)
+    #expect(machine.needsScreenUnderAuthority)
+
+    let first = machine.receive(freeComposer(), now: 1)
+    #expect(first.state == .working)
+    #expect(first.reason.identifier == "osc.working")
+
+    let held = machine.receive(freeComposer(), now: 3)
+    #expect(held.state == .idle)
+    #expect(held.reason.identifier == "osc.working.inputReady")
+    #expect(held.hasOutstandingWork == false)
+    #expect(held.reason.isProgramStatus)
+    #expect(held.screenReason == .delegated)
+  }
+
+  @Test func aSingleFreeInputBoxFrameDoesNotEndAWorkingTurn() {
+    var machine = codexMachine()
+    _ = machine.receive(osc(.working, revision: 1), now: 0)
+    _ = machine.receive(freeComposer(), now: 1)
+    let repeated = machine.receive(freeComposer(), now: 1)
+    #expect(repeated.state == .working)
+  }
+
+  @Test func aLaterReportOrAnUnreadableScreenCannotGrantIdleFromOneFrame() {
+    var machine = codexMachine()
+    _ = machine.receive(osc(.working, revision: 1), now: 0)
+    _ = machine.receive(freeComposer(), now: 1)
+    // A push or tick after the window is not a second matching read.
+    #expect(machine.receive(osc(.working, revision: 2), now: 3).state == .working)
+    #expect(machine.receive(.tick, now: 4).state == .working)
+
+    _ = machine.receive(screen(.unknown), now: 5)
+    // The unreadable frame ended the check: the next free frame starts it again.
+    #expect(machine.receive(freeComposer(), now: 6).state == .working)
+    #expect(machine.receive(freeComposer(), now: 8).state == .idle)
+  }
+
+  @Test func aRunningTurnFooterBringsWorkingBack() {
+    var machine = codexMachine()
+    _ = machine.receive(osc(.working, revision: 1), now: 0)
+    _ = machine.receive(freeComposer(), now: 1)
+    #expect(machine.receive(freeComposer(), now: 3).state == .idle)
+
+    let footer = AgentScreenDetection(state: .working, reason: .matched(CodexScreenProfile.RuleID.workingFooter))
+    #expect(machine.receive(.screen(footer), now: 4).state == .working)
+    // The window starts over: one free frame after the footer is not enough.
+    #expect(machine.receive(freeComposer(), now: 5).state == .working)
+    #expect(machine.receive(freeComposer(), now: 7).state == .idle)
+  }
+
+  @Test func aNewRootStateStartsTheFreeInputBoxClockOver() {
+    var machine = codexMachine()
+    _ = machine.receive(osc(.working, revision: 1), now: 0)
+    _ = machine.receive(freeComposer(), now: 1)
+    #expect(machine.receive(freeComposer(), now: 3).state == .idle)
+
+    _ = machine.receive(osc(.idle, revision: 2), now: 4)
+    let next = machine.receive(osc(.working, revision: 3), now: 5)
+    #expect(next.state == .working)
+    #expect(next.reason.identifier == "osc.working")
+  }
+
+  @Test func theOverrideNeverTouchesBlockedOrAProducerWithoutTheRule() {
+    var codex = codexMachine()
+    _ = codex.receive(osc(.blocked, kind: .permission, revision: 1), now: 0)
+    #expect(!codex.needsScreenUnderAuthority)
+    _ = codex.receive(freeComposer(), now: 1)
+    #expect(codex.receive(freeComposer(), now: 3).state == .blocked)
+
+    var other = AgentStateMachine()
+    _ = other.receive(osc(.working, revision: 1), now: 0)
+    #expect(!other.needsScreenUnderAuthority)
+    _ = other.receive(freeComposer(), now: 1)
+    #expect(other.receive(freeComposer(), now: 3).state == .working)
+  }
+
   @Test func evidenceDecisionIsThePureMappingSharedWithShadowComparison() {
     let decision = evidence(root: .blocked, rootKind: .auth).decision
     #expect(decision.state == .blocked)

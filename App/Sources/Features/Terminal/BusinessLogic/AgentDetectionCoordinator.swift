@@ -81,6 +81,11 @@ final class AgentDetectionCoordinator {
     return machine.hasProgramStatusAuthority
   }
 
+  /// A delegated tick still reads the screen: the producer's `working` can outlive its
+  /// turn, and only a free input box on screen shows that (`AgentStateMachine.inputReadyRule`).
+  /// The schedule stays on the 2 s cadence; only a Working root pays for the read.
+  var readsScreenUnderAuthority: Bool { machine.needsScreenUnderAuthority }
+
   func invalidate() {
     revision &+= 1
     lastCapturedAt = nil
@@ -148,6 +153,8 @@ final class AgentDetectionCoordinator {
       // Agents whose Working evidence is screen-only need a confirmed Idle window
       // before a lone Idle verdict may end their turn (see `AgentStateMachine`).
       machine.requiresConfirmedIdleScreen = agent.requiresConfirmedIdleScreen
+      // Codex reports `working` while a background terminal runs after its turn ended.
+      machine.inputReadyRule = agent == .codex ? CodexScreenProfile.RuleID.emptyComposer : nil
       self.process = process
       self.configRoot = configRoot
       // Providers read local files and descriptors, so only a local generation gets one.

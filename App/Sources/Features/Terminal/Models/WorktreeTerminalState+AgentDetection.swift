@@ -176,6 +176,7 @@ extension WorktreeTerminalState {
       coordinator.isDelegated && agentDetectionSchedules[surfaceID] == .delegated
       && !agentDetectionFullTickRequests.contains(surfaceID)
       && !isAgentDetectionSettling(surfaceID: surfaceID, now: now)
+      && !coordinator.readsScreenUnderAuthority
       && process != nil && process == coordinator.boundProcess
     if !delegated { agentDetectionFullTickRequests.remove(surfaceID) }
     let (activeText, detection) = pollScreen(for: view, surfaceID: surfaceID, agent: agent, delegated: delegated)
