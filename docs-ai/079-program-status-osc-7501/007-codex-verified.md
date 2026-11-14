@@ -40,6 +40,16 @@ without a Done badge, clear restoring provider sampling, and foreign/stale roots
 The detailed producer and app observations are in [producer-baseline.md](producer-baseline.md).
 Local raw evidence is under `/tmp/prowl-codex-osc/`; it is not a repository artifact.
 
+## Follow-up: background terminals
+
+Codex derives `working` from a running task or a live unified-exec process, so a
+background terminal keeps the root at `working` after the turn ended and the composer
+came back. The sidebar then showed a spinner on a pane that accepted input. While the
+root says `working`, the delegated tick now also reads the screen. Two reads at least 1 s
+apart that match `codex.emptyComposer` decide Idle with reason `osc.working.inputReady`
+and no outstanding work; any other verdict, or a new root state, restarts the clock.
+The cost is one screen read every 2 s on a Codex pane whose root is `working`.
+
 ## Boundaries
 
 - Codex's Idle is not completion evidence: cancellation also emits Idle. The

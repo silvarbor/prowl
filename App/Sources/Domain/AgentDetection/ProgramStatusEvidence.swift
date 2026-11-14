@@ -46,6 +46,9 @@ extension DetectedAgent {
 /// The reason a decision is OSC-driven; `identifier` is the public `detection_reason`.
 nonisolated enum ProgramStatusReason: Equatable, Sendable {
   case working
+  /// The root reports `working`, but the screen has shown a free input box for a while:
+  /// Codex keeps reporting `working` while a background terminal runs after its turn ended.
+  case workingInputReady
   case blocked(GhosttyProgramStatusReport.Kind?)
   case idle
   case done
@@ -55,6 +58,7 @@ nonisolated enum ProgramStatusReason: Equatable, Sendable {
   var identifier: String {
     switch self {
     case .working: "osc.working"
+    case .workingInputReady: "osc.working.inputReady"
     case .blocked(let kind): "osc.blocked.\(kind?.rawValue ?? "unspecified")"
     case .idle: "osc.idle"
     case .done: "osc.done"
@@ -68,7 +72,7 @@ nonisolated enum ProgramStatusReason: Equatable, Sendable {
   var earnsDoneBadge: Bool {
     switch self {
     case .done, .error: true
-    case .working, .blocked, .idle, .childBlocked: false
+    case .working, .workingInputReady, .blocked, .idle, .childBlocked: false
     }
   }
 }

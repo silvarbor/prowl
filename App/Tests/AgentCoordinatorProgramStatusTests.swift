@@ -131,6 +131,25 @@ struct AgentCoordinatorProgramStatusTests {
     #expect(codex.isDelegated)
   }
 
+  @Test func onlyAWorkingCodexRootKeepsReadingTheScreen() async {
+    let codex = AgentDetectionCoordinator(sample: { _, _ in [.unavailable] })
+    _ = await codex.observe(
+      agent: .codex, process: generation, screen: legacyWorking, configRoot: nil,
+      programStatus: store([(report(.working, app: "codex"), 1)]))
+    #expect(codex.isDelegated)
+    #expect(codex.readsScreenUnderAuthority)
+
+    _ = codex.receive(programStatus: store([(report(.working, app: "codex"), 1), (report(.idle, app: "codex"), 2)]))
+    #expect(!codex.readsScreenUnderAuthority)
+
+    let claude = verified()
+    _ = await claude.observe(
+      agent: .claude, process: generation, screen: legacyWorking, configRoot: nil,
+      programStatus: store([(report(.working), 1)]))
+    #expect(claude.isDelegated)
+    #expect(!claude.readsScreenUnderAuthority)
+  }
+
   @Test(arguments: [
     (DetectedAgent.amp, "amp"),
     (.antigravity, "antigravity"),

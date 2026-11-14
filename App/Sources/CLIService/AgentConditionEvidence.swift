@@ -171,7 +171,7 @@ enum AgentConditionEvidence {
     case .logTurnEnded, .native(.idle): true
     case .programStatus(let reason):
       switch reason {
-      case .idle, .done, .error: true
+      case .idle, .done, .error, .workingInputReady: true
       case .working, .blocked, .childBlocked: false
       }
     default: false
