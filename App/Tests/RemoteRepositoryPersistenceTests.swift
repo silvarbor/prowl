@@ -185,7 +185,7 @@ struct RemoteRepositoryPersistenceTests {
       return false
     }
 
-    #expect(payload.version == 3)
+    #expect(payload.version == 4)
     #expect(restored == [remote])
   }
 
@@ -214,20 +214,26 @@ struct RemoteRepositoryPersistenceTests {
     let remote = RemoteRepositoryFixtures.location("/srv/app")
     let otherHost = RepositoryLocation.remote(hostProfileID: UUID(), path: "/srv/app-wt")
     let json = """
-      {"version": 3, "repositories": [{"rootPath": "\(remote.id)", "name": "app", "kind": "git",
-        "worktrees": [{"name": "wt", "detail": "", "workingDirectoryPath": "\(otherHost.id)"}]}]}
+      {"version": 4, "repositories": [{"rootPath": "\(remote.id)", "name": "app", "kind": "git",
+        "worktrees": [{"name": "wt", "detail": "", "workingDirectoryPath": "\(otherHost.id)",
+          "isDetached": false}]}]}
       """
     let payload = try JSONDecoder().decode(RepositorySnapshotCachePayload.self, from: Data(json.utf8))
 
     #expect(payload.restoreRepositories { _ in true } == nil)
   }
 
-  @Test func aVersion2SnapshotStillRestoresItsLocalRepositories() throws {
-    let json =
-      #"{"version": 2, "repositories": [{"rootPath": "/tmp/repo", "name": "repo", "kind": "git", "worktrees": []}]}"#
+  /// A snapshot before version 4 cannot tell a detached worktree from an attached one, so it is
+  /// discarded, and the first launch reads the repositories from Git instead.
+  @Test(arguments: [2, 3])
+  func aSnapshotBeforeVersion4IsDiscarded(version: Int) throws {
+    let json = """
+      {"version": \(version), "repositories": [{"rootPath": "/tmp/repo", "name": "repo", "kind": "git",
+        "worktrees": []}]}
+      """
     let payload = try JSONDecoder().decode(RepositorySnapshotCachePayload.self, from: Data(json.utf8))
 
-    #expect(payload.restoreRepositories { _ in true }?.map(\.id) == ["/tmp/repo"])
+    #expect(payload.restoreRepositories { _ in true } == nil)
   }
 
   private static func localRepository(_ path: String) -> Repository {

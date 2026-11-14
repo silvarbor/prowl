@@ -228,8 +228,9 @@ private nonisolated func discardRepositorySnapshot(at url: URL) {
 nonisolated struct RepositorySnapshotCachePayload: Codable, Equatable, Sendable {
   /// Version 3 (docs-ai 084 B2): repositories and worktrees are stored by location ID. A
   /// local location's ID is its path, so a version 2 snapshot reads the same way.
-  nonisolated static let currentVersion = 3
-  nonisolated static let readableVersions = 2...3
+  /// Version 4 records detached worktrees; an older snapshot cannot tell them from attached ones.
+  nonisolated static let currentVersion = 4
+  nonisolated static let readableVersions = 4...4
   nonisolated static let maxSnapshotFileBytes = 2 * 1024 * 1024
   nonisolated static let maxRepositories = 256
   nonisolated static let maxWorktreesPerRepository = 512
@@ -359,12 +360,15 @@ extension RepositorySnapshotCachePayload {
     /// The worktree's location ID: a local path, or an encoded remote location.
     let workingDirectoryPath: String
     let createdAt: Date?
+    // Optional so an older snapshot still decodes and the version check discards it.
+    let isDetached: Bool?
 
     init(worktree: Worktree) {
       name = worktree.name
       detail = worktree.detail
       workingDirectoryPath = worktree.location.id
       createdAt = worktree.createdAt
+      isDetached = worktree.isDetached
     }
 
     func restore(
@@ -382,7 +386,8 @@ extension RepositorySnapshotCachePayload {
         detail: detail,
         workingDirectory: worktreeURL,
         repositoryRootURL: repositoryRootURL,
-        createdAt: createdAt
+        createdAt: createdAt,
+        isDetached: isDetached ?? false
       )
     }
   }
