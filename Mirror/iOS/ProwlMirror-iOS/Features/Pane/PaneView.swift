@@ -13,6 +13,7 @@ struct PaneView: View {
   @State private var isComposing = false
   @Environment(MirrorHostSessions.self) private var sessions
   @Environment(\.verticalSizeClass) private var verticalSizeClass
+  @Environment(\.scenePhase) private var scenePhase
 
   /// A pane reached from the roster; `session` is a fresh, unopened connection to its Host.
   init(route: MirrorPaneRoute, session: MirrorSession) {
@@ -52,6 +53,8 @@ struct PaneView: View {
   }
 
   private var compactWhileComposing: Bool { isComposing && verticalSizeClass == .compact }
+  /// The height of the floating button row, less the gap the chat already leaves at its end.
+  @ScaledMetric(relativeTo: .body) private var floatingRowHeight: CGFloat = 36
   /// The composer's width; the floating buttons line up with its edges.
   private var barWidth: CGFloat {
     session.mode == .conversation ? ConversationView.readableWidth + 8 : .infinity
@@ -66,7 +69,10 @@ struct PaneView: View {
   var body: some View {
     Group {
       switch session.mode {
-      case .conversation: ConversationView(session: session, showsLatest: !compactWhileComposing)
+      case .conversation:
+        ConversationView(
+          session: session, showsLatest: !compactWhileComposing,
+          endClearance: isComposing && !compactWhileComposing ? floatingRowHeight : 0)
       case .screen: ScreenView(session: session, showsControls: !compactWhileComposing)
       }
     }
@@ -107,7 +113,9 @@ struct PaneView: View {
           }
           .transition(.move(edge: .bottom).combined(with: .opacity))
         } else if state == .blocked, session.status == .live {
-          MirrorBlockedStrip(kind: session.conversation.status?.kind)
+          MirrorBlockedStrip(
+            kind: session.conversation.status?.kind, answersWithKeys: session.keysAvailable,
+            showTerminal: terminalAnswer)
         }
         if session.mode == .screen, session.keysAvailable, !compactWhileComposing {
           MirrorKeyBar(session: session)
@@ -152,7 +160,19 @@ struct PaneView: View {
       if launched { session.expectAgent(of: pane) }
       session.open(pane, mode: pane.conversation == .available ? .conversation : .screen)
     }
-    .onDisappear { if opensOnAppear { session.disconnect() } }
+    .onDisappear {
+      guard opensOnAppear else { return }
+      session.disconnect()
+      if let host { sessions.existing(for: host)?.paneReleased(pane.id) }
+    }
+    // The roster connection pauses with the app (`MirrorHostSessions`); so does this pane's.
+    .onChange(of: scenePhase) { _, phase in
+      switch phase {
+      case .background: session.suspend()
+      case .active: session.foreground()
+      default: break
+      }
+    }
     .onChange(of: rosterPane) { _, current in
       if let current { session.refreshDescriptor(current) }
     }
@@ -161,6 +181,17 @@ struct PaneView: View {
       if new == .available, session.mode == .screen, session.supportsConversation, !userChoseMode {
         session.switchMode(.conversation)
       }
+    }
+  }
+
+  /// A prompt the Host could not read as a menu has no answer buttons. The terminal screen shows
+  /// it as it is, with the key bar under it.
+  private var terminalAnswer: (() -> Void)? {
+    guard session.mode == .conversation, session.keysAvailable else { return nil }
+    return {
+      userChoseMode = true
+      isComposing = false
+      session.switchMode(.screen)
     }
   }
 
@@ -177,7 +208,8 @@ struct PaneView: View {
   }
 
   private var connectionProblem: MirrorPaneConnectionBanner.Problem? {
-    switch session.status {
+    if session.isSuspended { return nil }
+    return switch session.status {
     case .live, .connecting, .subscribing, .choosingPane: nil
     case .takenOver: .takenOver
     case .disconnected, .hostStopped, .paneClosed, .incompatible: .lost(session.status.label)
@@ -275,29 +307,49 @@ struct MirrorPaneConnectionBanner: View {
   }
 }
 
-/// The agent waits for a person: what kind of answer it needs. The answer itself is on the Mac
-/// until the Host supports answering from here (docs-ai 089 S4).
+/// The agent waits for a person, and the prompt panel cannot show the question: the Host did not
+/// read it as a menu (docs-ai 089 S4), or it takes no answers from here. With keys, the person
+/// answers on the terminal screen; Chat gets a button that goes there.
 struct MirrorBlockedStrip: View {
   let kind: String?
+  var answersWithKeys = false
+  var showTerminal: (() -> Void)?
 
   var body: some View {
     HStack(spacing: 8) {
       Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red)
-      Text(text).font(.subheadline).lineLimit(2)
+        .accessibilityHidden(true)
+      Text(Self.text(kind: kind, answersWithKeys: answersWithKeys)).font(.subheadline).lineLimit(2)
+        .accessibilityIdentifier("pane-blocked-text")
       Spacer(minLength: 0)
+      if let showTerminal {
+        Button("Answer in Terminal", systemImage: "apple.terminal", action: showTerminal)
+          .labelStyle(.titleOnly)
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+          .lineLimit(1)
+          .fixedSize()
+          .accessibilityIdentifier("pane-blocked-terminal")
+          .help("Show the terminal screen and answer with the keys under it")
+      }
     }
     .padding(.horizontal, 14).padding(.vertical, 10)
     .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-    .accessibilityElement(children: .combine)
+    .accessibilityElement(children: .contain)
     .accessibilityIdentifier("pane-blocked")
   }
 
-  private var text: String {
-    switch kind {
-    case "permission": String(localized: "Blocked · Waiting for a permission decision on the Mac")
-    case "question": String(localized: "Blocked · Waiting for your answer on the Mac")
-    case "auth": String(localized: "Blocked · Waiting for sign-in on the Mac")
-    default: String(localized: "Blocked · Waiting for you on the Mac")
+  /// Without keys the answer is possible only on the Mac, and the text says so.
+  static func text(kind: String?, answersWithKeys: Bool) -> String {
+    switch (kind, answersWithKeys) {
+    case ("permission", true): String(localized: "Blocked · Waiting for a permission decision")
+    case ("question", true): String(localized: "Blocked · Waiting for your answer")
+    case ("auth", true): String(localized: "Blocked · Waiting for sign-in")
+    case (_, true): String(localized: "Blocked · Waiting for you")
+    case ("permission", false): String(localized: "Blocked · Waiting for a permission decision on the Mac")
+    case ("question", false): String(localized: "Blocked · Waiting for your answer on the Mac")
+    case ("auth", false): String(localized: "Blocked · Waiting for sign-in on the Mac")
+    case (_, false): String(localized: "Blocked · Waiting for you on the Mac")
     }
   }
 }
