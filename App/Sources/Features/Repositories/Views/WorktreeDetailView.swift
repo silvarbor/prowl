@@ -5,7 +5,7 @@ import Sharing
 import SwiftUI
 
 struct WorktreeDetailView: View {
-  @Dependency(FeatureFlags.self) private var featureFlags
+  @Environment(RemoteMirrorStore.self) private var mirrors
   private struct ToolbarSharedStateInput {
     let repositories: RepositoriesFeature.State
     let workflowRuns: WorkflowRunsFeature.State
@@ -162,7 +162,7 @@ struct WorktreeDetailView: View {
         actionTargetWorktree: actionTargetWorktree
       )
     } else {
-      if featureFlags.remoteMirror {
+      if mirrors.isEnabled {
         ToolbarItem(placement: .navigation) { MirrorHostButton() }
       }
     }
@@ -1047,6 +1047,8 @@ struct WorktreeDetailView: View {
   struct AgentNotificationsToolbarContent: ToolbarContent {
     @Environment(StoreOf<WorkflowStepHistoryFeature>.self) private var historyStore
     @Dependency(FeatureFlags.self) private var featureFlags
+    // Optional: the toolbar previews have no Mirror store.
+    @Environment(RemoteMirrorStore.self) private var mirrors: RemoteMirrorStore?
     let onHistoryIntent: (WorkflowRunPanelIntent) -> Void
 
     let agentsCapsule: AgentsCapsuleState?
@@ -1098,7 +1100,7 @@ struct WorktreeDetailView: View {
           if featureFlags.workflowUI && !historyStore.entries.isEmpty {
             WorkflowHistoryPopoverButton(store: historyStore, onIntent: onHistoryIntent)
           }
-          if featureFlags.remoteMirror { MirrorHostButton() }
+          if mirrors?.isEnabled == true { MirrorHostButton() }
           if isUpdateAvailable {
             ToolbarUpdateButton(
               availableVersion: availableUpdateVersion,
