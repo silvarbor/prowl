@@ -90,15 +90,6 @@ nonisolated struct RepositoryHost: Sendable {
     return await local.automaticWorktreeBaseRef(url)
   }
 
-  /// The default branch (`GitClient.defaultBranchName`); nil when none applies or the
-  /// host cannot be reached.
-  func defaultBranchName(in repository: RepositoryLocation) async -> String? {
-    guard let url = repository.localURL else {
-      return await availableRemoteHost(repository)?.defaultBranchName(at: repository.path)
-    }
-    return await local.defaultBranchName(url)
-  }
-
   func ignoredFileCount(in repository: RepositoryLocation) async throws -> Int {
     if let host = try await remoteHost(repository) { return try await host.ignoredFileCount(at: repository.path) }
     return try await local.ignoredFileCount(localURL(repository))

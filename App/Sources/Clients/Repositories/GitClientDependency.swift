@@ -12,7 +12,6 @@ struct GitClientDependency: Sendable {
   var remoteBranchRefs: @Sendable (String) async throws -> GitRemoteBranchRefs
   var defaultRemoteBranchRef: @Sendable (URL) async throws -> String?
   var automaticWorktreeBaseRef: @Sendable (URL) async -> String?
-  var defaultBranchName: @Sendable (URL) async -> String?
   var ignoredFileCount: @Sendable (URL) async throws -> Int
   var untrackedFileCount: @Sendable (URL) async throws -> Int
   var createWorktree:
@@ -55,7 +54,6 @@ extension GitClientDependency: DependencyKey {
     remoteBranchRefs: { try await GitClient.local.remoteBranchRefs(for: $0) },
     defaultRemoteBranchRef: { try await GitClient.local.defaultRemoteBranchRef(for: $0) },
     automaticWorktreeBaseRef: { await GitClient.local.automaticWorktreeBaseRef(for: $0) },
-    defaultBranchName: { await GitClient.local.defaultBranchName(for: $0) },
     ignoredFileCount: { try await GitClient.local.ignoredFileCount(for: $0) },
     untrackedFileCount: { try await GitClient.local.untrackedFileCount(for: $0) },
     createWorktree: { name, repoRoot, baseDirectory, copyIgnored, copyUntracked, baseRef in

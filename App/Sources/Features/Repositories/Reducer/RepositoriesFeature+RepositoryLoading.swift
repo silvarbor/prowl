@@ -202,19 +202,7 @@ extension RepositoriesFeature {
             return await Self.loadRepository(entry, host: repositoryHost)
           }
           if let repository = known[entry.location.standardized.id] {
-            let reused = WorktreesFetchResult(entry: entry, repository: repository, errorMessage: nil)
-            // A repository restored from a snapshot written before the default branch was
-            // stored lacks it; resolve it once, within the same deadline (docs-ai 087).
-            guard repository.kind == .git, repository.bareDefaultBranch == nil,
-              !repository.worktrees.contains(where: \.isMain)
-            else { return reused }
-            return await Self.withDeadline(Self.remoteLoadDeadline, clock: clock) {
-              let branch = await repositoryHost.defaultBranchName(in: repository.location)
-              return WorktreesFetchResult(
-                entry: entry, repository: repository.withBareDefaultBranch(branch), errorMessage: nil)
-            } onTimeout: {
-              reused
-            }
+            return WorktreesFetchResult(entry: entry, repository: repository, errorMessage: nil)
           }
           return await Self.withDeadline(Self.remoteLoadDeadline, clock: clock) {
             await Self.loadRepository(entry, host: repositoryHost)
@@ -270,16 +258,11 @@ extension RepositoriesFeature {
       switch entry.kind {
       case .git:
         let worktrees = try await host.worktrees(in: location)
-        // A bare repository lists no main worktree. Its default branch names the worktree
-        // that stays out of the Inactive group in its place (docs-ai 087).
-        let bareDefaultBranch =
-          worktrees.contains(where: \.isMain) ? nil : await host.defaultBranchName(in: location)
         return WorktreesFetchResult(
           entry: entry,
           repository: Repository(
             location: location, name: Repository.name(for: location), kind: .git,
-            worktrees: IdentifiedArray(worktrees, uniquingIDsWith: { current, _ in current }),
-            bareDefaultBranch: bareDefaultBranch),
+            worktrees: IdentifiedArray(worktrees, uniquingIDsWith: { current, _ in current })),
           errorMessage: nil
         )
       case .plain:

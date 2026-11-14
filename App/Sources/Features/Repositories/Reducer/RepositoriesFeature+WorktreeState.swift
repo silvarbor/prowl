@@ -67,8 +67,7 @@ func insertWorktree(
     id: repository.id,
     location: repository.location,
     name: repository.name,
-    worktrees: worktrees,
-    bareDefaultBranch: repository.bareDefaultBranch
+    worktrees: worktrees
   )
 }
 
@@ -87,8 +86,7 @@ func removeWorktree(
     id: repository.id,
     location: repository.location,
     name: repository.name,
-    worktrees: worktrees,
-    bareDefaultBranch: repository.bareDefaultBranch
+    worktrees: worktrees
   )
   return true
 }
@@ -259,8 +257,7 @@ func updateWorktreeName(
       id: repository.id,
       location: repository.location,
       name: repository.name,
-      worktrees: worktrees,
-      bareDefaultBranch: repository.bareDefaultBranch
+      worktrees: worktrees
     )
     state.repositories[index] = repository
     return

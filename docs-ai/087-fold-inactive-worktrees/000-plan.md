@@ -46,22 +46,6 @@ Shelf therefore agree on which worktrees are open.
 **Always active.** The main worktree, pinned worktrees, pending (being created) worktrees,
 and the selected worktree never fold.
 
-**Bare repositories.** In a bare repository the root is the bare directory, so no worktree
-is the main worktree and nothing would anchor the repository in the sidebar. There the
-worktree on the default branch never folds, the way the root checkout of a non-bare
-repository does not. The default branch is the branch `refs/remotes/origin/HEAD` names,
-else a local `main`, else a local `master` (`GitClient.defaultBranchName`, through
-`RepositoryHost.defaultBranchName` for local and remote repositories). The repository load
-resolves it only when the listed worktrees have no main worktree and stores it as
-`Repository.bareDefaultBranch`, so the sidebar never runs git. An unset `origin/HEAD` goes
-straight to the local fallbacks; an `origin/main` ref alone does not name the default
-branch. A remote repository reused from the snapshot cache without the branch gets it on
-the next live load, within the remote load deadline; polls do not resolve it again. `worktreeRowSections`
-exempts the unpinned worktree whose name (its branch) equals it, only while the repository
-has no main worktree. `Worktree.isMain` does not change: it also guards deleting the main
-worktree and drives the merged-PR archive. When no worktree is on the default branch,
-nothing is exempt.
-
 **Folders.** Plain folders, workspaces, and remote folders have no `repository.worktrees`
 to split, so they produce no sections and no rows, and they cannot fold. A remote git
 repository lists its root worktree, which is its main worktree and never folds.
@@ -140,8 +124,10 @@ the expected `worktreeOrderByRepository`; fold-state pruning.
 
 ## Open questions
 
-- A detached worktree is named after its folder, so a detached worktree whose folder has
-  the default branch's name would also stay out of the group. Matching on the branch
-  alone would need the branch on `Worktree`.
+- In a bare repository the repository root is the bare directory, and no worktree's
+  working directory equals it, so no worktree counts as the main worktree and a worktree
+  named `main` folds like any other without a tab. Whether a bare layout needs its own
+  notion of a main worktree is a separate decision; it would also change archive, delete,
+  and pin rules.
 
 ## Amendments
