@@ -511,6 +511,7 @@ struct RepositoriesFeature {
     var pendingSidebarNotifyReorderIDs: [Worktree.ID] = []
     var showActiveAgentTabTitles = false
     var showActiveAgentNames = true
+    var showSidebarChangeCounts = true
     var nextCanvasFocusRequestID = 0
     var pendingCanvasFocusRequest: CanvasFocusRequest?
     var nextCanvasCommandRequestID = 0
@@ -840,6 +841,12 @@ struct RepositoriesFeature {
         if let picker = state.groupSymbolPicker, state.sidebarLayout.group(id: picker.groupID) == nil {
           state.groupSymbolPicker = nil
         }
+        return .none
+      }
+    }
+    .onChange(of: \.activeAgentOrderInputs) { _, _ in
+      Reduce { state, _ in
+        state.refreshActiveAgentOrder()
         return .none
       }
     }

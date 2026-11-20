@@ -23,10 +23,42 @@ final class GhosttySurfaceState {
   var colorChangeB: UInt8?
   /// The host of the pane's foreground `ssh`, set by agent detection (docs-ai 082).
   var remoteIndicator: RemotePaneIndicator?
+  /// The Find query, or `nil` when the Find bar is closed. Ghostty sets it on `start_search`, and the
+  /// Find field writes what the user types.
   var searchNeedle: String?
   var searchTotal: Int?
   var searchSelected: Int?
-  var searchFocusCount = 0
+  enum SearchFocusRequest: Equatable {
+    case find
+    case restore
+  }
+  enum SearchFocusEvent: Equatable {
+    case findRequested
+    case restoreRequested
+    case searchEnded
+    case requestApplied(SearchFocusRequest)
+  }
+  private(set) var searchFocusRequest: SearchFocusRequest?
+
+  func transitionSearchFocus(_ event: SearchFocusEvent) {
+    switch (searchFocusRequest, event) {
+    case (.none, .findRequested), (.some(.find), .findRequested), (.some(.restore), .findRequested):
+      searchFocusRequest = .find
+    case (.none, .restoreRequested), (.some(.restore), .restoreRequested):
+      searchFocusRequest = .restore
+    case (.some(.find), .restoreRequested):
+      // A layout change must not cancel pending query selection.
+      break
+    case (_, .searchEnded):
+      searchFocusRequest = nil
+    case (let current?, .requestApplied(let applied)) where current == applied:
+      searchFocusRequest = nil
+    case (_, .requestApplied):
+      // Ignore a completion that no longer matches the pending request.
+      break
+    }
+  }
+
   var sizeLimitMinWidth: UInt32?
   var sizeLimitMinHeight: UInt32?
   var sizeLimitMaxWidth: UInt32?

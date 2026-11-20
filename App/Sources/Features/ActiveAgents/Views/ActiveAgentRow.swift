@@ -7,8 +7,13 @@ struct ActiveAgentRow: View {
   let subtitle: String
   let repositoryColor: RepositoryColorChoice?
   let isDimmed: Bool
+  /// The Island roster also fills the selected row, so its dim can stay light. The sidebar
+  /// panel has only the dim to mark the selection, so it passes a stronger value.
+  var dimmedOpacity = 0.7
   /// The Island roster has room for the name, so only the sidebar panel passes the setting.
   var showsAgentName = true
+  /// A project section of the panel names the project once, so its rows leave it out.
+  var showsRepositoryName = true
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
@@ -16,11 +21,13 @@ struct ActiveAgentRow: View {
       agentIcon
       VStack(alignment: .leading, spacing: 2) {
         title
-        subtitleLine
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-          .truncationMode(.tail)
+        if !showsSubtitleAsTitle {
+          subtitleLine
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.tail)
+        }
       }
       Spacer(minLength: 8)
       statusPill
@@ -28,33 +35,57 @@ struct ActiveAgentRow: View {
     .padding(.horizontal, 10)
     .padding(.vertical, 7)
     .contentShape(.rect)
-    .opacity(isDimmed ? 0.7 : 1)
+    .opacity(isDimmed ? dimmedOpacity : 1)
   }
 
+  /// With neither the agent name nor the project name, the subtitle moves up so that the
+  /// title line is never empty.
+  private var showsSubtitleAsTitle: Bool {
+    !showsAgentName && !showsRepositoryName
+  }
+
+  @ViewBuilder
   private var title: some View {
-    HStack(alignment: .firstTextBaseline, spacing: 3) {
-      if showsAgentName {
-        Text(entry.displayName)
-          .font(.body.weight(.medium))
-          .foregroundStyle(.primary)
-        Text("·")
-          .font(.caption.weight(.semibold))
-          .foregroundStyle(.tertiary)
-      }
-      Text(repositoryName)
+    if showsSubtitleAsTitle {
+      subtitleLine
         .font(.callout.weight(.medium))
-        .foregroundStyle(repositoryColor?.color ?? .secondary)
+        .foregroundStyle(.primary)
+        .lineLimit(1)
+        .truncationMode(.tail)
+        // The agent name is hidden on screen; VoiceOver still names the agent.
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(
-          Text(
-            verbatim: ActiveAgentRowPresentation.repositoryAccessibilityLabel(
-              for: entry,
-              repositoryName: repositoryName,
-              showAgentName: showsAgentName
-            )
-          )
+          Text(verbatim: ActiveAgentRowPresentation.promotedTitleAccessibilityLabel(for: entry, subtitle: subtitle))
         )
+    } else {
+      HStack(alignment: .firstTextBaseline, spacing: 3) {
+        if showsAgentName {
+          Text(entry.displayName)
+            .font(.body.weight(.medium))
+            .foregroundStyle(.primary)
+        }
+        if showsRepositoryName {
+          if showsAgentName {
+            Text("·")
+              .font(.caption.weight(.semibold))
+              .foregroundStyle(.tertiary)
+          }
+          Text(repositoryName)
+            .font(.callout.weight(.medium))
+            .foregroundStyle(repositoryColor?.color ?? .secondary)
+            .accessibilityLabel(
+              Text(
+                verbatim: ActiveAgentRowPresentation.repositoryAccessibilityLabel(
+                  for: entry,
+                  repositoryName: repositoryName,
+                  showAgentName: showsAgentName
+                )
+              )
+            )
+        }
+      }
+      .lineLimit(1)
     }
-    .lineLimit(1)
   }
 
   /// A remote agent shows its host before the usual subtitle (docs-ai 082, L0 item 10). One
@@ -142,6 +173,9 @@ struct BaguaWorkingIndicator: View {
   static let frames = ["☰", "☱", "☲", "☳", "☴", "☵", "☶", "☷"]
   static let frameDuration = 0.12
 
+  var font: Font = .system(size: 17, weight: .bold, design: .monospaced)
+  var frameSize = CGSize(width: 20, height: 18)
+
   var body: some View {
     TimelineView(.periodic(from: .now, by: Self.frameDuration)) { context in
       frameText(Self.frame(at: context.date))
@@ -161,9 +195,9 @@ struct BaguaWorkingIndicator: View {
 
   private func frameText(_ frame: String) -> some View {
     Text(frame)
-      .font(.system(size: 17, weight: .bold, design: .monospaced))
+      .font(font)
       .lineLimit(1)
-      .frame(width: 20, height: 18)
+      .frame(width: frameSize.width, height: frameSize.height)
       .accessibilityHidden(true)
   }
 }

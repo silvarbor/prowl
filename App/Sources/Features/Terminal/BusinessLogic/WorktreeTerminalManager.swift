@@ -1420,6 +1420,12 @@ final class WorktreeTerminalManager {
     states[worktreeID]?.hasBlockedAgent == true
   }
 
+  /// Whether the worktree holds a working or blocked agent. The sidebar row
+  /// uses it to tell agent work from a command that reports progress.
+  func hasBusyAgent(for worktreeID: Worktree.ID) -> Bool {
+    states[worktreeID]?.hasBusyAgent == true
+  }
+
   func isRunScriptRunning(for worktreeID: Worktree.ID) -> Bool {
     states[worktreeID]?.isRunScriptRunning == true
   }
@@ -1483,6 +1489,11 @@ final class WorktreeTerminalManager {
 
   func surfaceBackgroundOpacity() -> Double {
     runtime?.backgroundOpacity() ?? 1.0
+  }
+
+  /// The color that a terminal surface fills its background with, before the opacity.
+  func surfaceBackgroundColor() -> NSColor {
+    runtime?.backgroundColor() ?? .windowBackgroundColor
   }
 
   func unfocusedSplitOverlay() -> (fill: Color?, opacity: Double) {

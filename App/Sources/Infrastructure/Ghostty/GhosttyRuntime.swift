@@ -64,6 +64,9 @@ final class GhosttyRuntime {
   var runtimeOverrideSignature = ""
   var onConfigChange: (() -> Void)?
   var onQuit: (() -> Void)?
+  /// `splitDividerWidth()` reads a file, and terminal views ask for it in `body`. The outer
+  /// optional is nil until the file was read for the current config.
+  private var cachedSplitDividerWidth: CGFloat??
 
   init(initialColorScheme: ColorScheme? = nil, configSource: GhosttyConfigSource = .ghosttyDefault) {
     self.configSource = configSource
@@ -291,6 +294,7 @@ final class GhosttyRuntime {
   func setConfigSource(_ source: GhosttyConfigSource) {
     guard source != configSource else { return }
     configSource = source
+    cachedSplitDividerWidth = nil
     reloadAppConfig()
     // The theme fallback compares the app appearance with the new config's background.
     if let currentColorScheme {
@@ -335,6 +339,8 @@ final class GhosttyRuntime {
       ghostty_config_free(existing)
     }
     self.config = config
+    // A new config can come from an edited file, so read the divider width again.
+    cachedSplitDividerWidth = nil
   }
 
   func applyAppKeybindArguments(_ keybindArguments: [String]) {
@@ -443,7 +449,7 @@ final class GhosttyRuntime {
     do {
       try contents.write(to: url, atomically: true, encoding: .utf8)
     } catch {
-      ghosttyLogger.warning("Failed to write CJK font fallback file: \(error.localizedDescription)")
+      ghosttyLogger.warning("Failed to write CJK font fallback file", error: error)
       return
     }
     url.path.withCString { path in
@@ -457,7 +463,7 @@ final class GhosttyRuntime {
     do {
       try terminalProgramOverrides(version: appVersion).write(to: url, atomically: true, encoding: .utf8)
     } catch {
-      ghosttyLogger.warning("Failed to write TERM_PROGRAM override file: \(error.localizedDescription)")
+      ghosttyLogger.warning("Failed to write TERM_PROGRAM override file", error: error)
       return
     }
     url.path.withCString { path in
@@ -576,7 +582,12 @@ final class GhosttyRuntime {
   /// so we layer a `prowl-split-divider-width = N` directive on top of the
   /// user's existing Ghostty config to avoid carrying another fork patch.
   func splitDividerWidth() -> CGFloat? {
-    Self.parseProwlSplitDividerWidth(at: configSource.editableFilePath)
+    if let cachedSplitDividerWidth {
+      return cachedSplitDividerWidth
+    }
+    let width = Self.parseProwlSplitDividerWidth(at: configSource.editableFilePath)
+    cachedSplitDividerWidth = .some(width)
+    return width
   }
 
   nonisolated static func ghosttyConfigPath() -> String? {

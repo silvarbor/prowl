@@ -1,12 +1,13 @@
-# 087 — Fold Inactive Worktrees: Action Log
+# 094 — Fold Inactive Worktrees: Action Log
 
 ## Timeline
 
-| Date | Change | Ref |
-| --- | --- | --- |
-| 2026-10-18 | First version: fold worktrees with no open tab into a per-repository "Inactive (N)" group behind a `foldInactiveWorktrees` setting | fork review PR |
-| 2026-10-27 | Reworked per the maintainer's request on #939: always on, no setting, no Sidebar settings section; renumbered after 083 and 084 were taken | PR (see Primary PRs) |
+| Date       | Change                                                                                                                                                                                                       | Ref                  |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------- |
+| 2026-10-18 | First version: fold worktrees with no open tab into a per-repository "Inactive (N)" group behind a `foldInactiveWorktrees` setting                                                                           | fork review PR       |
+| 2026-10-27 | Reworked per the maintainer's request on #939: always on, no setting, no Sidebar settings section; renumbered after 083 and 084 were taken                                                                   | PR (see Primary PRs) |
 | 2026-10-31 | Merged upstream with repository groups (086) and renumbered to 087 after 085 and 086 were taken; walking an expanded group keeps its order, and any selection outside the group releases the rows kept there | PR (see Primary PRs) |
+| 2026-11-20 | Merged upstream with the worktree-switch view work (093) and renumbered to 094 after 087–093 were taken; the hotkey rows pass their IDs, now from the navigable rows                                         | PR (see Primary PRs) |
 
 ## Outcome & current state (as of 2026-10-31)
 

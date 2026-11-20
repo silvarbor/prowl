@@ -1,4 +1,5 @@
 import AppKit
+import ConcurrencyExtras
 import Testing
 
 @testable import Prowl
@@ -155,6 +156,80 @@ struct SplitTreeTests {
 
     #expect(visibleLeaves.count == 1)
     #expect(visibleLeaves.first === second)
+  }
+
+  @Test(arguments: [nil, GhosttySurfaceState.SearchFocusRequest.find])
+  func splitZoomKeepsFocusInTheTargetSearchField(
+    pendingRequest: GhosttySurfaceState.SearchFocusRequest?
+  ) async throws {
+    let state = makeWorktreeTerminalState()
+    let tabID = try #require(state.createTab())
+    let firstID = try #require(state.focusedSurfaceId(in: tabID))
+    #expect(state.performSplitAction(.newSplit(direction: .right), for: firstID))
+    let targetID = try #require(state.focusedSurfaceId(in: tabID))
+    let target = try #require(state.surfaceView(for: targetID))
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 320, height: 120),
+      styleMask: [.titled], backing: .buffered, defer: true
+    )
+    window.isReleasedWhenClosed = false
+    defer { window.close() }
+    window.contentView?.addSubview(target)
+    target.bridge.state.searchNeedle = "query"
+    let field = GhosttySearchField.SearchField(frame: NSRect(x: 0, y: 40, width: 180, height: 24))
+    field.owner = target.bridge.state
+    field.stringValue = "query"
+    window.contentView?.addSubview(field)
+    try #require(window.makeFirstResponder(field))
+    let editor = try #require(field.currentEditor() as? NSTextView)
+    let selection = NSRange(location: 1, length: 2)
+    editor.setSelectedRange(selection)
+    if let pendingRequest {
+      switch pendingRequest {
+      case .find:
+        target.bridge.state.transitionSearchFocus(.findRequested)
+      case .restore:
+        target.bridge.state.transitionSearchFocus(.restoreRequested)
+      }
+    }
+
+    #expect(state.performSplitAction(.toggleSplitZoom, for: targetID))
+    #expect(target.bridge.state.searchFocusRequest == (pendingRequest ?? .restore))
+    // SwiftUI updates the Find field after the layout change.
+    field.takePendingFocus(for: pendingRequest ?? .restore)
+    await Task.megaYield()
+
+    #expect(window.firstResponder === editor)
+    #expect(editor.selectedRange() == (pendingRequest == .find ? NSRange(location: 0, length: 5) : selection))
+    #expect(target.bridge.state.searchFocusRequest == nil)
+    #expect(state.activeSurfaceID(for: tabID) == targetID)
+    #expect(state.splitTree(for: tabID).zoomed == state.splitTree(for: tabID).find(id: targetID))
+  }
+
+  @Test func splitZoomDoesNotRequestSearchFocusWhenItsFieldIsNotFocused() async throws {
+    let state = makeWorktreeTerminalState()
+    let tabID = try #require(state.createTab())
+    let firstID = try #require(state.focusedSurfaceId(in: tabID))
+    #expect(state.performSplitAction(.newSplit(direction: .right), for: firstID))
+    let targetID = try #require(state.focusedSurfaceId(in: tabID))
+    let target = try #require(state.surfaceView(for: targetID))
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 320, height: 120),
+      styleMask: [.titled], backing: .buffered, defer: true
+    )
+    window.isReleasedWhenClosed = false
+    defer { window.close() }
+    window.contentView?.addSubview(target)
+    target.bridge.state.searchNeedle = "query"
+    let field = GhosttySearchField.SearchField(frame: NSRect(x: 0, y: 40, width: 180, height: 24))
+    field.owner = target.bridge.state
+    window.contentView?.addSubview(field)
+
+    #expect(state.performSplitAction(.toggleSplitZoom, for: targetID))
+    await Task.megaYield()
+
+    #expect(target.bridge.state.searchFocusRequest == nil)
+    #expect(state.activeSurfaceID(for: tabID) == targetID)
   }
 
   private func makeWorktreeTerminalState() -> WorktreeTerminalState {

@@ -81,6 +81,8 @@ struct SettingsFeature {
     var remoteMirrorStartsHostOnLaunch: Bool
     var externalDiffCustomCommand: String
     var detectRepositoryIconsAutomatically: Bool
+    var showSidebarChangeCounts: Bool
+    var activeAgentsSortOrder: ActiveAgentsSortOrder
     var cliInstallStatus: CLIInstallStatus = .notInstalled
     var cliInstallShowAlert: Bool = true
     /// Whether this app instance is listening for `prowl` (docs-ai 063 D1); refreshed with the
@@ -161,6 +163,8 @@ struct SettingsFeature {
       externalDiffToolID = settings.externalDiffToolID
       externalDiffCustomCommand = settings.externalDiffCustomCommand
       detectRepositoryIconsAutomatically = settings.detectRepositoryIconsAutomatically
+      showSidebarChangeCounts = settings.showSidebarChangeCounts
+      activeAgentsSortOrder = settings.activeAgentsSortOrder
       ghosttyConfigPath = settings.ghosttyConfigPath
       remoteAgentDetection = settings.remoteAgentDetection
       remoteMirrorEnabled = settings.remoteMirrorEnabled
@@ -238,6 +242,8 @@ struct SettingsFeature {
       settings.externalDiffToolID = externalDiffToolID
       settings.externalDiffCustomCommand = externalDiffCustomCommand
       settings.detectRepositoryIconsAutomatically = detectRepositoryIconsAutomatically
+      settings.showSidebarChangeCounts = showSidebarChangeCounts
+      settings.activeAgentsSortOrder = activeAgentsSortOrder
       settings.ghosttyConfigPath = ghosttyConfigPath
       settings.remoteAgentDetection = remoteAgentDetection
       settings.remoteMirrorEnabled = remoteMirrorEnabled
@@ -402,6 +408,8 @@ struct SettingsFeature {
         state.externalDiffCustomCommand = normalizedSettings.externalDiffCustomCommand
         state.canvasDefaultLayout = normalizedSettings.canvasDefaultLayout
         state.detectRepositoryIconsAutomatically = normalizedSettings.detectRepositoryIconsAutomatically
+        state.showSidebarChangeCounts = normalizedSettings.showSidebarChangeCounts
+        state.activeAgentsSortOrder = normalizedSettings.activeAgentsSortOrder
         state.ghosttyConfigPath = normalizedSettings.ghosttyConfigPath
         state.remoteAgentDetection = normalizedSettings.remoteAgentDetection
         state.remoteMirrorEnabled = normalizedSettings.remoteMirrorEnabled

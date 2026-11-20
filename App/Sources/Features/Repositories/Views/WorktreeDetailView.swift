@@ -1072,6 +1072,9 @@ struct WorktreeDetailView: View {
           }
         }
         .glassEffect(.regular.interactive(), in: Capsule())
+        // Without a container, every button in this item gets the accessibility label of
+        // the first one (#1043).
+        .accessibilityElement(children: .contain)
       }
       .sharedBackgroundVisibility(.hidden)
     }
@@ -1182,7 +1185,11 @@ struct WorktreeDetailView: View {
           onResetOpenActionToAutomatic()
         } label: {
           if openActionIsAutomatic {
-            Label("Automatic", systemImage: "checkmark")
+            Label {
+              Text("Automatic")
+            } icon: {
+              ToolbarSymbolImage.image("checkmark")
+            }
           } else {
             Text("Automatic")
           }
@@ -1209,8 +1216,8 @@ struct WorktreeDetailView: View {
         }
         .help("Copy path")
       } label: {
-        Image(systemName: "chevron.down")
-          .font(.caption2)
+        // The toolbar draws a menu label at its own size, not at `.caption2`.
+        ToolbarSymbolImage.image("chevron.down", scale: .medium)
           .accessibilityLabel("Open in menu")
       }
       .imageScale(.small)
@@ -1228,7 +1235,7 @@ struct WorktreeDetailView: View {
     private func openActionHelpText(for action: OpenWorktreeAction, isDefault: Bool) -> String {
       guard isDefault else { return action.title }
       return AppShortcuts.helpText(
-        title: LocalizedStringResource(runtimeKey: action.title),
+        title: String.LocalizationValue(runtimeKey: action.title),
         commandID: AppShortcuts.CommandID.openWorktree,
         in: resolvedKeybindings
       )
